@@ -1,0 +1,11 @@
+device:
+  name: device-001
+
+mqtt:
+  host: localhost
+  port: 8883
+  ca_file: ""
+
+logging:
+  level: debug
+  file: ""

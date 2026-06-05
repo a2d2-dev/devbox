@@ -1,0 +1,5 @@
+ota-agent/bin/
+ota-agent/console-ui/node_modules/
+ota-agent/pkg/console/dist/
+*.log
+.env

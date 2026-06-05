@@ -1,0 +1,61 @@
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  font-family: "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; color: #0f172a;
+  background: #eef3fa; overflow: hidden;
+}
+*, *::before, *::after { box-sizing: border-box; }
+button, input { font-family: inherit; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+.mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-feature-settings: "tnum"; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Pulse for error icon */
+@keyframes edgePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55), 0 8px 18px -8px rgba(239,68,68,0.5); }
+  50% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0), 0 8px 18px -8px rgba(239,68,68,0.5); }
+}
+.edge-pulse { animation: edgePulse 2s ease-out infinite; }
+
+@keyframes edgeFadeIn { from { opacity: 0; transform: scale(0.985) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+.edge-fade-in { animation: edgeFadeIn 0.22s cubic-bezier(0.2, 0.7, 0.2, 1); }
+
+@keyframes edgeBackdropIn { from { opacity: 0; } to { opacity: 1; } }
+.edge-backdrop-in { animation: edgeBackdropIn 0.18s ease; }
+
+@keyframes edgeDotPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.edge-live-dot { animation: edgeDotPulse 1.4s ease-in-out infinite; }
+
+@keyframes edgeBlink { 50% { opacity: 0; } }
+.edge-cursor { animation: edgeBlink 1s steps(1) infinite; }
+
+.edge-icon-hover { transition: transform 0.18s ease, box-shadow 0.18s ease; }
+.edge-icon-hover:hover { transform: translateY(-3px); }
+.edge-dock-item { transition: transform 0.14s ease; }
+.edge-dock-item:hover { transform: translateY(-4px) scale(1.08); }
+
+/* Background grid pattern */
+.edge-bg {
+  background-color: #eef3fa;
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(239, 246, 255, 0) 40%),
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(59,130,246,0.10), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 85% 100%, rgba(16,185,129,0.05), transparent 60%),
+    linear-gradient(to right, rgba(148,163,184,0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148,163,184,0.16) 1px, transparent 1px);
+  background-size: auto, auto, auto, 56px 56px, 56px 56px;
+  background-position: 0 0, 0 0, 0 0, -1px -1px, -1px -1px;
+}
+
+.edge-glass {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: saturate(180%) blur(18px);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+}
