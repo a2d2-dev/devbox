@@ -1,0 +1,34 @@
+# A2D2 Devbox 配置示例
+# 复制为 config.yaml 后按需修改；亦可通过环境变量 DEVBOX_* 覆盖。
+
+console:
+  # 是否启用本地控制台 HTTP 服务
+  enabled: true
+  # 监听端口
+  port: 9090
+  # 静态文件目录；留空则使用编译时内嵌的 console-ui/dist
+  static_dir: ""
+  # 外部 Console URL（用于图标代理等场景，可选）
+  console_url: ""
+  # supervisord Unix socket 路径
+  supervisor_socket: "/var/run/supervisor.sock"
+  # supervisor 配置片段目录
+  supervisor_conf_dir: "/etc/supervisor/conf.d"
+  # 文件浏览器工作区根（chroot 语义）；留空默认 /data。
+  # 前端「工作区」= 此目录，越界返 403，粘贴图片也只能落到这里。
+  work_dir: "/data"
+
+# 可选的 Kubernetes 集成；不设置则禁用 K8s 应用管理与应用市场。
+kubernetes:
+  # kubeconfig 路径；留空则尝试 in-cluster 模式
+  kubeconfig: ""
+  # 默认 namespace
+  namespace: "default"
+  # 应用市场 API 地址；留空则禁用应用市场
+  apiserver_url: ""
+
+logging:
+  # debug / info / warn / error
+  level: "info"
+  # 日志文件路径；留空则输出到 stdout
+  file: ""

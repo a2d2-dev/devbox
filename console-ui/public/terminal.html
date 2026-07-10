@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Edge-X Terminal</title>
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: #0b1020; overflow: hidden; }
+    #terminal { position: absolute; top: 40px; left: 16px; right: 16px; bottom: 12px; }
+    #toolbar { position: absolute; top: 0; left: 0; right: 0; height: 36px;
+      background: #131825; border-bottom: 1px solid #1e293b;
+      display: flex; align-items: center; padding: 0 14px;
+      font: 12px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: #94a3b8; gap: 10px; }
+    #toolbar .tab { padding: 4px 10px; border-radius: 5px; background: #1e293b; color: #e2e8f0;
+      font-size: 11.5px; font-weight: 500; display: flex; align-items: center; gap: 5px; }
+    #toolbar .tab .dot { width: 5px; height: 5px; border-radius: 50%; background: #34d399; }
+    #status { position: absolute; top: 8px; right: 14px; font: 11px/1 -apple-system, sans-serif;
+      color: #64748b; z-index: 10; display: flex; align-items: center; gap: 6px; }
+    #status .dot { width: 6px; height: 6px; border-radius: 50%; }
+    #status .dot.on { background: #34d399; }
+    #status .dot.off { background: #ef4444; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <div class="tab"><span class="dot"></span>bash</div>
+    <span style="color:#475569; cursor:pointer; font-size:14px">+</span>
+    <div style="flex:1"></div>
+    <div id="status"><span class="dot off" id="dot"></span><span id="msg">connecting...</span></div>
+  </div>
+  <div id="terminal"></div>
+
+  <script src="/vendor/xterm/xterm.js"></script>
+  <script src="/vendor/xterm/addon-fit.js"></script>
+  <script src="/vendor/xterm/addon-web-links.js"></script>
+  <script>
+    const term = new Terminal({
+      fontSize: 13,
+      fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+      theme: {
+        background: '#0b1020',
+        foreground: '#e2e8f0',
+        cursor: '#34d399',
+        cursorAccent: '#0b1020',
+        selectionBackground: 'rgba(59, 130, 246, 0.3)',
+        black: '#0f172a', red: '#f87171', green: '#34d399', yellow: '#fbbf24',
+        blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#e2e8f0',
+        brightBlack: '#475569', brightRed: '#fb7185', brightGreen: '#4ade80',
+        brightYellow: '#fde68a', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe',
+        brightCyan: '#67e8f9', brightWhite: '#f8fafc',
+      },
+      cursorBlink: true,
+      scrollback: 5000,
+    });
+
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.loadAddon(new WebLinksAddon.WebLinksAddon());
+    term.open(document.getElementById('terminal'));
+    fitAddon.fit();
+
+    const dot = document.getElementById('dot');
+    const msg = document.getElementById('msg');
+
+    // WebSocket 连接
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(proto + '//' + location.host + '/api/v1/terminal/exec');
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      dot.className = 'dot on';
+      msg.textContent = location.hostname;
+      // 发送初始大小
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    };
+
+    ws.onmessage = (e) => {
+      const data = typeof e.data === 'string' ? e.data : new Uint8Array(e.data);
+      term.write(data);
+    };
+
+    ws.onclose = () => {
+      dot.className = 'dot off';
+      msg.textContent = 'disconnected';
+      term.write('\r\n\x1b[31m[连接已断开]\x1b[0m\r\n');
+    };
+
+    ws.onerror = () => {
+      dot.className = 'dot off';
+      msg.textContent = 'error';
+    };
+
+    // 键盘输入 → WebSocket
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(new TextEncoder().encode(data));
+      }
+    });
+
+    // 窗口 resize → 调整终端大小 + 通知服务端
+    window.addEventListener('resize', () => {
+      fitAddon.fit();
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    });
+
+    // 父窗口 postMessage resize（从 iframe 内使用）
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'resize') {
+        fitAddon.fit();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        }
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,6 +1,25 @@
-ota-agent/bin/
-ota-agent/console-ui/node_modules/
-ota-agent/pkg/console/dist/
+# 编译产物 / 二进制
+/bin/
+/devbox
+*.exe
+*.test
+
+# 前端依赖与源侧构建输出（内嵌副本 pkg/console/dist/ 已入库供 go:embed 构建）
+node_modules/
 console-ui/dist/
+
+# 本地运行配置与密钥（模板见 config.yaml.example）
+config.yaml
 *.log
 .env
+
+# 测试/验收证据（截图等，非代码）
+docs/artifacts/
+
+# 编辑器 / OS
+.DS_Store
+.idea/
+.vscode/
+
+# 使用 npm（package-lock.json 为准）
+pnpm-lock.yaml

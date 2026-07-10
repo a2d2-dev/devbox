@@ -1,0 +1,130 @@
+package config
+
+import (
+	"fmt"
+
+	"github.com/spf13/viper"
+)
+
+// Config 是 devbox 的运行时配置。
+type Config struct {
+	Console    ConsoleConfig    `mapstructure:"console"`
+	Kubernetes KubernetesConfig `mapstructure:"kubernetes"`
+	Auth       AuthConfig       `mapstructure:"auth"`
+	Logging    LoggingConfig    `mapstructure:"logging"`
+}
+
+// AuthConfig 本地认证：单密码 + session token。
+// Password 为空则不启用认证（所有请求直接放行）。
+type AuthConfig struct {
+	Password   string `mapstructure:"password"`
+	SessionTTL int    `mapstructure:"session_ttl"` // 秒
+}
+
+// ConsoleConfig 本地控制台 HTTP 服务的配置。
+type ConsoleConfig struct {
+	Enabled           bool   `mapstructure:"enabled"`             // 是否启用本地控制台
+	Port              int    `mapstructure:"port"`                // HTTP 监听端口
+	StaticDir         string `mapstructure:"static_dir"`          // 静态文件目录（空则使用 embed）
+	WorkDir           string `mapstructure:"work_dir"`            // 文件浏览器工作区根目录；空则默认 /data
+	ConsoleURL        string `mapstructure:"console_url"`         // 外部 Console 地址（用于图标代理，可选）
+	SupervisorSocket  string `mapstructure:"supervisor_socket"`   // supervisord Unix socket 路径
+	SupervisorConfDir string `mapstructure:"supervisor_conf_dir"` // supervisor conf.d 目录
+	LinksPath         string `mapstructure:"links_path"`          // 服务导航 YAML 路径；空 = /etc/devbox/links.yaml
+}
+
+// KubernetesConfig 可选的 K8s 集成（应用市场 / Pod 管理）。
+// 不设置则禁用 K8s 相关功能。
+type KubernetesConfig struct {
+	Kubeconfig   string `mapstructure:"kubeconfig"`    // kubeconfig 路径（空则尝试 in-cluster）
+	Namespace    string `mapstructure:"namespace"`     // 默认 namespace
+	APIServerURL string `mapstructure:"apiserver_url"` // 应用商店 API 地址（可选）
+}
+
+// LoggingConfig 日志配置。
+type LoggingConfig struct {
+	Level string `mapstructure:"level"` // debug / info / warn / error
+	File  string `mapstructure:"file"`  // 留空则输出到 stdout
+}
+
+// Load 从配置文件加载 devbox 配置。
+// 优先级：环境变量 (DEVBOX_*) > 配置文件 > 默认值。
+// configFile 为空时按顺序在 /etc/devbox/、$HOME/.devbox/、当前目录查找 config.yaml。
+func Load(configFile string) (*Config, error) {
+	v := viper.New()
+
+	setDefaults(v)
+
+	if configFile != "" {
+		v.SetConfigFile(configFile)
+	} else {
+		v.SetConfigName("config")
+		v.SetConfigType("yaml")
+		v.AddConfigPath("/etc/devbox/")
+		v.AddConfigPath("$HOME/.devbox/")
+		v.AddConfigPath(".")
+	}
+
+	v.SetEnvPrefix("DEVBOX")
+	v.AutomaticEnv()
+
+	v.BindEnv("console.enabled", "DEVBOX_CONSOLE_ENABLED")
+	v.BindEnv("console.port", "DEVBOX_CONSOLE_PORT")
+	v.BindEnv("console.static_dir", "DEVBOX_CONSOLE_STATIC_DIR")
+	v.BindEnv("console.work_dir", "DEVBOX_CONSOLE_WORK_DIR")
+	v.BindEnv("console.console_url", "DEVBOX_CONSOLE_URL")
+	v.BindEnv("console.supervisor_socket", "DEVBOX_SUPERVISOR_SOCKET")
+	v.BindEnv("console.supervisor_conf_dir", "DEVBOX_SUPERVISOR_CONF_DIR")
+	v.BindEnv("kubernetes.kubeconfig", "DEVBOX_KUBECONFIG")
+	v.BindEnv("kubernetes.namespace", "DEVBOX_NAMESPACE")
+	v.BindEnv("kubernetes.apiserver_url", "DEVBOX_APISERVER_URL")
+	v.BindEnv("auth.password", "DEVBOX_AUTH_PASSWORD")
+	v.BindEnv("auth.session_ttl", "DEVBOX_AUTH_SESSION_TTL")
+	v.BindEnv("logging.level", "DEVBOX_LOGGING_LEVEL")
+	v.BindEnv("logging.file", "DEVBOX_LOGGING_FILE")
+
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+	}
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+func setDefaults(v *viper.Viper) {
+	v.SetDefault("console.enabled", true)
+	v.SetDefault("console.port", 9090)
+	v.SetDefault("console.static_dir", "")
+	v.SetDefault("console.supervisor_socket", "/var/run/supervisor.sock")
+	v.SetDefault("console.supervisor_conf_dir", "/etc/supervisor/conf.d")
+	v.SetDefault("console.links_path", "/etc/devbox/links.yaml")
+
+	v.SetDefault("kubernetes.kubeconfig", "")
+	v.SetDefault("kubernetes.namespace", "default")
+
+	v.SetDefault("auth.password", "")
+	v.SetDefault("auth.session_ttl", 86400)
+
+	v.SetDefault("logging.level", "info")
+	v.SetDefault("logging.file", "")
+}
+
+// Validate 校验配置。
+func (c *Config) Validate() error {
+	if c.Console.Enabled {
+		if c.Console.Port <= 0 || c.Console.Port > 65535 {
+			return fmt.Errorf("console.port must be between 1 and 65535")
+		}
+	}
+	return nil
+}

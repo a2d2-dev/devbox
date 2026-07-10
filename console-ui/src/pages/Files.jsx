@@ -103,8 +103,10 @@ export default function FilesFace() {
   const [toast, setToast] = useState(null); // { kind: 'ok'|'warn'|'err', text }
   const [preview, setPreview] = useState(null); // { name, url, status: 'loading'|'ok'|'err' }
   const [showDetails, setShowDetails] = useState(true); // 右侧详情面板开关，类似 Finder 的显示简介
+  const [uploading, setUploading] = useState(false);
   // 让 paste 事件稳定触发：容器可 focus + 挂载后自动拿焦点
   const rootRef = useRef(null);
+  const fileInputRef = useRef(null);
   const { data: metricsData } = useMetrics(10000);
   const dsk = metricsData?.metrics?.dsk;
   const diskPct = dsk?.pct || 0;
@@ -165,6 +167,48 @@ export default function FilesFace() {
 
   // 挂载后主动聚焦容器，避免 body 无焦点时 window paste 事件不触发
   useEffect(() => { rootRef.current?.focus(); }, []);
+
+  const uploadFiles = useCallback(async (files) => {
+    const selectedFiles = Array.from(files || []).filter(Boolean);
+    if (selectedFiles.length === 0 || uploading) return;
+
+    setUploading(true);
+    let okCount = 0;
+    let lastName = '';
+    try {
+      for (const file of selectedFiles) {
+        const fd = new FormData();
+        fd.append('path', curPath);
+        fd.append('name', file.name);
+        fd.append('file', file, file.name);
+
+        const r = await authFetch('/api/v1/files/upload', { method: 'POST', body: fd });
+        if (!r.ok) {
+          let msg = `上传失败 (${r.status})`;
+          if (r.status === 403) msg = '目标目录无写入权限';
+          else if (r.status === 413) msg = '文件超过 20MB 上限';
+          else if (r.status === 400) msg = '文件名或目标路径无效';
+          setToast({ kind: 'err', text: msg });
+          return;
+        }
+        const body = await r.json().catch(() => ({}));
+        lastName = body.name || file.name;
+        okCount += 1;
+      }
+
+      setToast({
+        kind: 'ok',
+        text: okCount === 1 ? `已上传 ${lastName}` : `已上传 ${okCount} 个文件`,
+      });
+      if (lastName) setSelected(lastName);
+      loadDir(curPath);
+    } catch (_) {
+      setToast({ kind: 'err', text: '上传失败' });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [curPath, loadDir, uploading]);
 
   // toast 3s 自动清
   useEffect(() => {
@@ -329,8 +373,20 @@ export default function FilesFace() {
             flex: 1, border: 'none', outline: 'none', fontSize: 12, background: 'transparent',
           }}/>
         </div>
-        <button style={{ ...btnPrimary, height: 30, padding: '0 12px' }}>
-          <Icon name="download" size={12} stroke={2}/>上传
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          onChange={(e) => uploadFiles(e.target.files)}
+          style={{ display: 'none' }}
+        />
+        <button
+          disabled={uploading}
+          onClick={() => fileInputRef.current?.click()}
+          style={{ ...btnPrimary, height: 30, padding: '0 12px',
+            opacity: uploading ? 0.65 : 1,
+            cursor: uploading ? 'wait' : 'pointer' }}>
+          <Icon name="download" size={12} stroke={2}/>{uploading ? '上传中' : '上传'}
         </button>
         <button
           title={showDetails ? '隐藏详情' : '显示详情'}
