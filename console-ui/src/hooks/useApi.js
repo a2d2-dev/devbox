@@ -565,6 +565,19 @@ export async function vmControl(name, action) {
   return r.json().catch(() => null);
 }
 
+export async function vmConfigure(name, config) {
+  const r = await authFetch(`${API}/vms/${encodeURIComponent(name)}/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(text || `HTTP ${r.status}`);
+  }
+  return r.json().catch(() => null);
+}
+
 export async function supervisorLogs(name) {
   try {
     const r = await authFetch(`${API}/supervisor/services/${name}/logs`);

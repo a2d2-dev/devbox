@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
-import { useVirtualMachines, vmControl } from '../hooks/useApi'
+import { useVirtualMachines, vmControl, vmConfigure } from '../hooks/useApi'
 
 const statusTone = {
   running: { bg: '#dcfce7', fg: '#047857', dot: '#22c55e' },
@@ -79,6 +79,28 @@ function ActionButton({ icon, label, tone = 'neutral', disabled, onClick }) {
     </button>
   );
 }
+
+function Field({ label, children, hint }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+      <span style={{ fontSize: 11.5, color: T.ink3, fontWeight: 650 }}>{label}</span>
+      {children}
+      {hint && <span style={{ fontSize: 10.5, color: T.ink4 }}>{hint}</span>}
+    </label>
+  );
+}
+
+const inputStyle = {
+  height: 34,
+  borderRadius: 7,
+  border: `1px solid ${T.border}`,
+  background: T.surface,
+  color: T.ink,
+  padding: '0 10px',
+  fontSize: 12.5,
+  outline: 'none',
+  minWidth: 0,
+};
 
 function VMRow({ vm, active, onClick }) {
   const memPct = pct(vm.memory?.usedKiB || vm.memory?.actualKiB || 0, vm.memory?.maxKiB || 0);
@@ -161,6 +183,7 @@ export default function VirtualMachines() {
   const [selected, setSelected] = useState('');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
+  const [config, setConfig] = useState({ vcpus: '', memoryMiB: '', autostart: false });
 
   const vms = Array.isArray(data) ? data : [];
   useEffect(() => {
@@ -169,6 +192,15 @@ export default function VirtualMachines() {
   }, [selected, vms]);
 
   const current = useMemo(() => vms.find(vm => vm.name === selected) || vms[0] || null, [vms, selected]);
+  useEffect(() => {
+    if (!current) return;
+    setConfig({
+      vcpus: String(current.vcpus || ''),
+      memoryMiB: String(Math.round((current.memory?.maxKiB || 0) / 1024)),
+      autostart: !!current.autostart,
+    });
+  }, [current?.name, current?.vcpus, current?.memory?.maxKiB, current?.autostart]);
+
   const runningCount = vms.filter(vm => (vm.state || '').toLowerCase() === 'running').length;
   const shutoffCount = vms.filter(vm => (vm.state || '').toLowerCase() === 'shut off').length;
   const mem = current?.guest?.memory;
@@ -195,8 +227,36 @@ export default function VirtualMachines() {
     }
   };
 
+  const saveConfig = async () => {
+    if (!current || busy) return;
+    const vcpus = Number(config.vcpus);
+    const memoryMiB = Number(config.memoryMiB);
+    if (!Number.isInteger(vcpus) || vcpus < 1 || vcpus > 128) {
+      setMessage('vCPU 必须是 1 到 128 的整数');
+      return;
+    }
+    if (!Number.isInteger(memoryMiB) || memoryMiB < 512) {
+      setMessage('内存必须是不小于 512 的 MiB 整数');
+      return;
+    }
+    setBusy('config');
+    setMessage('');
+    try {
+      await vmConfigure(current.name, { vcpus, memoryMiB, autostart: !!config.autostart });
+      setMessage(isRunning ? '配置已保存；运行中 VM 需要重启后完全生效' : '配置已保存');
+      refresh();
+    } catch (err) {
+      setMessage(err.message || '保存配置失败');
+    } finally {
+      setBusy('');
+    }
+  };
+
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'hidden' }}>
+    <div style={{
+      flex: 1, width: '100%', minWidth: 0, height: '100%',
+      display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'hidden',
+    }}>
       <div style={{
         height: 62, padding: '0 18px', borderBottom: `1px solid ${T.border}`,
         background: T.surface, display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0,
@@ -213,7 +273,7 @@ export default function VirtualMachines() {
         <ActionButton icon="refresh" label="刷新" disabled={loading} onClick={refresh}/>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '320px 1fr' }}>
+      <div style={{ flex: 1, minHeight: 0, width: '100%', minWidth: 0, display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)' }}>
         <aside style={{
           borderRight: `1px solid ${T.border}`, background: '#f8fafc',
           padding: 14, overflow: 'auto',
@@ -249,7 +309,7 @@ export default function VirtualMachines() {
                     {ips.length > 0 && <span>IP {ips.join(', ')}</span>}
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {isOff && <ActionButton icon="play" label="启动" tone="ok" disabled={!!busy} onClick={() => runAction('start')}/>}
                   {isRunning && <ActionButton icon="refresh" label="重启" disabled={!!busy} onClick={() => runAction('reboot')}/>}
                   {isRunning && <ActionButton icon="power" label="关机" disabled={!!busy} onClick={() => runAction('shutdown')}/>}
@@ -262,6 +322,41 @@ export default function VirtualMachines() {
                 <Metric label="内存" value={`${pct(memUsed, memTotal)}%`} sub={`${fmtBytes(memUsed)} / ${fmtBytes(memTotal)}`}/>
                 <Metric label="可用内存" value={fmtBytes(memAvail)} sub={current.guest?.agentOK ? 'guest agent' : 'libvirt balloon'}/>
                 <Metric label="Load" value={load.length ? load.map(n => n.toFixed(2)).join(' / ') : '-'} sub={current.guest?.agentOK ? '1 / 5 / 15 min' : 'guest agent 不可用'}/>
+              </section>
+
+              <section style={{
+                border: `1px solid ${T.border}`, borderRadius: 8, background: T.surface,
+                padding: 14, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 12,
+                alignItems: 'end',
+              }}>
+                <Field label="vCPU">
+                  <input type="number" min="1" max="128" step="1" value={config.vcpus}
+                    onChange={e => setConfig(c => ({ ...c, vcpus: e.target.value }))}
+                    style={inputStyle}/>
+                </Field>
+                <Field label="内存" hint="MiB，保存到 libvirt 持久配置">
+                  <input type="number" min="512" step="512" value={config.memoryMiB}
+                    onChange={e => setConfig(c => ({ ...c, memoryMiB: e.target.value }))}
+                    style={inputStyle}/>
+                </Field>
+                <Field label="开机自启">
+                  <button onClick={() => setConfig(c => ({ ...c, autostart: !c.autostart }))} style={{
+                    height: 34, borderRadius: 7, border: `1px solid ${config.autostart ? '#bbf7d0' : T.border}`,
+                    background: config.autostart ? '#f0fdf4' : T.surface,
+                    color: config.autostart ? '#047857' : T.ink2,
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                    fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+                  }}>
+                    <Icon name={config.autostart ? 'check' : 'minus'} size={13} stroke={2}/>
+                    {config.autostart ? '已启用' : '未启用'}
+                  </button>
+                </Field>
+                <ActionButton icon="check" label={busy === 'config' ? '保存中' : '保存配置'} tone="ok" disabled={!!busy} onClick={saveConfig}/>
+                {isRunning && (
+                  <div style={{ gridColumn: '1 / -1', fontSize: 11.5, color: T.ink3 }}>
+                    当前 VM 正在运行：vCPU/内存写入持久配置，重启后完整生效；开机自启立即生效。
+                  </div>
+                )}
               </section>
 
               <section style={{ border: `1px solid ${T.border}`, borderRadius: 8, background: T.surface, overflow: 'hidden' }}>

@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -92,6 +94,12 @@ type Pressure struct {
 	Avg300 float64 `json:"avg300"`
 }
 
+type ConfigUpdate struct {
+	VCPUs     int   `json:"vcpus"`
+	MemoryMiB int   `json:"memoryMiB"`
+	Autostart *bool `json:"autostart"`
+}
+
 func (m *Manager) List(ctx context.Context) ([]Domain, error) {
 	names, err := m.domainNames(ctx)
 	if err != nil {
@@ -149,6 +157,89 @@ func (m *Manager) Control(ctx context.Context, name, action string) error {
 	}
 	_, err := m.run(ctx, 20*time.Second, action, name)
 	return err
+}
+
+func (m *Manager) Configure(ctx context.Context, name string, req ConfigUpdate) error {
+	if err := m.ensureDomain(ctx, name); err != nil {
+		return err
+	}
+	if req.VCPUs < 0 || req.MemoryMiB < 0 {
+		return fmt.Errorf("vcpus and memoryMiB must be non-negative")
+	}
+	if req.MemoryMiB > 0 && req.MemoryMiB < 512 {
+		return fmt.Errorf("memoryMiB must be at least 512")
+	}
+	if req.VCPUs > 128 {
+		return fmt.Errorf("vcpus must be <= 128")
+	}
+	if req.MemoryMiB > 0 || req.VCPUs > 0 {
+		if err := m.defineInactiveConfig(ctx, name, req); err != nil {
+			return err
+		}
+	}
+	if req.Autostart != nil {
+		if *req.Autostart {
+			if _, err := m.run(ctx, 10*time.Second, "autostart", name); err != nil {
+				return err
+			}
+		} else {
+			if _, err := m.run(ctx, 10*time.Second, "autostart", name, "--disable"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *Manager) defineInactiveConfig(ctx context.Context, name string, req ConfigUpdate) error {
+	xml, err := m.run(ctx, 10*time.Second, "dumpxml", "--inactive", name)
+	if err != nil {
+		return err
+	}
+	if req.MemoryMiB > 0 {
+		kib := strconv.Itoa(req.MemoryMiB * 1024)
+		xml, err = replaceOne(xml, `<memory\s+unit='KiB'>\d+</memory>`, "<memory unit='KiB'>"+kib+"</memory>")
+		if err != nil {
+			return err
+		}
+		xml, err = replaceOne(xml, `<currentMemory\s+unit='KiB'>\d+</currentMemory>`, "<currentMemory unit='KiB'>"+kib+"</currentMemory>")
+		if err != nil {
+			return err
+		}
+	}
+	if req.VCPUs > 0 {
+		count := strconv.Itoa(req.VCPUs)
+		xml, err = replaceOne(xml, `<vcpu(?:\s+[^>]*)?>\d+</vcpu>`, "<vcpu placement='static'>"+count+"</vcpu>")
+		if err != nil {
+			return err
+		}
+	}
+	tmp, err := os.CreateTemp("", "devbox-vm-*.xml")
+	if err != nil {
+		return err
+	}
+	path := tmp.Name()
+	defer os.Remove(path)
+	if _, err := tmp.WriteString(xml); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	_, err = m.run(ctx, 10*time.Second, "define", path)
+	return err
+}
+
+func replaceOne(in, pattern, repl string) (string, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", err
+	}
+	if !re.MatchString(in) {
+		return "", fmt.Errorf("domain XML field not found for pattern %s", pattern)
+	}
+	return re.ReplaceAllString(in, repl), nil
 }
 
 func (m *Manager) ensureDomain(ctx context.Context, name string) error {

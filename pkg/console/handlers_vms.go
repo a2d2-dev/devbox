@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/a2d2-dev/devbox/pkg/vms"
 )
 
 func (s *Server) registerVMRoutes() {
@@ -54,10 +56,17 @@ func (s *Server) handleVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if parts[1] != "control" {
+	switch parts[1] {
+	case "control":
+		s.handleVMControl(w, r, name)
+	case "config":
+		s.handleVMConfig(w, r, name)
+	default:
 		http.Error(w, "unknown VM action path", http.StatusNotFound)
-		return
 	}
+}
+
+func (s *Server) handleVMControl(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -70,6 +79,23 @@ func (s *Server) handleVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.vmManager.Control(r.Context(), name, req.Action); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleVMConfig(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req vms.ConfigUpdate
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := s.vmManager.Configure(r.Context(), name, req); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
