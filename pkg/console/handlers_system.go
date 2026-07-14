@@ -24,6 +24,7 @@ func (s *Server) registerSystemRoutes() {
 	s.mux.HandleFunc("/api/v1/ai/activity", s.handleAIActivity)
 	s.mux.HandleFunc("/api/v1/ai/transcript", s.handleAITranscript)
 	s.mux.HandleFunc("/api/v1/ai/codex/cleanup-stale", s.handleCodexCleanupStale)
+	s.registerVMRoutes()
 	// devbox 无云端 / 无集中审计的存根，避免前端 404
 	s.mux.HandleFunc("/api/v1/cloud/status", s.handleCloudStatus)
 	s.mux.HandleFunc("/api/v1/audit/events", s.handleAuditEvents)

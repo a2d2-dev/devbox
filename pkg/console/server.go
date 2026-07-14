@@ -21,20 +21,21 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/links"
 	"github.com/a2d2-dev/devbox/pkg/models"
 	"github.com/a2d2-dev/devbox/pkg/supervisor"
+	"github.com/a2d2-dev/devbox/pkg/vms"
 	"go.uber.org/zap"
 )
 
 // Config 控制台 HTTP 服务器配置
 type Config struct {
-	Enabled            bool   `mapstructure:"enabled"`
-	Port               int    `mapstructure:"port"`
-	StaticDir          string `mapstructure:"static_dir"`
-	SupervisorSocket   string `mapstructure:"supervisor_socket"`
-	SupervisorConfDir  string `mapstructure:"supervisor_conf_dir"`
-	ConsoleURL         string `mapstructure:"console_url"`
-	AuthPassword       string `mapstructure:"auth_password"`
-	AuthSessionTTL     int    `mapstructure:"auth_session_ttl"`
-	LinksPath          string `mapstructure:"links_path"`
+	Enabled           bool   `mapstructure:"enabled"`
+	Port              int    `mapstructure:"port"`
+	StaticDir         string `mapstructure:"static_dir"`
+	SupervisorSocket  string `mapstructure:"supervisor_socket"`
+	SupervisorConfDir string `mapstructure:"supervisor_conf_dir"`
+	ConsoleURL        string `mapstructure:"console_url"`
+	AuthPassword      string `mapstructure:"auth_password"`
+	AuthSessionTTL    int    `mapstructure:"auth_session_ttl"`
+	LinksPath         string `mapstructure:"links_path"`
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
@@ -56,20 +57,21 @@ type Server struct {
 	hardware      *hardware.Collector
 	links         *links.Registry
 	gpuHistory    *gpuhistory.Collector
+	vmManager     *vms.Manager
 }
 
 // NewServer 创建控制台服务器
 func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, appMgr *apps.Manager, storeMgr *apps.StoreManager) *Server {
 	s := &Server{
-		config:        cfg,
-		logger:        logger,
-		mux:           http.NewServeMux(),
-		collector:     col,
-		appManager:    appMgr,
-		storeManager:  storeMgr,
-		fileBrowser:   files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
-		modelScanner:  models.NewScanner(models.Config{}),
-		alertEngine:   alerts.NewEngine(col),
+		config:       cfg,
+		logger:       logger,
+		mux:          http.NewServeMux(),
+		collector:    col,
+		appManager:   appMgr,
+		storeManager: storeMgr,
+		fileBrowser:  files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
+		modelScanner: models.NewScanner(models.Config{}),
+		alertEngine:  alerts.NewEngine(col),
 		auth: auth.New(auth.Config{
 			Password:   cfg.AuthPassword,
 			SessionTTL: cfg.AuthSessionTTL,
@@ -78,6 +80,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, appMgr 
 		hardware:      hardware.New(60 * time.Second),
 		links:         links.New(cfg.LinksPath),
 		gpuHistory:    gpuhistory.New(10*time.Second, 6*time.Hour),
+		vmManager:     vms.NewManager(),
 	}
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()

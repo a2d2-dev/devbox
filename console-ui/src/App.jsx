@@ -44,6 +44,7 @@ import AppStore from './pages/AppStore'
 import AlertCenter from './pages/AlertCenter'
 import AuditLog from './pages/AuditLog'
 import Supervisor from './pages/Supervisor'
+import VirtualMachines from './pages/VirtualMachines'
 import Hardware from './pages/Hardware'
 import Links from './pages/Links'
 import Diagnostics from './pages/Settings'
@@ -406,10 +407,11 @@ export default function App() {
                 {appId === 'alerts'    && <AlertCenter authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'audit'     && <AuditLog/>}
                 {appId === 'supervisor'&& <Supervisor/>}
+                {appId === 'virtual-machines' && <VirtualMachines/>}
                 {appId === 'hardware'  && <Hardware/>}
                 {appId === 'links'     && <Links/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','alerts','audit','supervisor','hardware','links','diag','settings'].includes(appId)
+                {!['dashboard','store','alerts','audit','supervisor','virtual-machines','hardware','links','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)}/>}
 

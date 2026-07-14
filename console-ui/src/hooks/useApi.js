@@ -502,6 +502,11 @@ export function useSupervisor(interval = 5000) {
   return usePoll('/supervisor/status', { interval, fallback: null });
 }
 
+// devbox-only: libvirt 虚拟机清单与状态。
+export function useVirtualMachines(interval = 5000) {
+  return usePoll('/vms', { interval, fallback: [] });
+}
+
 // devbox-only: 硬件清单快照。后端 60s cache，前端 30s 轻量轮询就够了。
 export function useHardware(interval = 30000) {
   return usePoll('/hardware', { interval, fallback: null });
@@ -544,6 +549,19 @@ export async function supervisorControl(name, action) {
     body: JSON.stringify({ action }),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json().catch(() => null);
+}
+
+export async function vmControl(name, action) {
+  const r = await authFetch(`${API}/vms/${encodeURIComponent(name)}/control`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(text || `HTTP ${r.status}`);
+  }
   return r.json().catch(() => null);
 }
 
