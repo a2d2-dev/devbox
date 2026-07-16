@@ -104,6 +104,7 @@ const inputStyle = {
 
 function VMRow({ vm, active, onClick }) {
   const memPct = pct(vm.memory?.usedKiB || vm.memory?.actualKiB || 0, vm.memory?.maxKiB || 0);
+  const deviceCount = (vm.disks?.length || 0) + (vm.filesystems?.length || 0);
   return (
     <button onClick={onClick} style={{
       width: '100%', padding: 12, borderRadius: 8, textAlign: 'left',
@@ -121,7 +122,7 @@ function VMRow({ vm, active, onClick }) {
           }}>{vm.name}</span>
         </div>
         <div style={{ fontSize: 11, color: T.ink3, marginTop: 6 }}>
-          {vm.vcpus || 0} vCPU · {fmtKiB(vm.memory?.maxKiB)} · {vm.disks?.length || 0} 设备
+          {vm.vcpus || 0} vCPU · {fmtKiB(vm.memory?.maxKiB)} · {deviceCount} 设备
         </div>
         <div style={{ marginTop: 8, height: 5, borderRadius: 3, background: '#e2e8f0', overflow: 'hidden' }}>
           <div style={{ width: `${memPct}%`, height: '100%', background: active ? T.blue : '#64748b' }}/>
@@ -130,6 +131,12 @@ function VMRow({ vm, active, onClick }) {
       <StateBadge state={vm.state}/>
     </button>
   );
+}
+
+function guestMountFor(fs, mounts) {
+  const source = fs?.target || '';
+  const mount = (mounts || []).find(m => m.source === source || m.target === source);
+  return mount?.target || source || '-';
 }
 
 function DiskTable({ disks }) {
@@ -164,6 +171,50 @@ function DiskTable({ disks }) {
             }}>{d.source || '-'}</td>
           </tr>
         ))}
+      </tbody>
+    </table>
+  );
+}
+
+function SharedMountTable({ filesystems, mounts }) {
+  const rows = filesystems || [];
+  if (!rows.length) {
+    return <div style={{ padding: 14, color: T.ink3, fontSize: 12 }}>暂无共享挂载</div>;
+  }
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead>
+        <tr style={{ background: '#f8fafc' }}>
+          {['类型', 'Host 路径', 'Guest 挂载点', '模式'].map(h => (
+            <th key={h} style={{
+              padding: '8px 10px', textAlign: h === 'Host 路径' ? 'left' : 'right',
+              fontSize: 10.5, color: T.ink3, fontWeight: 700,
+              borderBottom: `1px solid ${T.borderSoft}`,
+            }}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(fs => {
+          const guestMount = guestMountFor(fs, mounts);
+          return (
+            <tr key={`${fs.source}-${fs.target}`} style={{ borderTop: `1px solid ${T.borderSoft}` }}>
+              <td style={{ padding: '9px 10px', fontSize: 12, fontWeight: 700, color: T.ink, textAlign: 'right' }}>
+                {fs.driver || fs.type || '-'}
+              </td>
+              <td title={fs.source} style={{
+                padding: '9px 10px', fontSize: 11.5, color: T.ink2,
+                fontFamily: 'ui-monospace, monospace', maxWidth: 520,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>{fs.source || '-'}</td>
+              <td title={guestMount} style={{
+                padding: '9px 10px', fontSize: 11.5, color: T.ink2, textAlign: 'right',
+                fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap',
+              }}>{guestMount}</td>
+              <td style={cellRight}>{fs.accessMode || '-'}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -368,6 +419,17 @@ export default function VirtualMachines() {
                   <span style={{ fontSize: 13, fontWeight: 720, color: T.ink }}>块设备</span>
                 </div>
                 <DiskTable disks={current.disks}/>
+              </section>
+
+              <section style={{ border: `1px solid ${T.border}`, borderRadius: 8, background: T.surface, overflow: 'hidden' }}>
+                <div style={{
+                  height: 42, padding: '0 14px', display: 'flex', alignItems: 'center',
+                  borderBottom: `1px solid ${T.borderSoft}`, gap: 8,
+                }}>
+                  <Icon name="folder" size={15} stroke={1.8} style={{ color: T.ink2 }}/>
+                  <span style={{ fontSize: 13, fontWeight: 720, color: T.ink }}>共享挂载</span>
+                </div>
+                <SharedMountTable filesystems={current.filesystems} mounts={current.guest?.mounts}/>
               </section>
 
               <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

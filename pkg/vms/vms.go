@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,19 +24,20 @@ func NewManager() *Manager {
 }
 
 type Domain struct {
-	Name       string         `json:"name"`
-	UUID       string         `json:"uuid,omitempty"`
-	State      string         `json:"state"`
-	Persistent bool           `json:"persistent"`
-	Autostart  bool           `json:"autostart"`
-	VCPUs      int            `json:"vcpus"`
-	CPUTimeSec float64        `json:"cpuTimeSec"`
-	Memory     Memory         `json:"memory"`
-	Disks      []Disk         `json:"disks"`
-	Interfaces []Interface    `json:"interfaces"`
-	Guest      *GuestSnapshot `json:"guest,omitempty"`
-	Error      string         `json:"error,omitempty"`
-	UpdatedAt  string         `json:"updatedAt"`
+	Name        string         `json:"name"`
+	UUID        string         `json:"uuid,omitempty"`
+	State       string         `json:"state"`
+	Persistent  bool           `json:"persistent"`
+	Autostart   bool           `json:"autostart"`
+	VCPUs       int            `json:"vcpus"`
+	CPUTimeSec  float64        `json:"cpuTimeSec"`
+	Memory      Memory         `json:"memory"`
+	Disks       []Disk         `json:"disks"`
+	Filesystems []Filesystem   `json:"filesystems,omitempty"`
+	Interfaces  []Interface    `json:"interfaces"`
+	Guest       *GuestSnapshot `json:"guest,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	UpdatedAt   string         `json:"updatedAt"`
 }
 
 type Memory struct {
@@ -60,6 +62,14 @@ type Disk struct {
 	WriteBytes    uint64 `json:"writeBytes,omitempty"`
 }
 
+type Filesystem struct {
+	Target     string `json:"target"`
+	Source     string `json:"source,omitempty"`
+	Type       string `json:"type,omitempty"`
+	AccessMode string `json:"accessMode,omitempty"`
+	Driver     string `json:"driver,omitempty"`
+}
+
 type Interface struct {
 	Name     string `json:"name"`
 	MAC      string `json:"mac,omitempty"`
@@ -68,11 +78,12 @@ type Interface struct {
 }
 
 type GuestSnapshot struct {
-	AgentOK        bool       `json:"agentOK"`
-	LoadAverage    []float64  `json:"loadAverage,omitempty"`
-	Memory         *GuestMem  `json:"memory,omitempty"`
-	MemoryPressure []Pressure `json:"memoryPressure,omitempty"`
-	Error          string     `json:"error,omitempty"`
+	AgentOK        bool         `json:"agentOK"`
+	LoadAverage    []float64    `json:"loadAverage,omitempty"`
+	Memory         *GuestMem    `json:"memory,omitempty"`
+	Mounts         []GuestMount `json:"mounts,omitempty"`
+	MemoryPressure []Pressure   `json:"memoryPressure,omitempty"`
+	Error          string       `json:"error,omitempty"`
 }
 
 type GuestMem struct {
@@ -92,6 +103,12 @@ type Pressure struct {
 	Avg10  float64 `json:"avg10"`
 	Avg60  float64 `json:"avg60"`
 	Avg300 float64 `json:"avg300"`
+}
+
+type GuestMount struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	FSType string `json:"fstype"`
 }
 
 type ConfigUpdate struct {
@@ -136,6 +153,9 @@ func (m *Manager) Get(ctx context.Context, name string) (*Domain, error) {
 	}
 	if out, err := m.run(ctx, 4*time.Second, "domblklist", name, "--details"); err == nil {
 		mergeBlockList(d, out)
+	}
+	if out, err := m.run(ctx, 4*time.Second, "dumpxml", name); err == nil {
+		d.Filesystems = parseFilesystems(out)
 	}
 	if out, err := m.run(ctx, 4*time.Second, "domifaddr", name, "--source", "lease"); err == nil {
 		d.Interfaces = parseInterfaces(out)
@@ -385,6 +405,45 @@ func mergeBlockList(d *Domain, out string) {
 	}
 }
 
+func parseFilesystems(out string) []Filesystem {
+	var dom struct {
+		Devices struct {
+			Filesystems []struct {
+				Type       string `xml:"type,attr"`
+				AccessMode string `xml:"accessmode,attr"`
+				Driver     struct {
+					Type string `xml:"type,attr"`
+				} `xml:"driver"`
+				Source struct {
+					Dir string `xml:"dir,attr"`
+				} `xml:"source"`
+				Target struct {
+					Dir string `xml:"dir,attr"`
+				} `xml:"target"`
+			} `xml:"filesystem"`
+		} `xml:"devices"`
+	}
+	if err := xml.Unmarshal([]byte(out), &dom); err != nil {
+		return nil
+	}
+	filesystems := make([]Filesystem, 0, len(dom.Devices.Filesystems))
+	for _, fs := range dom.Devices.Filesystems {
+		target := strings.TrimSpace(fs.Target.Dir)
+		source := strings.TrimSpace(fs.Source.Dir)
+		if target == "" && source == "" {
+			continue
+		}
+		filesystems = append(filesystems, Filesystem{
+			Target:     target,
+			Source:     source,
+			Type:       strings.TrimSpace(fs.Type),
+			AccessMode: strings.TrimSpace(fs.AccessMode),
+			Driver:     strings.TrimSpace(fs.Driver.Type),
+		})
+	}
+	return filesystems
+}
+
 func parseInterfaces(out string) []Interface {
 	var list []Interface
 	for _, line := range strings.Split(out, "\n") {
@@ -399,7 +458,7 @@ func parseInterfaces(out string) []Interface {
 
 func (m *Manager) guestSnapshot(ctx context.Context, name string) *GuestSnapshot {
 	snap := &GuestSnapshot{}
-	cmd := "cat /proc/loadavg; free -b; cat /proc/pressure/memory"
+	cmd := "cat /proc/loadavg; free -b; cat /proc/pressure/memory; printf 'DEVBOX_MOUNTS\\n'; findmnt -rn -t virtiofs -o SOURCE,TARGET,FSTYPE 2>/dev/null"
 	req := map[string]any{
 		"execute": "guest-exec",
 		"arguments": map[string]any{
@@ -462,8 +521,19 @@ func parseGuestOutput(s *GuestSnapshot, out string) {
 			s.LoadAverage = append(s.LoadAverage, parseFloat(f[i]))
 		}
 	}
+	inMounts := false
 	for _, line := range lines {
+		if strings.TrimSpace(line) == "DEVBOX_MOUNTS" {
+			inMounts = true
+			continue
+		}
 		f := strings.Fields(line)
+		if inMounts {
+			if len(f) >= 3 {
+				s.Mounts = append(s.Mounts, GuestMount{Source: f[0], Target: f[1], FSType: f[2]})
+			}
+			continue
+		}
 		if len(f) >= 7 && f[0] == "Mem:" {
 			s.Memory = &GuestMem{
 				TotalBytes:     parseUint(f[1]),

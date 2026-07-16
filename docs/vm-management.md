@@ -31,6 +31,7 @@ DevBox 控制台内置「虚拟机」系统工具，用于管理本机 libvirt d
 - 虚拟机列表与运行/关机汇总
 - 单台虚拟机状态、vCPU、内存、load、IP
 - 块设备路径、容量、已分配空间和读写累计
+- 共享挂载：从 libvirt domain XML 的 `<filesystem>` 读取 host path / virtiofs tag；VM 运行且 guest agent 可用时，再用 guest `findmnt` 补齐实际 guest 挂载点（例如 `data3 -> /mnt/data3`）。
 - guest agent 返回的内存压力
 - 启动、重启、关机、强制断电操作
 - vCPU、内存、开机自启配置
