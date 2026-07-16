@@ -377,35 +377,56 @@ export default function VirtualMachines() {
 
               <section style={{
                 border: `1px solid ${T.border}`, borderRadius: 8, background: T.surface,
-                padding: 14, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 12,
-                alignItems: 'end',
+                padding: 14, display: 'flex', flexDirection: 'column', gap: 12,
               }}>
-                <Field label="vCPU">
-                  <input type="number" min="1" max="128" step="1" value={config.vcpus}
-                    onChange={e => setConfig(c => ({ ...c, vcpus: e.target.value }))}
-                    style={inputStyle}/>
-                </Field>
-                <Field label="内存" hint="MiB，保存到 libvirt 持久配置">
-                  <input type="number" min="512" step="512" value={config.memoryMiB}
-                    onChange={e => setConfig(c => ({ ...c, memoryMiB: e.target.value }))}
-                    style={inputStyle}/>
-                </Field>
-                <Field label="开机自启">
-                  <button onClick={() => setConfig(c => ({ ...c, autostart: !c.autostart }))} style={{
-                    height: 34, borderRadius: 7, border: `1px solid ${config.autostart ? '#bbf7d0' : T.border}`,
-                    background: config.autostart ? '#f0fdf4' : T.surface,
-                    color: config.autostart ? '#047857' : T.ink2,
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                    fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
-                  }}>
-                    <Icon name={config.autostart ? 'check' : 'minus'} size={13} stroke={2}/>
-                    {config.autostart ? '已启用' : '未启用'}
-                  </button>
-                </Field>
-                <ActionButton icon="check" label={busy === 'config' ? '保存中' : '保存配置'} tone="ok" disabled={!!busy} onClick={saveConfig}/>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Icon name="gear" size={15} stroke={1.8} style={{ color: T.ink2 }}/>
+                  <span style={{ fontSize: 13, fontWeight: 720, color: T.ink }}>持久配置</span>
+                  <span style={{ fontSize: 11.5, color: T.ink3 }}>写入 libvirt 配置</span>
+                </div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                  gap: 10,
+                  alignItems: 'end',
+                }}>
+                  <Field label="vCPU">
+                    <input type="number" min="1" max="128" step="1" value={config.vcpus}
+                      onChange={e => setConfig(c => ({ ...c, vcpus: e.target.value }))}
+                      style={{ ...inputStyle, width: '100%' }}/>
+                  </Field>
+                  <Field label="内存">
+                    <div style={{ position: 'relative' }}>
+                      <input type="number" min="512" step="512" value={config.memoryMiB}
+                        onChange={e => setConfig(c => ({ ...c, memoryMiB: e.target.value }))}
+                        style={{ ...inputStyle, width: '100%', paddingRight: 42 }}/>
+                      <span style={{
+                        position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                        fontSize: 11.5, color: T.ink3, pointerEvents: 'none',
+                      }}>MiB</span>
+                    </div>
+                  </Field>
+                  <Field label="开机自启">
+                    <button onClick={() => setConfig(c => ({ ...c, autostart: !c.autostart }))} style={{
+                      height: 34, width: '100%', borderRadius: 7, border: `1px solid ${config.autostart ? '#bbf7d0' : T.border}`,
+                      background: config.autostart ? '#f0fdf4' : T.surface,
+                      color: config.autostart ? '#047857' : T.ink2,
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                      fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+                    }}>
+                      <Icon name={config.autostart ? 'check' : 'minus'} size={13} stroke={2}/>
+                      {config.autostart ? '已启用' : '未启用'}
+                    </button>
+                  </Field>
+                  <ActionButton icon="check" label={busy === 'config' ? '保存中' : '保存配置'} tone="ok" disabled={!!busy} onClick={saveConfig}/>
+                </div>
                 {isRunning && (
-                  <div style={{ gridColumn: '1 / -1', fontSize: 11.5, color: T.ink3 }}>
-                    当前 VM 正在运行：vCPU/内存写入持久配置，重启后完整生效；开机自启立即生效。
+                  <div style={{
+                    paddingTop: 2, fontSize: 11.5, color: T.ink3,
+                    display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+                  }}>
+                    <Icon name="info" size={12} stroke={1.8} style={{ color: T.ink4 }}/>
+                    <span>运行中 VM 的 vCPU/内存变更需重启后完整生效；开机自启立即生效。</span>
                   </div>
                 )}
               </section>
