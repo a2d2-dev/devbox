@@ -1,7 +1,10 @@
 import { defineConfig } from 'vite'
+import process from 'node:process'
 import react from '@vitejs/plugin-react'
 import { ccPromptPlugin } from 'cc-prompter'
 import { codeInspectorPlugin } from 'code-inspector-plugin'
+
+const apiTarget = process.env.DEVBOX_API_TARGET || 'http://localhost:9090'
 
 export default defineConfig({
   plugins: [
@@ -17,12 +20,12 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:9091',
+        target: apiTarget,
         ws: true,
       },
-      '/auth': 'http://localhost:9091',
-      '/terminal.html': 'http://localhost:9091',
-      '/app-icons': 'http://localhost:9091',
+      '/auth': apiTarget,
+      '/terminal.html': apiTarget,
+      '/app-icons': apiTarget,
     },
   },
 })
