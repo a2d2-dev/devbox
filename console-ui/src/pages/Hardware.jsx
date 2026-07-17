@@ -47,9 +47,9 @@ function TempBar({ tempC, maxC, critC, w = 220 }) {
 function LiveMetric({ label, value, unit, color = T.ink }) {
   return (
     <div>
-      <div style={{ fontSize: 10.5, color: T.ink3, marginBottom: 2 }}>{label}</div>
-      <div style={{
-        fontSize: 22, fontWeight: 700, color,
+      <div style={{ ...T.type.caption, color: T.ink3, marginBottom: 2 }}>{label}</div>
+      <div className="tnum" style={{
+        ...T.type.title, fontWeight: 700, color,
         fontFamily: '"JetBrains Mono", ui-monospace, monospace',
         lineHeight: 1.1,
       }}>
@@ -149,7 +149,7 @@ function Toolbar({ data }) {
       padding: '10px 20px', borderBottom: `1px solid ${T.border}`,
       background: 'white', flexShrink: 0,
     }}>
-      <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>硬件中心</div>
+      <div style={{ ...T.type.heading, color: T.ink }}>硬件中心</div>
       <div style={{ color: T.ink3, fontSize: 12 }}>
         · {data.os?.hostname} · 采集于 {new Date(data.collectedAt).toLocaleTimeString()}
       </div>
@@ -477,15 +477,13 @@ function GPUCommandsSection({ pciAddress }) {
           {items.map((c, i) => {
             const cmd = c.cmd(pciAddress)
             return (
-              <button key={i} onClick={() => copyText(cmd)} style={{
+              <button key={i} onClick={() => copyText(cmd)} className="edge-press edge-row-hover" style={{
                 display: 'flex', gap: 10, alignItems: 'baseline',
                 width: '100%', textAlign: 'left', border: 'none',
                 background: 'transparent', cursor: 'pointer',
                 padding: '5px 6px', borderRadius: 6,
                 borderBottom: `1px dashed ${T.borderSoft || '#f1f5f9'}`,
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+              }}>
                 <span style={{ fontSize: 11.5, color: T.ink3, minWidth: 200, flexShrink: 0 }}>
                   {c.desc}
                 </span>

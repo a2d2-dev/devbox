@@ -4,6 +4,7 @@ import { Icon } from '../icons'
 import { StatusDot, Chip, Ring, Sparkline, Card, useTicker } from '../components/ui'
 import { useDevice, useMetrics, useMetricsHistory, useApps, useAlerts, useNetwork, getAuthToken } from '../hooks/useApi'
 import { btnSecondary, btnPrimary, btnDanger } from '../components/AppWindow'
+import TabBar from '../components/TabBar'
 
 function guessAppStyle(id, name, category) {
   const n = (id + ' ' + name).toLowerCase();
@@ -143,7 +144,7 @@ function DeployDialog({ app, onClose, onSuccess }) {
             {app.iconUrl ? <img src={app.iconUrl} style={{ width: 32, height: 32, objectFit: 'cover' }} /> : <Icon name={app.icon} size={18} stroke={1.7}/>}
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>部署 {app.name}</div>
+            <div style={{ ...T.type.heading, color: T.ink }}>部署 {app.name}</div>
             <div style={{ fontSize: 11, color: T.ink3 }} className="mono">{app.ver}</div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: T.ink3 }}>
@@ -200,8 +201,9 @@ function DeployDialog({ app, onClose, onSuccess }) {
         </div>
 
         <div style={{ padding: '12px 20px', borderTop: `1px solid ${T.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose} style={{ ...btnSecondary, height: 34, padding: '0 16px' }}>取消</button>
+          <button onClick={onClose} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 34, padding: '0 16px' }}>取消</button>
           <button onClick={handleSubmit} disabled={submitting || loading}
+            className="edge-press edge-btn-primary"
             style={{ ...btnPrimary, height: 34, padding: '0 20px', opacity: (submitting || loading) ? 0.6 : 1 }}>
             <Icon name="download" size={13} stroke={2}/>{submitting ? '部署中...' : '确认部署'}
           </button>
@@ -278,7 +280,7 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'auto' }}>
       <div style={{ padding: '12px 24px', borderBottom: `1px solid ${T.border}`, background: T.surface,
         display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button onClick={onBack} style={{ ...btnSecondary, height: 28, padding: '0 10px' }}>
+        <button onClick={onBack} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px' }}>
           <Icon name="chevDown" size={12} stroke={2} style={{ transform: 'rotate(90deg)' }}/>
           返回应用列表
         </button>
@@ -306,7 +308,7 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>{app.name}</div>
+              <div style={{ ...T.type.title, fontWeight: 700, color: T.ink }}>{app.name}</div>
               <Chip tone="gray"><span className="mono">{app.ver}</span></Chip>
               <Chip tone="blue">{app.cat}</Chip>
               {(app.installed || deployResult) && <Chip tone="green"><StatusDot tone="green" size={6}/>{deployResult ? '已部署' : '已安装'}</Chip>}
@@ -324,7 +326,7 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
               覆盖配置 / 升级版本 / 部署第二实例）。「打开应用」是桌面图标的职责，
               不在商店职责内 —— 已安装状态由左侧绿 chip「已安装」标识就够 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-            <button onClick={() => setShowDeploy(true)} style={{ ...btnPrimary, height: 36, padding: '0 18px' }}>
+            <button onClick={() => setShowDeploy(true)} className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 36, padding: '0 18px' }}>
               <Icon name="download" size={13} stroke={2}/>部署
             </button>
           </div>
@@ -354,17 +356,18 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
 }
 
 function StoreCard({ app, onOpen, onOpenApp }) {
-  const [hover, setHover] = useState(false);
   return (
     <div onClick={onOpen}
-         onMouseEnter={() => setHover(true)}
-         onMouseLeave={() => setHover(false)}
+         className="edge-row-hover"
          style={{
-      background: T.surface, border: `1px solid ${hover ? '#bfdbfe' : T.border}`,
+      background: T.surface, border: `1px solid ${T.border}`,
       borderRadius: 10, padding: 14, cursor: 'pointer',
-      boxShadow: hover ? '0 6px 14px -6px rgba(15,23,42,0.12)' : 'none',
+      boxShadow: 'none',
       transition: 'all 0.15s ease',
       display: 'flex', flexDirection: 'column', gap: 10,
+      '--edge-row-hover-bg': T.surface,
+      '--edge-row-hover-border-color': '#bfdbfe',
+      '--edge-row-hover-box-shadow': '0 6px 14px -6px rgba(15,23,42,0.12)',
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div style={{
@@ -426,10 +429,12 @@ function StoreCard({ app, onOpen, onOpenApp }) {
         <span style={{ fontSize: 10.5, color: T.ink4 }} className="mono">{app.date}</span>
         {app.installed
           ? <button onClick={(e) => { e.stopPropagation(); onOpenApp && onOpenApp({ id: app.id }); }}
+              className="edge-press edge-btn-secondary"
               style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
               <Icon name="play" size={11} stroke={2}/>打开
             </button>
           : <button onClick={(e) => { e.stopPropagation(); onOpen(); }}
+              className="edge-press edge-btn-primary"
               style={{ ...btnPrimary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
               <Icon name="download" size={11} stroke={2}/>部署
             </button>
@@ -607,32 +612,27 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
         {/* 顶部 3 tab —— 对齐 1Panel 应用商店「全部 / 已安装 / 可升级」交互。
             tab 是状态主轴，sidebar category 是二次过滤维度。tab 计数实时反映
             cross-reference 结果（store apps × 已部署 apps） */}
-        <div style={{
-          display: 'flex', gap: 4, marginBottom: 18,
-          borderBottom: `1px solid ${T.borderSoft}`,
-        }}>
-          {[
-            ['all',        '全部',    allCount],
-            ['installed',  '已安装',  installedCount],
-            ['upgradable', '可升级',  upgradableCount],
-          ].map(([id, label, count]) => (
-            <div key={id} onClick={() => setTab(id)} style={{
-              padding: '10px 16px 12px', fontSize: 13, cursor: 'pointer',
-              color: tab === id ? T.blueDeep : T.ink3,
-              fontWeight: tab === id ? 600 : 500,
-              borderBottom: `2px solid ${tab === id ? T.blue : 'transparent'}`,
-              marginBottom: -1,
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}>
-              {label}
+        <TabBar
+          tabs={[
+            { id: 'all', label: '全部', count: allCount },
+            { id: 'installed', label: '已安装', count: installedCount },
+            { id: 'upgradable', label: '可升级', count: upgradableCount },
+          ]}
+          active={tab}
+          onChange={setTab}
+          style={{ gap: 4, marginBottom: 18, borderBottom: `1px solid ${T.borderSoft}` }}
+          itemStyle={{ padding: '10px 16px 12px', fontSize: 13, marginBottom: -1 }}
+          renderLabel={(t2, on) => (
+            <>
+              {t2.label}
               <span style={{
                 fontSize: 11, color: T.ink4, fontWeight: 500,
                 padding: '1px 6px', borderRadius: 3,
-                background: tab === id ? T.blueSoft : T.surfaceAlt,
-              }} className="mono tnum">{count}</span>
-            </div>
-          ))}
-        </div>
+                background: on ? T.blueSoft : T.surfaceAlt,
+              }} className="mono tnum">{t2.count}</span>
+            </>
+          )}
+        />
 
         {/* Featured — 仅展示 StoreApp CR 上有 label app.theriseunion.io/pinned=true 的应用
             （之前是 slice(0,4) 粗暴拿前 4 个，没有"推荐"机制）
@@ -659,7 +659,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
                   {f.icon ? <img src={f.icon} alt="" style={{ width: 20, height: 20 }}/> : <Icon name="sparkle" size={20} stroke={1.7}/>}
                 </div>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em' }}>{f.name}</div>
+                  <div style={{ ...T.type.heading }}>{f.name}</div>
                   <div style={{ fontSize: 11.5, opacity: 0.85, marginTop: 2 }}>{f.category}</div>
                 </div>
               </div>
@@ -697,7 +697,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="按名称搜索"
               style={{ flex: 1, border: 'none', outline: 'none', fontSize: 12.5, background: 'transparent' }}/>
           </div>
-          <button style={btnSecondary}>
+          <button className="edge-press edge-btn-secondary" style={btnSecondary}>
             <Icon name="refresh" size={13} stroke={1.8}/>同步
           </button>
         </div>

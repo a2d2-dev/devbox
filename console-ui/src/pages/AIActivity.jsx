@@ -2,22 +2,14 @@ import { useMemo, useState, useEffect, useRef } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { cleanupStaleCodex, useAIActivity, useAITranscript } from '../hooks/useApi'
+import TabBar from '../components/TabBar'
 
-const tabStyle = (active) => ({
+const aiTabItemStyle = {
   height: 39,
   padding: '0 14px',
-  border: 'none',
-  borderBottom: `2px solid ${active ? T.blue : 'transparent'}`,
   borderRadius: '6px 6px 0 0',
-  background: active ? '#eff6ff' : 'transparent',
-  color: active ? T.blue : T.ink3,
   fontSize: 13,
-  fontWeight: active ? 800 : 600,
-  cursor: 'pointer',
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-});
+};
 
 const th = {
   padding: '8px 12px',
@@ -148,7 +140,7 @@ function Stat({ icon, label, value, tone = T.blue }) {
         <Icon name={icon} size={13} stroke={1.8} style={{ color: tone }}/>
         {label}
       </div>
-      <div className="mono tnum" style={{ marginTop: 8, fontSize: 24, lineHeight: 1, color: T.ink, fontWeight: 800 }}>
+      <div className="mono tnum" style={{ marginTop: 8, ...T.type.title, lineHeight: 1, color: T.ink, fontWeight: 800 }}>
         {value ?? '-'}
       </div>
     </div>
@@ -365,7 +357,7 @@ function AgentBoard({ board }) {
           <span style={{ width: 10, height: 10, borderRadius: 5, background: meta.color, flexShrink: 0 }}/>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-              <div style={{ fontSize: 15, fontWeight: 900, color: T.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div style={{ ...T.type.heading, fontWeight: 900, color: T.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {selected?.name || 'Agent'}
               </div>
               <Pill tone={meta.tone}>{meta.label}</Pill>
@@ -655,7 +647,7 @@ function SessionsConsole({ rows }) {
       </div>
       <div style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden', background: '#f8fafc', minWidth: 0 }}>
         <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.borderSoft}`, background: T.surface }}>
-          <div style={{ fontSize: 15, fontWeight: 900, color: T.ink }}>{sessionTitle(selected)}</div>
+          <div style={{ ...T.type.heading, fontWeight: 900, color: T.ink }}>{sessionTitle(selected)}</div>
           <div className="mono" style={{ marginTop: 5, color: T.ink4, fontSize: 10.5, wordBreak: 'break-all' }}>{selected.path}</div>
         </div>
         <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1001,7 +993,7 @@ export default function AIActivity() {
             <Icon name="brain" size={20} stroke={2}/>
           </span>
           <div>
-            <div style={{ fontSize: 23, fontWeight: 900, color: T.ink, letterSpacing: 0 }}>Agent 活动中心</div>
+            <div style={{ ...T.type.title, fontWeight: 900, color: T.ink }}>Agent 活动中心</div>
             <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>
               Claude Code / Codex / OpenClaw / Hermes · 进程、会话、配置与限流风险
             </div>
@@ -1064,7 +1056,7 @@ export default function AIActivity() {
             }}>
               {active && <AgentIcon id={active.id} issue={activeIssue} active/>}
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 900, color: T.ink }}>{active ? active.name : '详情'}</div>
+                <div style={{ ...T.type.heading, fontWeight: 900, color: T.ink }}>{active ? active.name : '详情'}</div>
                 {active && <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 2 }}>{active.description}</div>}
               </div>
               <div style={{ flex: 1 }}/>
@@ -1077,18 +1069,30 @@ export default function AIActivity() {
               borderBottom: `1px solid ${T.borderSoft}`,
               background: T.surface,
             }}>
-              {[
-                ['board', 'Board', 'dashboard'],
-                ['overview', '概览', 'dashboard'],
-                ['processes', '进程', 'cpu'],
-                ['sessions', '会话 / Chat', 'message'],
-                ['configs', '配置', 'file'],
-                ['events', '事件', 'clock'],
-              ].map(([id, label, icon]) => (
-                <button key={id} onClick={() => setTab(id)} style={tabStyle(tab === id)}>
-                  <Icon name={icon} size={13} stroke={2}/>{label}
-                </button>
-              ))}
+              <TabBar
+                tabs={[
+                  { id: 'board', label: 'Board', icon: 'dashboard' },
+                  { id: 'overview', label: '概览', icon: 'dashboard' },
+                  { id: 'processes', label: '进程', icon: 'cpu' },
+                  { id: 'sessions', label: '会话 / Chat', icon: 'message' },
+                  { id: 'configs', label: '配置', icon: 'file' },
+                  { id: 'events', label: '事件', icon: 'clock' },
+                ]}
+                active={tab}
+                onChange={setTab}
+                itemAs="button"
+                activeTextColor={T.blue}
+                activeWeight={800}
+                inactiveWeight={600}
+                style={{ gap: 4 }}
+                itemStyle={aiTabItemStyle}
+                activeItemStyle={{ background: '#eff6ff' }}
+                renderLabel={(t2) => (
+                  <>
+                    <Icon name={t2.icon} size={13} stroke={2}/>{t2.label}
+                  </>
+                )}
+              />
             </div>
             <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
               {tab !== 'board' && !active && <Empty />}

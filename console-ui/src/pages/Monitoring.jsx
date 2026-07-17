@@ -25,8 +25,7 @@ function Metric({ label, value, max, pct, color, mono }) {
         <span className="mono">{max}</span>
       </div>
       <div className={mono ? 'mono tnum' : 'tnum'} style={{
-        fontSize: 16, fontWeight: 700, color: T.ink, lineHeight: 1, marginBottom: 5,
-        letterSpacing: '-0.01em',
+        ...T.type.heading, color: T.ink, lineHeight: 1, marginBottom: 5,
       }}>{value}</div>
       <div style={{ height: 4, borderRadius: 2, background: '#f1f5f9', overflow: 'hidden' }}>
         <div style={{
@@ -314,7 +313,7 @@ function TopResourceBar({ cpu, gpuAvg, memPct, memUsed, memTotal, diskPct, diskU
           <div style={{ fontSize: 12, fontWeight: 600, color: T.ink }}>{label}</div>
         </div>
         <div className="mono tnum" style={{
-          fontSize: 24, fontWeight: 700, color: loading ? T.ink4 : color, lineHeight: 1,
+          ...T.type.title, fontWeight: 700, color: loading ? T.ink4 : color, lineHeight: 1,
           letterSpacing: '-0.02em',
         }}>{value}</div>
         <div style={{ fontSize: 11, color: T.ink3, marginTop: 6 }}>{sub}</div>
@@ -448,7 +447,7 @@ export default function MonitoringApp() {
       {/* Header strip — 标题 + 时间窗切换（AC-7 仅返回 + 时间窗，不加刷新/导出）*/}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>监控</div>
+          <div style={{ ...T.type.heading, color: T.ink }}>监控</div>
           <div style={{ fontSize: 12, color: T.ink3, marginTop: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span><span className="edge-live-dot" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: T.green, marginRight: 5, verticalAlign: 'middle' }}/>实时刷新中</span>
             <span style={{ color: '#cbd5e1' }}>·</span>

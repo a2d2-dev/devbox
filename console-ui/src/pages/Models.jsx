@@ -69,10 +69,10 @@ export default function ModelsFace() {
           </div>
         </div>
         <div style={{ flex: 1 }}/>
-        <button style={btnSecondary}>
+        <button className="edge-press edge-btn-secondary" style={btnSecondary}>
           <Icon name="cloud" size={13} stroke={1.8}/>从 HuggingFace 同步
         </button>
-        <button style={btnPrimary}>
+        <button className="edge-press edge-btn-primary" style={btnPrimary}>
           <Icon name="download" size={13} stroke={2}/>拉取新模型
         </button>
       </div>

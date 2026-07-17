@@ -4,6 +4,7 @@ import { Icon } from '../icons'
 import { StatusDot, Chip, Ring, Sparkline, Card, useTicker } from '../components/ui'
 import { useDevice, useMetrics, useMetricsHistory, useApps, useAlerts, useNetwork, authFetch } from '../hooks/useApi'
 import { btnSecondary, btnPrimary, btnDanger } from '../components/AppWindow'
+import TabBar from '../components/TabBar'
 
 function NetFirewall() {
   const rules = [
@@ -29,7 +30,7 @@ function NetFirewall() {
             <div style={{ fontSize: 12.5, fontWeight: 700, color: '#047857' }}>防火墙已启用</div>
             <div style={{ fontSize: 11, color: '#065f46', marginTop: 2 }}>nftables · 7 条规则 · 今日拦截 <span className="mono tnum" style={{ fontWeight: 600 }}>142</span> 个请求</div>
           </div>
-          <button style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5,
+          <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5,
             background: 'white', color: '#047857', borderColor: '#a7f3d0' }}>
             临时禁用
           </button>
@@ -51,10 +52,10 @@ function NetFirewall() {
         <span style={{ fontSize: 11.5, fontWeight: 600, color: T.ink2 }}>规则列表</span>
         <span style={{ fontSize: 11, color: T.ink4 }}>· 按优先级从上到下匹配</span>
         <div style={{ flex: 1 }}/>
-        <button style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
+        <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
           <Icon name="download" size={12} stroke={1.8}/>导出 nftables
         </button>
-        <button style={{ ...btnPrimary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
+        <button className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
           <Icon name="plus" size={12} stroke={2}/>新增规则
         </button>
       </div>
@@ -260,30 +261,23 @@ function NetworkManagement() {
       </div>
 
       {/* Tab bar */}
-      <div style={{ display: 'flex', padding: '4px 16px 0', gap: 2, marginTop: 8 }}>
-        {[
-          { id: 'interfaces', label: '网络配置', icon: 'network', count: ifaces.length },
-        ].map(t2 => {
-          const on = tab === t2.id;
-          return (
-            <div key={t2.id} onClick={() => setTab(t2.id)} style={{
-              padding: '8px 12px 10px', fontSize: 12.5, cursor: 'pointer',
-              color: on ? T.blueDeep : T.ink3,
-              fontWeight: on ? 600 : 500,
-              borderBottom: `2px solid ${on ? T.blue : 'transparent'}`,
-              marginBottom: -1,
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}>
-              <Icon name={t2.icon} size={13} stroke={1.8}/>{t2.label}
-              <span className="mono tnum" style={{
-                fontSize: 10, color: on ? T.blueDeep : T.ink4,
-                background: on ? '#dbeafe' : T.surfaceAlt,
-                padding: '0 5px', borderRadius: 999, lineHeight: '16px', marginLeft: 2,
-              }}>{t2.count}</span>
-            </div>
-          );
-        })}
-      </div>
+      <TabBar
+        tabs={[{ id: 'interfaces', label: '网络配置', icon: 'network', count: ifaces.length }]}
+        active={tab}
+        onChange={setTab}
+        style={{ padding: '4px 16px 0', gap: 2, marginTop: 8 }}
+        itemStyle={{ padding: '8px 12px 10px', fontSize: 12.5, marginBottom: -1 }}
+        renderLabel={(t2, on) => (
+          <>
+            <Icon name={t2.icon} size={13} stroke={1.8}/>{t2.label}
+            <span className="mono tnum" style={{
+              fontSize: 10, color: on ? T.blueDeep : T.ink4,
+              background: on ? '#dbeafe' : T.surfaceAlt,
+              padding: '0 5px', borderRadius: 999, lineHeight: '16px', marginLeft: 2,
+            }}>{t2.count}</span>
+          </>
+        )}
+      />
 
       {/* Interfaces from API */}
       <div style={{ padding: 16 }}>
@@ -296,10 +290,10 @@ function NetworkManagement() {
           MTU 默认 <span className="mono tnum" style={{ color: T.ink2, fontWeight: 600 }}>1500</span>
         </span>
         <div style={{ flex: 1 }}/>
-        <button style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
+        <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
           <Icon name="refresh" size={12} stroke={1.8}/>重新扫描
         </button>
-        <button style={{ ...btnPrimary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
+        <button className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
           <Icon name="plus" size={12} stroke={2}/>新增接口
         </button>
       </div>
@@ -385,7 +379,7 @@ export default function Diagnostics() {
   return (
     <div style={{ flex: 1, padding: 24, overflow: 'auto', background: T.surfaceAlt }}>
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 17, fontWeight: 700, color: T.ink }}>系统设置</div>
+        <div style={{ ...T.type.heading, color: T.ink }}>系统设置</div>
         <div style={{ fontSize: 12, color: T.ink3, marginTop: 3 }}>诊断工具 · 网络管理 · 设备信息</div>
       </div>
 

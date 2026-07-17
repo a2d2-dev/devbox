@@ -15,6 +15,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { T } from '../tokens'
+import { motion, useMotionPref } from '../motion'
 
 // 内置单位 formatter —— Y 轴 tick / 平均 / 峰值统一走它，单位一致不漏掉
 const FORMATTERS = {
@@ -80,7 +81,10 @@ function monotonePath(pts) {
  */
 export function TrendChart({ title, series = [], color = T.blue, unit = 'percent', window = '1h', max }) {
   const containerRef = useRef(null)
+  const hasAnimated = useRef(false)
+  const pref = useMotionPref()
   const [chartW, setChartW] = useState(520)
+  const [hasDrawn, setHasDrawn] = useState(false)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -96,6 +100,13 @@ export function TrendChart({ title, series = [], color = T.blue, unit = 'percent
   const hasData = series.length > 0
   const avg = hasData ? series.reduce((a, b) => a + b, 0) / series.length : 0
   const peak = hasData ? Math.max(...series) : 0
+  const shouldAnimate = hasData && !pref.reduced && !hasDrawn
+
+  const markAnimated = () => {
+    if (hasAnimated.current) return
+    hasAnimated.current = true
+    setHasDrawn(true)
+  }
 
   const chartH = 84
   const padL = PAD_LEFT[unit] || 32
@@ -155,9 +166,25 @@ export function TrendChart({ title, series = [], color = T.blue, unit = 'percent
                     textAnchor="end" fontSize="9" fill="#9ca3af">{fmt(t.v)}</text>
             ))}
             {/* 半透明 area fill + 描边 */}
-            <path d={fillPath} fill={color} opacity="0.20"/>
-            <path d={path} fill="none" stroke={color} strokeWidth="1.6"
-                  strokeLinejoin="round" strokeLinecap="round"/>
+            <motion.path
+              d={fillPath}
+              fill={color}
+              initial={shouldAnimate ? { opacity: 0 } : false}
+              animate={{ opacity: 0.20 }}
+              transition={shouldAnimate ? { duration: 0.2, delay: 0.6, ease: 'easeOut' } : { duration: 0 }}
+              onAnimationComplete={markAnimated}
+            />
+            <motion.path
+              d={path}
+              fill="none"
+              stroke={color}
+              strokeWidth="1.6"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              initial={shouldAnimate ? { pathLength: 0 } : false}
+              animate={{ pathLength: 1 }}
+              transition={shouldAnimate ? { duration: 0.6, ease: 'easeOut' } : { duration: 0 }}
+            />
           </svg>
         ) : (
           <div style={{

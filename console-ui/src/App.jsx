@@ -52,9 +52,11 @@ import { AppShell } from './components/AppShell'
 import AppMgmtDrawer from './components/AppMgmtDrawer'
 import { AuthModal } from './components/AuthModal'
 import { LoginScreen } from './components/LoginScreen'
+import { ToastProvider } from './components/Toast'
 import { TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakToggle, TweakColor } from './components/TweaksPanel'
 import { useMetrics, useMetricsHistory, useApps, useAlerts, useDevice, setAuthToken, getAuthToken, clearAuth, setOnAuthExpired } from './hooks/useApi'
 import { SYSTEM_APPS } from './data/systemApps'
+import { AnimatePresence } from './motion'
 
 const TWEAK_DEFAULTS = {
   "preset": "platform-dark",
@@ -158,6 +160,13 @@ export default function App() {
   // Per-app maximized state — each app remembers whether it was full-screen
   // or framed before it was minimized / unfocused.
   const [maxByApp, setMaxByApp] = useState({}); // { [appId]: boolean }
+  const dockIconRects = useRef(new Map());
+  const registerDockIconRect = useCallback((id, node) => {
+    if (!id) return;
+    if (node) dockIconRects.current.set(id, node);
+    else dockIconRects.current.delete(id);
+  }, []);
+  const getDockIconRect = useCallback((id) => dockIconRects.current.get(id)?.getBoundingClientRect(), []);
   const maximized = activeId ? (maxByApp[activeId] ?? true) : true;
   const setMaximized = (next) => {
     if (!activeId) return;
@@ -294,7 +303,11 @@ export default function App() {
   const device = liveDevice || {};
 
   if (!loggedIn) {
-    return <LoginScreen onLogin={handleLogin} deviceName={device.deviceName || device.hostname}/>;
+    return (
+      <ToastProvider>
+        <LoginScreen onLogin={handleLogin} deviceName={device.deviceName || device.hostname}/>
+      </ToastProvider>
+    );
   }
 
   // 系统工具是本地内置能力（永远显示），不依赖任何 API。
@@ -333,6 +346,7 @@ export default function App() {
   const showWindow = !!activeApp && !minimized.has(activeApp.id);
 
   return (
+    <ToastProvider>
     <div style={{
       width: '100vw', height: '100vh', overflow: 'hidden',
       position: 'relative', display: 'flex', flexDirection: 'column',
@@ -384,17 +398,22 @@ export default function App() {
           />
         </div>
 
-        {/* Windows — all open apps stay mounted, hidden via display:none */}
-        {openApps.map(appId => {
-          const app = appById[appId];
-          if (!app) return null;
-          const isVisible = activeId === appId && !minimized.has(appId);
-          const isMax = maxByApp[appId] ?? true;
-          return (
-            <div key={appId} style={{ display: isVisible ? 'contents' : 'none' }}>
+        {/* Windows — open apps stay mounted; AppWindow owns visible/minimized animation. */}
+        <AnimatePresence>
+          {openApps.map(appId => {
+            const app = appById[appId];
+            if (!app) return null;
+            const isVisible = activeId === appId && !minimized.has(appId);
+            const isMax = maxByApp[appId] ?? true;
+            return (
               <AppWindow
+                key={appId}
                 app={app}
+                active={activeId === appId}
+                visible={isVisible}
+                minimized={minimized.has(appId)}
                 maximized={isMax}
+                getDockIconRect={getDockIconRect}
                 onMaximize={() => setMaxByApp(m => ({ ...m, [appId]: !(m[appId] ?? true) }))}
                 onMinimize={minimizeWindow}
                 onClose={closeWindow}
@@ -428,22 +447,22 @@ export default function App() {
                   />
                 )}
               </AppWindow>
-            </div>
-          );
-        })}
+            );
+          })}
+        </AnimatePresence>
 
         {/* Dock — visible on desktop and when window is in framed (non-maximized) mode */}
-        {(!showWindow || !maximized) && (
-          <Dock
-            apps={dockApps}
-            onShowDesktop={showDesktop}
-            onFocusApp={focusApp}
-            onCloseApp={closeApp}
-            anyVisible={showWindow}
-            authed={authed}
-            alertBadge={alertCount}
-          />
-        )}
+        <Dock
+          apps={dockApps}
+          registerDockIconRect={registerDockIconRect}
+          onShowDesktop={showDesktop}
+          onFocusApp={focusApp}
+          onCloseApp={closeApp}
+          anyVisible={showWindow}
+          hidden={showWindow && maximized}
+          authed={authed}
+          alertBadge={alertCount}
+        />
       </div>
 
       {/* [Story 4.2 Disabled] AuthModal "节点访问授权" 入口删除 (LF 报告冲突 2026-06-21)
@@ -561,5 +580,6 @@ export default function App() {
         )}
       </TweaksPanel>
     </div>
+    </ToastProvider>
   );
 }

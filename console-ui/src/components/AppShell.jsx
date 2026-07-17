@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { Icon } from '../icons'
 import { StatusDot, Chip, Card, Sparkline, useTicker } from './ui'
 import { btnSecondary, btnPrimary, btnDanger } from './AppWindow'
+import TabBar from './TabBar'
 import TerminalFace from '../pages/Terminal'
 import FilesFace from '../pages/Files'
 import PortsFace from '../pages/Ports'
@@ -31,7 +32,7 @@ function FaceHeader({ accent = T.blue, title, subtitle, version, kb, onMgmt, ext
       <div style={{ fontSize: 11.5, color: T.ink3, marginLeft: 4 }}>{subtitle}</div>
       <div style={{ flex: 1 }}/>
       {extra}
-      <button onClick={onMgmt} style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
+      <button onClick={onMgmt} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
         <Icon name="dashboard" size={12} stroke={1.8}/>应用管理
       </button>
     </div>
@@ -150,20 +151,20 @@ function VSCodeFace({ onMgmt }) {
         fontSize: 12,
       }}>
         {['文件', '编辑', '选择', '查看', '转到', '运行', '终端', '帮助'].map(m => (
-          <div key={m} style={{ padding: '5px 9px', color: '#cccccc', cursor: 'pointer', borderRadius: 3 }}
-            onMouseEnter={(e) => e.currentTarget.style.background = '#37373d'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>{m}</div>
+          <div key={m} className="edge-menu-item" style={{
+            padding: '5px 9px', color: '#cccccc', cursor: 'pointer', borderRadius: 3,
+            '--edge-menu-hover-bg': '#37373d',
+          }}>{m}</div>
         ))}
         <div style={{ flex: 1, textAlign: 'center', color: '#888', fontSize: 11.5 }}>
           llama-finetune — VS Code Server [GB10-DEV-01]
         </div>
-        <button onClick={onMgmt} style={{
+        <button onClick={onMgmt} className="edge-press edge-menu-item" style={{
           padding: '4px 9px', borderRadius: 3, fontSize: 11, color: '#888',
           background: 'transparent', border: 'none', cursor: 'pointer',
           display: 'flex', alignItems: 'center', gap: 4,
-        }}
-        onMouseEnter={(e) => e.currentTarget.style.background = '#37373d'}
-        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+          '--edge-menu-hover-bg': '#37373d',
+        }}>
           <Icon name="dashboard" size={11} stroke={1.8}/>管理
         </button>
       </div>
@@ -215,29 +216,34 @@ function VSCodeFace({ onMgmt }) {
         {/* Editor + terminal */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* Tabs */}
-          <div style={{
+          <TabBar
+            tabs={openTabs}
+            active={tab}
+            onChange={setTab}
+            getId={(t2) => t2.name}
+            activeColor="#0078d4"
+            activeTextColor="#ffffff"
+            inactiveTextColor="#969696"
+            indicatorPosition="top"
+            style={{
             display: 'flex', background: '#252526', borderBottom: '1px solid #1e1e1e',
             height: 35, flexShrink: 0, overflowX: 'auto',
-          }}>
-            {openTabs.map(t2 => {
-              const active = tab === t2.name;
-              return (
-                <div key={t2.name} onClick={() => setTab(t2.name)} style={{
-                  padding: '0 14px 0 12px', display: 'flex', alignItems: 'center', gap: 6,
-                  background: active ? '#1e1e1e' : 'transparent',
-                  borderRight: '1px solid #1e1e1e', cursor: 'pointer',
-                  borderTop: active ? '2px solid #0078d4' : '2px solid transparent',
-                  marginTop: active ? -2 : 0, fontSize: 12.5,
-                  color: active ? '#ffffff' : '#969696',
-                }}>
-                  <FileIcon type={t2.icon} size={13}/>
-                  {t2.name}
-                  {t2.dirty && <span style={{ color: '#cccccc', fontSize: 16, lineHeight: 0 }}>●</span>}
-                  <span style={{ color: '#858585', marginLeft: 4, fontSize: 14 }}>×</span>
-                </div>
-              );
-            })}
-          </div>
+            }}
+            itemStyle={{
+              padding: '0 14px 0 12px',
+              borderRight: '1px solid #1e1e1e',
+              fontSize: 12.5,
+            }}
+            activeItemStyle={{ background: '#1e1e1e', marginTop: -2 }}
+            renderLabel={(t2) => (
+              <>
+                <FileIcon type={t2.icon} size={13}/>
+                {t2.name}
+                {t2.dirty && <span style={{ color: '#cccccc', fontSize: 16, lineHeight: 0 }}>●</span>}
+                <span style={{ color: '#858585', marginLeft: 4, fontSize: 14 }}>×</span>
+              </>
+            )}
+          />
 
           {/* Editor */}
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
@@ -444,7 +450,7 @@ function JupyterFace({ onMgmt }) {
           <div key={m} style={{ padding: '5px 10px', color: '#333', cursor: 'pointer' }}>{m}</div>
         ))}
         <div style={{ flex: 1 }}/>
-        <button onClick={onMgmt} style={{ ...btnSecondary, height: 22, padding: '0 8px', fontSize: 11 }}>
+        <button onClick={onMgmt} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 22, padding: '0 8px', fontSize: 11 }}>
           <Icon name="dashboard" size={11} stroke={1.8}/>管理
         </button>
       </div>
@@ -529,13 +535,12 @@ function JupyterFace({ onMgmt }) {
             display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
           }}>
             {['plus', 'stop', 'play', 'refresh', 'download'].map(ic => (
-              <button key={ic} style={{
+              <button key={ic} className="edge-press edge-menu-item" style={{
                 width: 26, height: 26, borderRadius: 4, border: '1px solid transparent',
                 background: 'transparent', cursor: 'pointer', color: T.ink3,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = '#f0f0f0'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                '--edge-menu-hover-bg': '#f0f0f0',
+              }}>
                 <Icon name={ic} size={13} stroke={1.7}/>
               </button>
             ))}
@@ -898,17 +903,17 @@ function VLLMErrorFace({ authed, onRequireAuth, onMgmt }) {
               </div>
 
               <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-                <button onClick={() => !authed && onRequireAuth('强制重启 vLLM')} style={{
+                <button onClick={() => !authed && onRequireAuth('强制重启 vLLM')} className="edge-press edge-btn-primary" style={{
                   ...btnPrimary, background: T.red, border: 'none',
                   height: 34, padding: '0 14px', fontSize: 12.5,
                 }}><Icon name="refresh" size={13} stroke={2}/>{authed ? '强制重启' : '需验证后强制重启'}</button>
-                <button style={{ ...btnSecondary, height: 34, padding: '0 14px', fontSize: 12.5 }}>
+                <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 34, padding: '0 14px', fontSize: 12.5 }}>
                   <Icon name="history" size={13} stroke={1.8}/>切换到 70B-AWQ 量化版
                 </button>
-                <button style={{ ...btnSecondary, height: 34, padding: '0 14px', fontSize: 12.5 }}>
+                <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 34, padding: '0 14px', fontSize: 12.5 }}>
                   <Icon name="terminal" size={13} stroke={1.8}/>查看完整 stderr
                 </button>
-                <button onClick={onMgmt} style={{ ...btnSecondary, height: 34, padding: '0 14px', fontSize: 12.5 }}>
+                <button onClick={onMgmt} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 34, padding: '0 14px', fontSize: 12.5 }}>
                   <Icon name="download" size={13} stroke={1.8}/>导出诊断包
                 </button>
               </div>
@@ -956,7 +961,7 @@ function VLLMErrorFace({ authed, onRequireAuth, onMgmt }) {
                       : p)}
                   </div>
                 </div>
-                <button style={{ ...(s.risky ? btnDanger : btnSecondary),
+                <button className={`edge-press ${s.risky ? 'edge-btn-danger' : 'edge-btn-secondary'}`} style={{ ...(s.risky ? btnDanger : btnSecondary),
                   height: 28, padding: '0 12px', fontSize: 11.5, alignSelf: 'flex-start' }}>
                   {s.action}<Icon name="chevRight" size={11} stroke={2}/>
                 </button>
@@ -1235,18 +1240,18 @@ function SDWebUIFace({ onMgmt }) {
         version="v1.10.1" onMgmt={onMgmt}/>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', background: T.surface, borderBottom: `1px solid ${T.border}`,
-        padding: '0 16px', flexShrink: 0 }}>
-        {['txt2img', 'img2img', 'extras', 'PNG Info', 'LoRA', '设置'].map(t2 => (
-          <div key={t2} onClick={() => setTab(t2)} style={{
-            padding: '10px 14px 12px', fontSize: 12.5,
-            color: tab === t2 ? T.ink : T.ink3,
-            fontWeight: tab === t2 ? 600 : 500, cursor: 'pointer',
-            borderBottom: `2px solid ${tab === t2 ? '#ec4899' : 'transparent'}`,
-            marginBottom: -1,
-          }}>{t2}</div>
-        ))}
-      </div>
+      <TabBar
+        tabs={['txt2img', 'img2img', 'extras', 'PNG Info', 'LoRA', '设置'].map((id) => ({ id, label: id }))}
+        active={tab}
+        onChange={setTab}
+        activeColor="#ec4899"
+        activeTextColor={T.ink}
+        style={{
+          background: T.surface, borderBottom: `1px solid ${T.border}`,
+          padding: '0 16px', flexShrink: 0,
+        }}
+        itemStyle={{ padding: '10px 14px 12px', fontSize: 12.5, marginBottom: -1 }}
+      />
 
       {/* Top model selector */}
       <div style={{ padding: '10px 16px', background: T.surface, borderBottom: `1px solid ${T.borderSoft}`,
@@ -1387,10 +1392,10 @@ function SDWebUIFace({ onMgmt }) {
             <span className="mono" style={{ fontSize: 11, color: T.ink, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               /workspace/outputs/2026-05-26/00037-8421337.png
             </span>
-            <button style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
+            <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
               <Icon name="folder" size={11} stroke={1.8}/>打开
             </button>
-            <button style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
+            <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
               <Icon name="download" size={11} stroke={1.8}/>下载
             </button>
           </div>

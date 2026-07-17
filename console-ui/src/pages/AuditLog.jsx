@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { Icon } from '../icons'
 import { btnSecondary } from '../components/AppWindow'
 import { getAuthToken } from '../hooks/useApi'
+import { AnimatePresence, PopScale } from '../motion'
 
 // Story 7.1 audit 需要 Bearer token。所有 fetch 调用走 authFetch 自动带 token。
 function authFetch(url, opts = {}) {
@@ -191,7 +192,7 @@ export default function AuditLog() {
           <EventTypeMultiSelect value={typeFilter} onChange={v => { setTypeFilter(v); setPage(0) }}/>
 
           {(typeFilter.length > 0 || userFilter || outcomeFilter !== 'all' || timeRange !== '24h') && (
-            <button style={{ ...btnSecondary, height: 30, padding: '0 10px' }}
+            <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px' }}
               onClick={() => { setTypeFilter([]); setUserFilter(''); setOutcomeFilter('all'); setTimeRange('24h'); setPage(0) }}>
               <Icon name="x" size={12} stroke={2}/>重置
             </button>
@@ -360,15 +361,16 @@ function EventTypeMultiSelect({ value, onChange }) {
         事件类型{value.length > 0 ? ` (${value.length})` : ''}
         <Icon name="chevDown" size={12} stroke={2}/>
       </button>
+      <AnimatePresence>
       {open && (
-        <div style={{
+        <PopScale origin="top left" className="edge-material-surface" style={{
           position: 'absolute', top: 34, left: 0, zIndex: 100,
-          background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+          border: `1px solid ${T.border}`, borderRadius: 8,
           boxShadow: '0 8px 32px -4px rgba(0,0,0,0.12)',
           minWidth: 200, padding: 6, maxHeight: 320, overflow: 'auto',
         }}>
           {EVENT_TYPES.map(et => (
-            <label key={et.value} title={et.notImpl ? 'NOT_IMPL：当前 sprint 未触发，保留枚举常量' : ''} style={{
+            <label key={et.value} className="edge-menu-item" title={et.notImpl ? 'NOT_IMPL：当前 sprint 未触发，保留枚举常量' : ''} style={{
               display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
               cursor: et.notImpl ? 'not-allowed' : 'pointer', borderRadius: 4, fontSize: 12.5,
               opacity: et.notImpl ? 0.42 : 1,
@@ -380,10 +382,11 @@ function EventTypeMultiSelect({ value, onChange }) {
             </label>
           ))}
           <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 4, padding: 6, textAlign: 'right' }}>
-            <button onClick={() => { setOpen(false) }} style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>完成</button>
+            <button onClick={() => { setOpen(false) }} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>完成</button>
           </div>
-        </div>
+        </PopScale>
       )}
+      </AnimatePresence>
     </div>
   )
 }

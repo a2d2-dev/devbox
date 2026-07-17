@@ -58,8 +58,7 @@ function LinkRow({ item, isSupervisor }) {
           <a href={item.url} target="_blank" rel="noreferrer" style={{
             ...MONO, fontSize: 12.5, color: T.blueDeep, textDecoration: 'none',
             wordBreak: 'break-all',
-          }} onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
-             onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}>
+          }} className="edge-link-hover">
             {item.url}
           </a>
         ) : (

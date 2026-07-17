@@ -1,31 +1,14 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useLayoutEffect, useCallback } from 'react'
+import { useAnimationControls, useDragControls, useMotionValue, useTransform } from 'motion/react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { StatusDot, Chip, Sparkline } from '../components/ui'
 import { useAppLogs, useAppVersions, switchAppVersion, appOp, deleteApp, useAppDetail } from '../hooks/useApi'
+import { motion, project, springs, useMotionPref } from '../motion'
+import { btnSecondary, btnPrimary, btnDanger } from './AppWindow'
+import TabBar from './TabBar'
 // Story 4.7：「容器 Shell」tab + 渲染分支在 merge commit 693efd5 中被吞，2026-06-22 恢复
 import ContainerShellFace from './ContainerShellFace'
-
-const btnSecondary = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  borderRadius: 7, border: `1px solid ${T.border}`,
-  background: 'white', color: T.ink2, cursor: 'pointer',
-  fontSize: 12.5, fontWeight: 500,
-};
-
-const btnPrimary = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  borderRadius: 7, border: 'none',
-  background: T.blue, color: 'white', cursor: 'pointer',
-  fontSize: 12.5, fontWeight: 600,
-};
-
-const btnDanger = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  borderRadius: 7, border: 'none',
-  background: T.red, color: 'white', cursor: 'pointer',
-  fontSize: 12.5, fontWeight: 600,
-};
 
 function KpiCell({ label, value, unit, tone, mono }) {
   return (
@@ -33,10 +16,9 @@ function KpiCell({ label, value, unit, tone, mono }) {
       padding: '8px 10px', borderRadius: 7,
       background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`,
     }}>
-      <div style={{ fontSize: 10, color: T.ink3, fontWeight: 600,
-        letterSpacing: '0.04em', textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ ...T.type.label, color: T.ink3 }}>{label}</div>
       <div className={mono === false ? '' : 'mono tnum'} style={{
-        marginTop: 4, fontSize: 17, fontWeight: 700, color: tone, letterSpacing: '-0.01em',
+        marginTop: 4, ...T.type.heading, color: tone,
       }}>{value}</div>
     </div>
   );
@@ -111,8 +93,7 @@ function MgmtOverview({ app, cpu, gpu }) {
       {/* Resource limits */}
       {(app.cpuLimit || app.memLimit) && (
         <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 10.5, color: T.ink3, fontWeight: 600,
-            letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>
+          <div style={{ ...T.type.label, color: T.ink3, marginBottom: 6 }}>
             资源配额
           </div>
           <div style={{ background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`,
@@ -519,7 +500,7 @@ resources: ${appSummary.resources}`;
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <span style={{ fontSize: 11.5, color: T.ink3 }}>应用配置摘要</span>
         <div style={{ flex: 1 }}/>
-        <button onClick={() => navigator.clipboard.writeText(configText)} style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
+        <button onClick={() => navigator.clipboard.writeText(configText)} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
           <Icon name="copy" size={11} stroke={1.8}/>复制
         </button>
       </div>
@@ -577,7 +558,7 @@ resources: ${appSummary.resources}`;
               立即终止 Pod，释放 GPU 与端口；保留 <span className="mono">/workspace</span> 数据
             </div>
           </div>
-          <button onClick={onUninstallClick} style={{
+          <button onClick={onUninstallClick} className="edge-press edge-btn-danger" style={{
             ...btnDanger, height: 30, padding: '0 12px', fontSize: 11.5, flexShrink: 0,
           }}>
             <Icon name="x" size={12} stroke={2}/>卸载
@@ -845,6 +826,7 @@ function MgmtVersions({ app }) {
                   <button
                     onClick={() => handleSwitch(v.version)}
                     disabled={!!switching}
+                    className="edge-press edge-btn-primary"
                     style={{
                       ...btnPrimary, height: 26, padding: '0 10px', fontSize: 11,
                       opacity: switching ? 0.6 : 1,
@@ -923,7 +905,7 @@ function UninstallConfirm({ app, onCancel, onConfirm }) {
               <Icon name={app.icon} size={22} stroke={1.6}/>
             </div>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>{app.name}</div>
+              <div style={{ ...T.type.heading, color: T.ink }}>{app.name}</div>
               <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 2 }} className="mono">{app.version} · {app.category}</div>
             </div>
           </div>
@@ -1032,6 +1014,66 @@ function UninstallProgress({ app }) {
 export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAuth, onUninstall, metricsData, historyData }) {
   const [tab, setTab] = useState('overview');
   const [uninstall, setUninstall] = useState(null); // null | 'confirm' | 'running' | 'done'
+  const pref = useMotionPref();
+  const drawerRef = useRef(null);
+  const drawerWidthRef = useRef(980);
+  const releaseVelocity = useRef(0);
+  const dragControls = useDragControls();
+  const controls = useAnimationControls();
+  const x = useMotionValue(open ? 0 : 1000);
+  const [drawerWidth, setDrawerWidth] = useState(980);
+  const backdropOpacity = useTransform(x, [0, drawerWidth || 1], [0.18, 0]);
+
+  const measureDrawer = useCallback(() => {
+    const width = drawerRef.current?.getBoundingClientRect().width;
+    return width || drawerWidthRef.current;
+  }, []);
+
+  useLayoutEffect(() => {
+    const width = measureDrawer();
+    drawerWidthRef.current = width;
+    if (pref.reduced) {
+      x.set(0);
+    } else if (!open) {
+      x.set(width);
+    }
+  }, [open, pref.reduced, x, measureDrawer]);
+
+  useEffect(() => {
+    const width = measureDrawer();
+    drawerWidthRef.current = width;
+
+    if (pref.reduced) {
+      x.set(0);
+      controls.start({
+        opacity: open ? 1 : 0,
+        transition: { duration: 0.2 },
+      });
+      return;
+    }
+
+    const velocity = releaseVelocity.current;
+    releaseVelocity.current = 0;
+    controls.start({
+      x: open ? 0 : width,
+      opacity: 1,
+      transition: velocity
+        ? { ...springs.momentum, velocity }
+        : springs.default,
+    });
+  }, [open, pref.reduced, controls, x, measureDrawer]);
+
+  useEffect(() => {
+    if (!drawerRef.current) return undefined;
+    const observer = new ResizeObserver(() => {
+      const width = measureDrawer();
+      drawerWidthRef.current = width;
+      setDrawerWidth(width);
+      if (!open && !pref.reduced) x.set(width);
+    });
+    observer.observe(drawerRef.current);
+    return () => observer.disconnect();
+  }, [open, pref.reduced, x, measureDrawer]);
 
   // drawer 打开时拉 detail（含 env + deployValues），与 base app prop merge。
   // 关闭传 null 跳过 fetch，避免列表态拖累后端
@@ -1068,23 +1110,53 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
   return (
     <>
       {/* Backdrop */}
-      {open && (
-        <div onClick={onClose} className="edge-backdrop-in" style={{
+      <motion.div
+        onClick={onClose}
+        animate={pref.reduced ? { opacity: open ? 0.18 : 0 } : undefined}
+        transition={{ duration: 0.2 }}
+        style={{
           position: 'absolute', inset: 0, zIndex: 40,
-          background: 'rgba(15,23,42,0.18)',
-        }}/>
-      )}
+          background: 'rgb(15,23,42)',
+          opacity: pref.reduced ? 0 : backdropOpacity,
+          pointerEvents: open ? 'auto' : 'none',
+        }}
+      />
 
       {/* Drawer */}
-      <div style={{
+      <motion.div
+        ref={drawerRef}
+        drag={pref.reduced ? false : 'x'}
+        dragControls={dragControls}
+        dragListener={false}
+        dragMomentum={false}
+        dragConstraints={{ left: 0, right: drawerWidth }}
+        dragElastic={{ left: 0.08, right: 0 }}
+        animate={controls}
+        onDragEnd={(_, info) => {
+          const width = measureDrawer();
+          drawerWidthRef.current = width;
+          setDrawerWidth(width);
+          const projected = info.offset.x + project(info.velocity.x);
+          if (projected > width / 2 || info.velocity.x > 500) {
+            releaseVelocity.current = info.velocity.x;
+            onClose();
+            return;
+          }
+          controls.start({
+            x: 0,
+            transition: { ...springs.momentum, velocity: info.velocity.x },
+          });
+        }}
+        style={{
         position: 'absolute', top: 0, right: 0, bottom: 0,
         // clamp(640, 65%, 980) 让 drawer 跟窗口尺寸响应式（最少 640 让版本 tab
         // 镜像 URL + tab 头部 5 个 tab 不挤；最多 980 防止超大屏占满）
         width: 'clamp(640px, 65%, 980px)', background: T.surface, zIndex: 41,
         borderLeft: `1px solid ${T.border}`,
-        boxShadow: open ? '-10px 0 30px -8px rgba(15,23,42,0.22)' : 'none',
-        transform: `translateX(${open ? '0' : '100%'})`,
-        transition: 'transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1)',
+        boxShadow: '-10px 0 30px -8px rgba(15,23,42,0.22)',
+        x: pref.reduced ? 0 : x,
+        opacity: pref.reduced ? 0 : 1,
+        pointerEvents: open ? 'auto' : 'none',
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}>
         {/* Header */}
@@ -1093,7 +1165,15 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
           borderBottom: `1px solid ${T.borderSoft}`,
           background: 'linear-gradient(180deg, #fafbfc, white)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+          <div
+            onPointerDown={(event) => {
+              if (!pref.reduced) dragControls.start(event);
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14,
+              cursor: pref.reduced ? 'default' : 'grab', touchAction: 'none',
+            }}
+          >
             <div style={{
               width: 44, height: 44, borderRadius: 11,
               background: app.bg, color: 'white',
@@ -1105,7 +1185,7 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>{app.name}</div>
+                <div style={{ ...T.type.heading, color: T.ink }}>{app.name}</div>
                 <Chip tone={stateCfg.tone}>
                   <StatusDot tone={stateCfg.dot} size={6} pulse={stateCfg.pulse}/>{stateCfg.label}
                 </Chip>
@@ -1119,32 +1199,28 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
                 <span>{app.gpu || 'CPU'}</span>
               </div>
             </div>
-            <button onClick={onClose} style={{
+            <button onPointerDown={(event) => event.stopPropagation()} onClick={onClose} className="edge-press edge-menu-item" style={{
               width: 28, height: 28, borderRadius: 7, cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: T.ink3, background: 'transparent', border: 'none',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = T.surfaceAlt}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+            }}>
               <Icon name="x" size={15} stroke={2}/>
             </button>
           </div>
 
           {/* Tabs */}
-          <div style={{ display: 'flex', gap: 2 }}>
-            {tabs.map(t2 => (
-              <div key={t2.id} onClick={() => setTab(t2.id)} style={{
-                padding: '8px 12px 10px', fontSize: 12.5, cursor: 'pointer',
-                color: tab === t2.id ? T.blueDeep : T.ink3,
-                fontWeight: tab === t2.id ? 600 : 500,
-                borderBottom: `2px solid ${tab === t2.id ? T.blue : 'transparent'}`,
-                marginBottom: -1,
-                display: 'flex', alignItems: 'center', gap: 5,
-              }}>
+          <TabBar
+            tabs={tabs}
+            active={tab}
+            onChange={setTab}
+            style={{ gap: 2 }}
+            itemStyle={{ padding: '8px 12px 10px', fontSize: 12.5, marginBottom: -1, gap: 5 }}
+            renderLabel={(t2) => (
+              <>
                 <Icon name={t2.icon} size={12} stroke={1.8}/>{t2.label}
-              </div>
-            ))}
-          </div>
+              </>
+            )}
+          />
         </div>
 
         {/* Body */}
@@ -1166,24 +1242,24 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
           <div style={{ flex: 1 }}/>
           {!isError ? (
             <>
-              <button style={{ ...btnSecondary, height: 30, padding: '0 10px', fontSize: 11.5 }}
+              <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px', fontSize: 11.5 }}
                 onClick={() => appOp(app.id, 'restart').catch(e => console.error('Restart failed:', e))}>
                 <Icon name="refresh" size={12} stroke={1.8}/>重启
               </button>
-              <button style={{ ...btnDanger, height: 30, padding: '0 10px', fontSize: 11.5 }}
+              <button className="edge-press edge-btn-danger" style={{ ...btnDanger, height: 30, padding: '0 10px', fontSize: 11.5 }}
                 onClick={() => appOp(app.id, 'stop').catch(e => console.error('Stop failed:', e))}>
                 <Icon name="stop" size={12} stroke={1.8}/>停止
               </button>
             </>
           ) : (
-            <button style={{ ...btnPrimary, background: T.red, border: 'none',
+            <button className="edge-press edge-btn-primary" style={{ ...btnPrimary, background: T.red, border: 'none',
               height: 30, padding: '0 12px', fontSize: 11.5 }}
               onClick={() => appOp(app.id, 'restart').catch(e => console.error('Restart failed:', e))}>
               <Icon name="refresh" size={12} stroke={2}/>强制重启
             </button>
           )}
         </div>
-      </div>
+      </motion.div>
 
       {/* Uninstall confirm dialog */}
       {uninstall === 'confirm' && (

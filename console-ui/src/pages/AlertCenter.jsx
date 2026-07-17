@@ -4,6 +4,7 @@ import { Icon } from '../icons'
 import { StatusDot, Chip, Ring, Sparkline, Card, useTicker } from '../components/ui'
 import { useDevice, useMetrics, useMetricsHistory, useApps, useAlerts, useNetwork, authFetch } from '../hooks/useApi'
 import { btnSecondary, btnPrimary, btnDanger } from '../components/AppWindow'
+import TabBar from '../components/TabBar'
 
 export default function AlertCenter({ authed, onRequireAuth }) {
   const [tab, setTab] = useState('active');
@@ -41,29 +42,34 @@ export default function AlertCenter({ authed, onRequireAuth }) {
           </div>
           <div style={{ flex: 1 }}/>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button style={btnSecondary}><Icon name="download" size={13} stroke={1.8}/>导出</button>
-            <button style={authed ? btnPrimary : { ...btnSecondary, color: T.ink3 }} onClick={() => !authed && onRequireAuth('全部确认告警')}>
+            <button className="edge-press edge-btn-secondary" style={btnSecondary}><Icon name="download" size={13} stroke={1.8}/>导出</button>
+            <button className={`edge-press ${authed ? 'edge-btn-primary' : 'edge-btn-secondary'}`} style={authed ? btnPrimary : { ...btnSecondary, color: T.ink3 }} onClick={() => !authed && onRequireAuth('全部确认告警')}>
               <Icon name="check" size={13} stroke={2}/>{authed ? '全部确认' : '需验证后确认'}
             </button>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {(() => {
+        <TabBar
+          tabs={(() => {
             // 实时按 liveAlerts state 算计数，替代之前写死的 [2,2,4] 占位假数据
             const active = liveAlerts.filter(a => a.state === 'active').length;
             const recovered = liveAlerts.filter(a => a.state === 'recovered').length;
             const all = liveAlerts.length;
-            return [['active','活跃',active],['history','已恢复',recovered],['all','全部',all]];
-          })().map(([id, lbl, n]) => (
-            <div key={id} onClick={() => setTab(id)} style={{
-              padding: '8px 14px 10px', fontSize: 13, cursor: 'pointer',
-              color: tab === id ? T.blueDeep : T.ink3,
-              fontWeight: tab === id ? 600 : 500,
-              borderBottom: `2px solid ${tab === id ? T.blue : 'transparent'}`,
-              marginBottom: -1,
-            }}>{lbl} <span style={{ color: T.ink4, fontWeight: 500 }}>· {n}</span></div>
-          ))}
-        </div>
+            return [
+              { id: 'active', label: '活跃', count: active },
+              { id: 'history', label: '已恢复', count: recovered },
+              { id: 'all', label: '全部', count: all },
+            ];
+          })()}
+          active={tab}
+          onChange={setTab}
+          style={{ gap: 4 }}
+          itemStyle={{ padding: '8px 14px 10px', fontSize: 13, marginBottom: -1 }}
+          renderLabel={(t2) => (
+            <>
+              {t2.label} <span style={{ color: T.ink4, fontWeight: 500 }}>· {t2.count}</span>
+            </>
+          )}
+        />
       </div>
 
       {/* list */}
@@ -135,6 +141,7 @@ export default function AlertCenter({ authed, onRequireAuth }) {
                         setLiveAlerts(prev => prev.map(x => x.id === a.id ? { ...x, state: 'recovered' } : x));
                       }).catch(() => {});
                     }}
+                      className={`edge-press ${authed ? 'edge-btn-primary' : 'edge-btn-secondary'}`}
                       style={authed ? btnPrimary : btnSecondary}>
                       <Icon name="check" size={13} stroke={2}/>{authed ? '确认' : '需验证'}
                     </button>
