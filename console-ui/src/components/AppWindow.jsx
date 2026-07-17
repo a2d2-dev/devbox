@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { motion, springs, useMotionPref } from '../motion'
@@ -30,10 +30,12 @@ function windowFrame(maximized) {
 }
 
 function dockOffset(appId, windowNode, getDockIconRect) {
-  const rect = windowNode?.getBoundingClientRect();
-  if (!rect) return { x: 0, y: 0 };
+  if (!windowNode) return { x: 0, y: 0 };
 
   const dockRect = getDockIconRect?.(appId);
+  const offsetParentRect = windowNode.offsetParent?.getBoundingClientRect?.();
+  const sourceX = (offsetParentRect?.left || 0) + windowNode.offsetLeft + windowNode.offsetWidth / 2;
+  const sourceY = (offsetParentRect?.top || 0) + windowNode.offsetTop + windowNode.offsetHeight / 2;
   const targetX = dockRect
     ? dockRect.left + dockRect.width / 2
     : window.innerWidth / 2;
@@ -42,24 +44,14 @@ function dockOffset(appId, windowNode, getDockIconRect) {
     : window.innerHeight - 42;
 
   return {
-    x: targetX - (rect.left + rect.width / 2),
-    y: targetY - (rect.top + rect.height / 2),
+    x: targetX - sourceX,
+    y: targetY - sourceY,
   };
 }
 
-export default function AppWindow({ app, visible = true, minimized = false, maximized, getDockIconRect, onMaximize, onMinimize, onClose, children, headerActions, breadcrumb, mgmtOpen, onToggleMgmt, canManage }) {
+export default function AppWindow({ app, active = false, visible = true, minimized = false, maximized, getDockIconRect, onMaximize, onMinimize, onClose, children, headerActions, breadcrumb, mgmtOpen, onToggleMgmt, canManage }) {
   const pref = useMotionPref();
-  const windowRef = useRef(null);
-  const [minimizeOffset, setMinimizeOffset] = useState({ x: 0, y: 0 });
-
-  const captureMinimizeOffset = () => {
-    const next = dockOffset(app.id, windowRef.current, getDockIconRect);
-    setMinimizeOffset(prev => (
-      Math.abs(prev.x - next.x) < 0.5 && Math.abs(prev.y - next.y) < 0.5
-        ? prev
-        : next
-    ));
-  };
+  const [windowNode, setWindowNode] = useState(null);
 
   const trafficBtn = (color, onClick, icon, className = 'edge-btn-secondary') => (
     <div onClick={onClick} className={`edge-press ${className}`} style={{
@@ -72,6 +64,9 @@ export default function AppWindow({ app, visible = true, minimized = false, maxi
   );
 
   const frame = windowFrame(maximized);
+  const minimizeOffset = minimized
+    ? dockOffset(app.id, windowNode, getDockIconRect)
+    : { x: 0, y: 0 };
   const activeTarget = {
     ...frame,
     opacity: visible ? 1 : 0,
@@ -108,13 +103,10 @@ export default function AppWindow({ app, visible = true, minimized = false, maxi
       };
 
   return (
-    <motion.div ref={windowRef} initial={pref.reduced ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
+    <motion.div ref={setWindowNode} initial={pref.reduced ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
       animate={activeTarget}
       exit={pref.reduced ? { opacity: 0 } : { opacity: 0, scale: 0.97, x: 0, y: 0 }}
       transition={transition}
-      onAnimationStart={() => {
-        if (minimized) captureMinimizeOffset();
-      }}
       onAnimationComplete={() => {
         if (visible) window.dispatchEvent(new Event('resize'));
       }}
@@ -123,7 +115,7 @@ export default function AppWindow({ app, visible = true, minimized = false, maxi
       ...frame,
       background: T.windowBg,
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
-      zIndex: 20,
+      zIndex: active ? 21 : 20,
       pointerEvents: visible ? 'auto' : 'none',
     }}>
       {/* Title bar */}

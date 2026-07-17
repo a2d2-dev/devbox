@@ -161,10 +161,11 @@ export default function App() {
   const [maxByApp, setMaxByApp] = useState({}); // { [appId]: boolean }
   const dockIconRects = useRef(new Map());
   const registerDockIconRect = useCallback((id, node) => {
-    if (!id || !node) return;
-    dockIconRects.current.set(id, node.getBoundingClientRect());
+    if (!id) return;
+    if (node) dockIconRects.current.set(id, node);
+    else dockIconRects.current.delete(id);
   }, []);
-  const getDockIconRect = useCallback((id) => dockIconRects.current.get(id), []);
+  const getDockIconRect = useCallback((id) => dockIconRects.current.get(id)?.getBoundingClientRect(), []);
   const maximized = activeId ? (maxByApp[activeId] ?? true) : true;
   const setMaximized = (next) => {
     if (!activeId) return;
@@ -402,6 +403,7 @@ export default function App() {
               <AppWindow
                 key={appId}
                 app={app}
+                active={activeId === appId}
                 visible={isVisible}
                 minimized={minimized.has(appId)}
                 maximized={isMax}
@@ -444,18 +446,17 @@ export default function App() {
         </AnimatePresence>
 
         {/* Dock — visible on desktop and when window is in framed (non-maximized) mode */}
-        {(!showWindow || !maximized) && (
-          <Dock
-            apps={dockApps}
-            registerDockIconRect={registerDockIconRect}
-            onShowDesktop={showDesktop}
-            onFocusApp={focusApp}
-            onCloseApp={closeApp}
-            anyVisible={showWindow}
-            authed={authed}
-            alertBadge={alertCount}
-          />
-        )}
+        <Dock
+          apps={dockApps}
+          registerDockIconRect={registerDockIconRect}
+          onShowDesktop={showDesktop}
+          onFocusApp={focusApp}
+          onCloseApp={closeApp}
+          anyVisible={showWindow}
+          hidden={showWindow && maximized}
+          authed={authed}
+          alertBadge={alertCount}
+        />
       </div>
 
       {/* [Story 4.2 Disabled] AuthModal "节点访问授权" 入口删除 (LF 报告冲突 2026-06-21)

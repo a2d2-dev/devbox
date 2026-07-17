@@ -16,7 +16,7 @@ function DockTooltip({ label }) {
   );
 }
 
-export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, onCloseApp, anyVisible,
+export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, onCloseApp, anyVisible, hidden = false,
                 authed, authBadge, onToggleAuth, alertBadge, loginUser, onLogout }) {
   const [hoverId, setHoverId] = useState(null);
 
@@ -28,6 +28,8 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
     <div style={{
       position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
       zIndex: 25,
+      opacity: hidden ? 0 : 1,
+      pointerEvents: hidden ? 'none' : 'auto',
     }}>
       <div className="edge-glass"
         style={{
