@@ -52,6 +52,7 @@ import { AppShell } from './components/AppShell'
 import AppMgmtDrawer from './components/AppMgmtDrawer'
 import { AuthModal } from './components/AuthModal'
 import { LoginScreen } from './components/LoginScreen'
+import { ToastProvider } from './components/Toast'
 import { TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakToggle, TweakColor } from './components/TweaksPanel'
 import { useMetrics, useMetricsHistory, useApps, useAlerts, useDevice, setAuthToken, getAuthToken, clearAuth, setOnAuthExpired } from './hooks/useApi'
 import { SYSTEM_APPS } from './data/systemApps'
@@ -302,7 +303,11 @@ export default function App() {
   const device = liveDevice || {};
 
   if (!loggedIn) {
-    return <LoginScreen onLogin={handleLogin} deviceName={device.deviceName || device.hostname}/>;
+    return (
+      <ToastProvider>
+        <LoginScreen onLogin={handleLogin} deviceName={device.deviceName || device.hostname}/>
+      </ToastProvider>
+    );
   }
 
   // 系统工具是本地内置能力（永远显示），不依赖任何 API。
@@ -341,6 +346,7 @@ export default function App() {
   const showWindow = !!activeApp && !minimized.has(activeApp.id);
 
   return (
+    <ToastProvider>
     <div style={{
       width: '100vw', height: '100vh', overflow: 'hidden',
       position: 'relative', display: 'flex', flexDirection: 'column',
@@ -574,5 +580,6 @@ export default function App() {
         )}
       </TweaksPanel>
     </div>
+    </ToastProvider>
   );
 }

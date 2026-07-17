@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { StatusDot, Chip, Sparkline } from '../components/ui'
-import { useFiles, useMetrics, authFetch } from '../hooks/useApi'
+import { useMetrics, authFetch } from '../hooks/useApi'
 import { FileIcon } from '../components/AppShell'
+import { useToast } from '../components/Toast'
 
 const btnSecondary = {
   display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -100,7 +101,7 @@ export default function FilesFace() {
   const [curPath, setCurPath] = useState('');
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState(null); // { code, message }
-  const [toast, setToast] = useState(null); // { kind: 'ok'|'warn'|'err', text }
+  const toast = useToast();
   const [preview, setPreview] = useState(null); // { name, url, status: 'loading'|'ok'|'err' }
   const [showDetails, setShowDetails] = useState(true); // 右侧详情面板开关，类似 Finder 的显示简介
   const [uploading, setUploading] = useState(false);
@@ -188,7 +189,7 @@ export default function FilesFace() {
           if (r.status === 403) msg = '目标目录无写入权限';
           else if (r.status === 413) msg = '文件超过 20MB 上限';
           else if (r.status === 400) msg = '文件名或目标路径无效';
-          setToast({ kind: 'err', text: msg });
+          toast.err(msg);
           return;
         }
         const body = await r.json().catch(() => ({}));
@@ -196,26 +197,16 @@ export default function FilesFace() {
         okCount += 1;
       }
 
-      setToast({
-        kind: 'ok',
-        text: okCount === 1 ? `已上传 ${lastName}` : `已上传 ${okCount} 个文件`,
-      });
+      toast.ok(okCount === 1 ? `已上传 ${lastName}` : `已上传 ${okCount} 个文件`);
       if (lastName) setSelected(lastName);
       loadDir(curPath);
     } catch (_) {
-      setToast({ kind: 'err', text: '上传失败' });
+      toast.err('上传失败');
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [curPath, loadDir, uploading]);
-
-  // toast 3s 自动清
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(t);
-  }, [toast]);
+  }, [curPath, loadDir, toast, uploading]);
 
   // selected 变化时拉图片 blob 做预览（authFetch 走 Authorization header，
   // 所以不能直接 <img src=/api/...>，得先拉成 blob URL）。非图片文件不预览。
@@ -286,25 +277,25 @@ export default function FilesFace() {
           // 后端冲突时会自动加序号，最终名以响应为准
           const body = await r.json().catch(() => ({}));
           const finalName = body.name || name;
-          setToast({ kind: 'ok', text: `已粘贴 ${finalName}` });
+          toast.ok(`已粘贴 ${finalName}`);
           setSelected(finalName);
           loadDir(curPath);
         } else if (r.status === 409) {
-          setToast({ kind: 'warn', text: '同名文件已存在' });
+          toast.warn('同名文件已存在');
         } else if (r.status === 403) {
-          setToast({ kind: 'err', text: '目标目录无写入权限' });
+          toast.err('目标目录无写入权限');
         } else if (r.status === 413) {
-          setToast({ kind: 'err', text: '图片超过 20MB 上限' });
+          toast.err('图片超过 20MB 上限');
         } else {
-          setToast({ kind: 'err', text: `粘贴失败 (${r.status})` });
+          toast.err(`粘贴失败 (${r.status})`);
         }
       } catch (_) {
-        setToast({ kind: 'err', text: '粘贴失败' });
+        toast.err('粘贴失败');
       }
     }
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [curPath, loadDir]);
+  }, [curPath, loadDir, toast]);
 
   return (
     <div
@@ -449,20 +440,6 @@ export default function FilesFace() {
           </div>
         </div>
 
-        {/* Toast (paste 反馈) */}
-        {toast && (
-          <div style={{
-            position: 'absolute', top: error ? 54 : 10, right: 16, zIndex: 11,
-            padding: '8px 14px', borderRadius: 6,
-            background: toast.kind === 'ok' ? '#f0fdf4' : toast.kind === 'warn' ? '#fffbeb' : '#fef2f2',
-            border: `1px solid ${toast.kind === 'ok' ? '#bbf7d0' : toast.kind === 'warn' ? '#fde68a' : '#fecaca'}`,
-            color: toast.kind === 'ok' ? '#166534' : toast.kind === 'warn' ? '#92400e' : '#991b1b',
-            fontSize: 12, fontWeight: 500,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-          }}>
-            {toast.text}
-          </div>
-        )}
         {/* Error banner (chroot violation / not found) */}
         {error && (
           <div style={{
@@ -519,9 +496,8 @@ export default function FilesFace() {
                           onClick={async (e) => {
                             e.stopPropagation();
                             const ok = await copyText(f.absPath);
-                            setToast(ok
-                              ? { kind: 'ok', text: `已复制路径 ${f.absPath}` }
-                              : { kind: 'err', text: '复制失败' });
+                            if (ok) toast.ok(`已复制路径 ${f.absPath}`);
+                            else toast.err('复制失败');
                           }}
                           style={{
                             border: 'none', background: 'transparent', cursor: 'pointer',
@@ -654,9 +630,8 @@ export default function FilesFace() {
                           title={`复制路径: ${item.absPath}`}
                           onClick={async () => {
                             const ok = await copyText(item.absPath);
-                            setToast(ok
-                              ? { kind: 'ok', text: `已复制路径 ${item.absPath}` }
-                              : { kind: 'err', text: '复制失败' });
+                            if (ok) toast.ok(`已复制路径 ${item.absPath}`);
+                            else toast.err('复制失败');
                           }}
                           style={{
                             border: 'none', background: 'transparent', cursor: 'pointer',
