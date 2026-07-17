@@ -30,7 +30,7 @@ function NetFirewall() {
             <div style={{ fontSize: 12.5, fontWeight: 700, color: '#047857' }}>防火墙已启用</div>
             <div style={{ fontSize: 11, color: '#065f46', marginTop: 2 }}>nftables · 7 条规则 · 今日拦截 <span className="mono tnum" style={{ fontWeight: 600 }}>142</span> 个请求</div>
           </div>
-          <button style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5,
+          <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5,
             background: 'white', color: '#047857', borderColor: '#a7f3d0' }}>
             临时禁用
           </button>
@@ -52,10 +52,10 @@ function NetFirewall() {
         <span style={{ fontSize: 11.5, fontWeight: 600, color: T.ink2 }}>规则列表</span>
         <span style={{ fontSize: 11, color: T.ink4 }}>· 按优先级从上到下匹配</span>
         <div style={{ flex: 1 }}/>
-        <button style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
+        <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
           <Icon name="download" size={12} stroke={1.8}/>导出 nftables
         </button>
-        <button style={{ ...btnPrimary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
+        <button className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
           <Icon name="plus" size={12} stroke={2}/>新增规则
         </button>
       </div>
@@ -290,10 +290,10 @@ function NetworkManagement() {
           MTU 默认 <span className="mono tnum" style={{ color: T.ink2, fontWeight: 600 }}>1500</span>
         </span>
         <div style={{ flex: 1 }}/>
-        <button style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
+        <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
           <Icon name="refresh" size={12} stroke={1.8}/>重新扫描
         </button>
-        <button style={{ ...btnPrimary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
+        <button className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 28, padding: '0 10px', fontSize: 11.5 }}>
           <Icon name="plus" size={12} stroke={2}/>新增接口
         </button>
       </div>

@@ -88,7 +88,7 @@ export default function PortsFace({ authed, onRequireAuth }) {
             </div>
           </div>
           <div style={{ flex: 1 }}/>
-          <button style={btnPrimary}>
+          <button className="edge-press edge-btn-primary" style={btnPrimary}>
             <Icon name="plus" size={13} stroke={2}/>新增端口转发
           </button>
         </div>

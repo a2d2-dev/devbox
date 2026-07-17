@@ -42,8 +42,8 @@ export default function AlertCenter({ authed, onRequireAuth }) {
           </div>
           <div style={{ flex: 1 }}/>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button style={btnSecondary}><Icon name="download" size={13} stroke={1.8}/>导出</button>
-            <button style={authed ? btnPrimary : { ...btnSecondary, color: T.ink3 }} onClick={() => !authed && onRequireAuth('全部确认告警')}>
+            <button className="edge-press edge-btn-secondary" style={btnSecondary}><Icon name="download" size={13} stroke={1.8}/>导出</button>
+            <button className={`edge-press ${authed ? 'edge-btn-primary' : 'edge-btn-secondary'}`} style={authed ? btnPrimary : { ...btnSecondary, color: T.ink3 }} onClick={() => !authed && onRequireAuth('全部确认告警')}>
               <Icon name="check" size={13} stroke={2}/>{authed ? '全部确认' : '需验证后确认'}
             </button>
           </div>
@@ -141,6 +141,7 @@ export default function AlertCenter({ authed, onRequireAuth }) {
                         setLiveAlerts(prev => prev.map(x => x.id === a.id ? { ...x, state: 'recovered' } : x));
                       }).catch(() => {});
                     }}
+                      className={`edge-press ${authed ? 'edge-btn-primary' : 'edge-btn-secondary'}`}
                       style={authed ? btnPrimary : btnSecondary}>
                       <Icon name="check" size={13} stroke={2}/>{authed ? '确认' : '需验证'}
                     </button>

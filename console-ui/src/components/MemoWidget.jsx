@@ -90,20 +90,13 @@ export function MemoWidget() {
             onClick={onClear}
             title="清空备忘录"
             aria-label="清空备忘录"
+            className="edge-press edge-btn-danger"
             style={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: 22, height: 22, borderRadius: 6,
               background: 'transparent', color: T.ink3,
               border: '1px solid transparent', cursor: 'pointer',
               padding: 0,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = T.redSoft;
-              e.currentTarget.style.color = T.red;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.color = T.ink3;
             }}
           >
             <Icon name="trash" size={13} stroke={1.8}/>

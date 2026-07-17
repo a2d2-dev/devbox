@@ -271,11 +271,11 @@ export default function AppDetail({ appId, authed, onRequireAuth }) {
           </div>
           <div style={{ flex: 1 }}/>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button style={btnSecondary}>
+            <button className="edge-press edge-btn-secondary" style={btnSecondary}>
               <Icon name="refresh" size={13} stroke={1.8}/>
               {authed ? '重启' : '重启…'}
             </button>
-            <button style={btnDanger} onClick={() => requestAction('停止服务')}>
+            <button className="edge-press edge-btn-danger" style={btnDanger} onClick={() => requestAction('停止服务')}>
               <Icon name="stop" size={13} stroke={1.8}/>
               停止
             </button>
@@ -330,9 +330,9 @@ export default function AppDetail({ appId, authed, onRequireAuth }) {
           </div>
         )}
         <div style={{ flex: 1 }}/>
-        <button style={btnSecondary}><Icon name="download" size={13} stroke={1.8}/>导出日志</button>
-        <button style={btnSecondary}><Icon name="refresh" size={13} stroke={1.8}/>滚动更新</button>
-        <button style={!authed ? { ...btnSecondary, color: T.ink3 } : btnPrimary} onClick={() => requestAction('重启服务')}>
+        <button className="edge-press edge-btn-secondary" style={btnSecondary}><Icon name="download" size={13} stroke={1.8}/>导出日志</button>
+        <button className="edge-press edge-btn-secondary" style={btnSecondary}><Icon name="refresh" size={13} stroke={1.8}/>滚动更新</button>
+        <button className={`edge-press ${authed ? 'edge-btn-primary' : 'edge-btn-secondary'}`} style={!authed ? { ...btnSecondary, color: T.ink3 } : btnPrimary} onClick={() => requestAction('重启服务')}>
           <Icon name="refresh" size={13} stroke={1.8}/>{!authed ? '需验证后重启' : '重启服务'}
         </button>
       </div>

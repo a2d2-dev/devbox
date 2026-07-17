@@ -163,6 +163,7 @@ export default function DashboardApp({ onOpenApp }) {
               window.alert('监控 App 尚未就绪')
             }
           }}
+          className="edge-press edge-btn-primary"
           style={{
             ...btnPrimary,
             height: 32, padding: '0 14px', fontSize: 12.5,

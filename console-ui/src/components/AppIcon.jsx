@@ -1,9 +1,7 @@
-import { useState } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 
 export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gradient', accent = '#2563eb', labelSize = 12.5 }) {
-  const [hover, setHover] = useState(false);
   const isError = app.state === 'error';
   const stateColor = {
     running: T.green, error: T.red, warn: T.amber, stopped: T.ink4,
@@ -30,15 +28,15 @@ export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gr
            e.dataTransfer.setData('application/x-edgex-app', app.id);
            e.dataTransfer.effectAllowed = 'copy';
          }}
-         onMouseEnter={() => setHover(true)}
-         onMouseLeave={() => setHover(false)}
+         className="edge-row-hover"
          style={{
            display: 'flex', flexDirection: 'column', alignItems: 'center',
            gap: 8, cursor: 'pointer', userSelect: 'none',
            padding: '8px 4px', borderRadius: 14,
-           background: hover ? 'rgba(255,255,255,0.55)' : 'transparent',
+           background: 'transparent',
            transition: 'background 0.15s ease',
            width: size + 28,
+           '--edge-row-hover-bg': 'rgba(255,255,255,0.55)',
          }}>
       <div className={`edge-icon-hover ${isError ? 'edge-pulse' : ''}`}
            style={{
@@ -46,9 +44,8 @@ export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gr
              borderRadius: iconStyle === 'flat' ? 14 : 18,
              background: iconBg, color: 'white',
              display: 'flex', alignItems: 'center', justifyContent: 'center',
-             boxShadow: hover
-               ? `0 10px 22px -6px ${app.color}55, 0 0 0 1px rgba(15,23,42,0.06)${highlightOverlay ? ', inset 0 1px 0 rgba(255,255,255,0.4)' : ''}`
-               : iconShadow,
+             boxShadow: iconShadow,
+             '--edge-icon-hover-shadow': `0 10px 22px -6px ${app.color}55, 0 0 0 1px rgba(15,23,42,0.06)${highlightOverlay ? ', inset 0 1px 0 rgba(255,255,255,0.4)' : ''}`,
            }}>
         <Icon name={app.icon} size={size * 0.46} stroke={1.6}/>
 

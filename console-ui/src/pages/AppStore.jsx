@@ -201,8 +201,9 @@ function DeployDialog({ app, onClose, onSuccess }) {
         </div>
 
         <div style={{ padding: '12px 20px', borderTop: `1px solid ${T.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button onClick={onClose} style={{ ...btnSecondary, height: 34, padding: '0 16px' }}>取消</button>
+          <button onClick={onClose} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 34, padding: '0 16px' }}>取消</button>
           <button onClick={handleSubmit} disabled={submitting || loading}
+            className="edge-press edge-btn-primary"
             style={{ ...btnPrimary, height: 34, padding: '0 20px', opacity: (submitting || loading) ? 0.6 : 1 }}>
             <Icon name="download" size={13} stroke={2}/>{submitting ? '部署中...' : '确认部署'}
           </button>
@@ -279,7 +280,7 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'auto' }}>
       <div style={{ padding: '12px 24px', borderBottom: `1px solid ${T.border}`, background: T.surface,
         display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button onClick={onBack} style={{ ...btnSecondary, height: 28, padding: '0 10px' }}>
+        <button onClick={onBack} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px' }}>
           <Icon name="chevDown" size={12} stroke={2} style={{ transform: 'rotate(90deg)' }}/>
           返回应用列表
         </button>
@@ -325,7 +326,7 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
               覆盖配置 / 升级版本 / 部署第二实例）。「打开应用」是桌面图标的职责，
               不在商店职责内 —— 已安装状态由左侧绿 chip「已安装」标识就够 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-            <button onClick={() => setShowDeploy(true)} style={{ ...btnPrimary, height: 36, padding: '0 18px' }}>
+            <button onClick={() => setShowDeploy(true)} className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 36, padding: '0 18px' }}>
               <Icon name="download" size={13} stroke={2}/>部署
             </button>
           </div>
@@ -355,17 +356,18 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
 }
 
 function StoreCard({ app, onOpen, onOpenApp }) {
-  const [hover, setHover] = useState(false);
   return (
     <div onClick={onOpen}
-         onMouseEnter={() => setHover(true)}
-         onMouseLeave={() => setHover(false)}
+         className="edge-row-hover"
          style={{
-      background: T.surface, border: `1px solid ${hover ? '#bfdbfe' : T.border}`,
+      background: T.surface, border: `1px solid ${T.border}`,
       borderRadius: 10, padding: 14, cursor: 'pointer',
-      boxShadow: hover ? '0 6px 14px -6px rgba(15,23,42,0.12)' : 'none',
+      boxShadow: 'none',
       transition: 'all 0.15s ease',
       display: 'flex', flexDirection: 'column', gap: 10,
+      '--edge-row-hover-bg': T.surface,
+      '--edge-row-hover-border-color': '#bfdbfe',
+      '--edge-row-hover-box-shadow': '0 6px 14px -6px rgba(15,23,42,0.12)',
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div style={{
@@ -427,10 +429,12 @@ function StoreCard({ app, onOpen, onOpenApp }) {
         <span style={{ fontSize: 10.5, color: T.ink4 }} className="mono">{app.date}</span>
         {app.installed
           ? <button onClick={(e) => { e.stopPropagation(); onOpenApp && onOpenApp({ id: app.id }); }}
+              className="edge-press edge-btn-secondary"
               style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
               <Icon name="play" size={11} stroke={2}/>打开
             </button>
           : <button onClick={(e) => { e.stopPropagation(); onOpen(); }}
+              className="edge-press edge-btn-primary"
               style={{ ...btnPrimary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
               <Icon name="download" size={11} stroke={2}/>部署
             </button>
@@ -693,7 +697,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="按名称搜索"
               style={{ flex: 1, border: 'none', outline: 'none', fontSize: 12.5, background: 'transparent' }}/>
           </div>
-          <button style={btnSecondary}>
+          <button className="edge-press edge-btn-secondary" style={btnSecondary}>
             <Icon name="refresh" size={13} stroke={1.8}/>同步
           </button>
         </div>

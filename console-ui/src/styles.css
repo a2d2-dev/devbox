@@ -37,7 +37,10 @@ button, input { font-family: inherit; }
 .edge-cursor { animation: edgeBlink 1s steps(1) infinite; }
 
 .edge-icon-hover { transition: transform 0.18s ease, box-shadow 0.18s ease; }
-.edge-icon-hover:hover { transform: translateY(-3px); }
+.edge-icon-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--edge-icon-hover-shadow);
+}
 .edge-dock-item { transition: transform 0.14s ease; }
 .edge-dock-item:hover { transform: translateY(-4px) scale(1.08); }
 
@@ -68,16 +71,23 @@ button, input { font-family: inherit; }
 }
 
 .edge-btn-primary:hover {
-  background: #1d4ed8;
+  background: var(--edge-btn-primary-hover-bg, #1d4ed8);
 }
 .edge-btn-secondary:hover,
-.edge-row-hover:hover,
+.edge-row-hover:hover {
+  background: var(--edge-row-hover-bg, #f8fafc);
+  border-color: var(--edge-row-hover-border-color);
+  box-shadow: var(--edge-row-hover-box-shadow);
+}
 .edge-menu-item:hover {
-  background: #f8fafc;
+  background: var(--edge-menu-hover-bg, #f8fafc);
 }
 .edge-btn-danger:hover {
-  background: #fef2f2;
-  color: #dc2626;
+  background: var(--edge-btn-danger-hover-bg, #fef2f2);
+  color: var(--edge-btn-danger-hover-color, #dc2626);
+}
+.edge-link-hover:hover {
+  text-decoration: underline;
 }
 .edge-menu-item {
   transition: background 0.15s cubic-bezier(0.2, 0.7, 0.2, 1);

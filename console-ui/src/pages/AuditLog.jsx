@@ -192,7 +192,7 @@ export default function AuditLog() {
           <EventTypeMultiSelect value={typeFilter} onChange={v => { setTypeFilter(v); setPage(0) }}/>
 
           {(typeFilter.length > 0 || userFilter || outcomeFilter !== 'all' || timeRange !== '24h') && (
-            <button style={{ ...btnSecondary, height: 30, padding: '0 10px' }}
+            <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px' }}
               onClick={() => { setTypeFilter([]); setUserFilter(''); setOutcomeFilter('all'); setTimeRange('24h'); setPage(0) }}>
               <Icon name="x" size={12} stroke={2}/>重置
             </button>
@@ -382,7 +382,7 @@ function EventTypeMultiSelect({ value, onChange }) {
             </label>
           ))}
           <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 4, padding: 6, textAlign: 'right' }}>
-            <button onClick={() => { setOpen(false) }} style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>完成</button>
+            <button onClick={() => { setOpen(false) }} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>完成</button>
           </div>
         </PopScale>
       )}

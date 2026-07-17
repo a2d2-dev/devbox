@@ -148,13 +148,13 @@ export default function Processes() {
                 <tr key={p.pid}
                   data-action="view-detail"
                   onClick={() => setSelected(p.pid)}
+                  className={selected !== p.pid ? 'edge-row-hover' : undefined}
                   style={{
                     borderTop: i ? `1px solid ${T.borderSoft}` : 'none',
                     cursor: 'pointer',
                     background: selected === p.pid ? T.blueSoft : 'transparent',
-                  }}
-                  onMouseEnter={e => { if (selected !== p.pid) e.currentTarget.style.background = T.surfaceAlt; }}
-                  onMouseLeave={e => { if (selected !== p.pid) e.currentTarget.style.background = 'transparent'; }}>
+                    '--edge-row-hover-bg': T.surfaceAlt,
+                  }}>
                   <td style={{ ...td, textAlign: 'right', fontFamily: 'ui-monospace, monospace' }}>{p.pid}</td>
                   <td style={td}>
                     <div style={{ fontWeight: 600 }}>{p.name || '-'}</div>

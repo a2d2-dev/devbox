@@ -5,30 +5,10 @@ import { Icon } from '../icons'
 import { StatusDot, Chip, Sparkline } from '../components/ui'
 import { useAppLogs, useAppVersions, switchAppVersion, appOp, deleteApp, useAppDetail } from '../hooks/useApi'
 import { motion, project, springs, useMotionPref } from '../motion'
+import { btnSecondary, btnPrimary, btnDanger } from './AppWindow'
 import TabBar from './TabBar'
 // Story 4.7：「容器 Shell」tab + 渲染分支在 merge commit 693efd5 中被吞，2026-06-22 恢复
 import ContainerShellFace from './ContainerShellFace'
-
-const btnSecondary = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  borderRadius: 7, border: `1px solid ${T.border}`,
-  background: 'white', color: T.ink2, cursor: 'pointer',
-  fontSize: 12.5, fontWeight: 500,
-};
-
-const btnPrimary = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  borderRadius: 7, border: 'none',
-  background: T.blue, color: 'white', cursor: 'pointer',
-  fontSize: 12.5, fontWeight: 600,
-};
-
-const btnDanger = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  borderRadius: 7, border: 'none',
-  background: T.red, color: 'white', cursor: 'pointer',
-  fontSize: 12.5, fontWeight: 600,
-};
 
 function KpiCell({ label, value, unit, tone, mono }) {
   return (
@@ -522,7 +502,7 @@ resources: ${appSummary.resources}`;
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <span style={{ fontSize: 11.5, color: T.ink3 }}>应用配置摘要</span>
         <div style={{ flex: 1 }}/>
-        <button onClick={() => navigator.clipboard.writeText(configText)} style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
+        <button onClick={() => navigator.clipboard.writeText(configText)} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
           <Icon name="copy" size={11} stroke={1.8}/>复制
         </button>
       </div>
@@ -580,7 +560,7 @@ resources: ${appSummary.resources}`;
               立即终止 Pod，释放 GPU 与端口；保留 <span className="mono">/workspace</span> 数据
             </div>
           </div>
-          <button onClick={onUninstallClick} style={{
+          <button onClick={onUninstallClick} className="edge-press edge-btn-danger" style={{
             ...btnDanger, height: 30, padding: '0 12px', fontSize: 11.5, flexShrink: 0,
           }}>
             <Icon name="x" size={12} stroke={2}/>卸载
@@ -848,6 +828,7 @@ function MgmtVersions({ app }) {
                   <button
                     onClick={() => handleSwitch(v.version)}
                     disabled={!!switching}
+                    className="edge-press edge-btn-primary"
                     style={{
                       ...btnPrimary, height: 26, padding: '0 10px', fontSize: 11,
                       opacity: switching ? 0.6 : 1,
@@ -1220,13 +1201,11 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
                 <span>{app.gpu || 'CPU'}</span>
               </div>
             </div>
-            <button onPointerDown={(event) => event.stopPropagation()} onClick={onClose} style={{
+            <button onPointerDown={(event) => event.stopPropagation()} onClick={onClose} className="edge-press edge-menu-item" style={{
               width: 28, height: 28, borderRadius: 7, cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: T.ink3, background: 'transparent', border: 'none',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = T.surfaceAlt}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+            }}>
               <Icon name="x" size={15} stroke={2}/>
             </button>
           </div>
@@ -1265,17 +1244,17 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
           <div style={{ flex: 1 }}/>
           {!isError ? (
             <>
-              <button style={{ ...btnSecondary, height: 30, padding: '0 10px', fontSize: 11.5 }}
+              <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px', fontSize: 11.5 }}
                 onClick={() => appOp(app.id, 'restart').catch(e => console.error('Restart failed:', e))}>
                 <Icon name="refresh" size={12} stroke={1.8}/>重启
               </button>
-              <button style={{ ...btnDanger, height: 30, padding: '0 10px', fontSize: 11.5 }}
+              <button className="edge-press edge-btn-danger" style={{ ...btnDanger, height: 30, padding: '0 10px', fontSize: 11.5 }}
                 onClick={() => appOp(app.id, 'stop').catch(e => console.error('Stop failed:', e))}>
                 <Icon name="stop" size={12} stroke={1.8}/>停止
               </button>
             </>
           ) : (
-            <button style={{ ...btnPrimary, background: T.red, border: 'none',
+            <button className="edge-press edge-btn-primary" style={{ ...btnPrimary, background: T.red, border: 'none',
               height: 30, padding: '0 12px', fontSize: 11.5 }}
               onClick={() => appOp(app.id, 'restart').catch(e => console.error('Restart failed:', e))}>
               <Icon name="refresh" size={12} stroke={2}/>强制重启

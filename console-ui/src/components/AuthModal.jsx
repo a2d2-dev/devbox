@@ -173,13 +173,12 @@ export function AuthModal({ reason, onClose, onSuccess }) {
                 在云端控制台确认授权后继续
               </div>
             </div>
-            <div onClick={onClose} style={{
+            <div onClick={onClose} className="edge-menu-item" style={{
               width: 28, height: 28, borderRadius: 7, cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: T.ink3,
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+              '--edge-menu-hover-bg': '#f1f5f9',
+            }}>
               <Icon name="x" size={15} stroke={2}/>
             </div>
           </div>

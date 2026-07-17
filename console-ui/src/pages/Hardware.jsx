@@ -477,15 +477,13 @@ function GPUCommandsSection({ pciAddress }) {
           {items.map((c, i) => {
             const cmd = c.cmd(pciAddress)
             return (
-              <button key={i} onClick={() => copyText(cmd)} style={{
+              <button key={i} onClick={() => copyText(cmd)} className="edge-press edge-row-hover" style={{
                 display: 'flex', gap: 10, alignItems: 'baseline',
                 width: '100%', textAlign: 'left', border: 'none',
                 background: 'transparent', cursor: 'pointer',
                 padding: '5px 6px', borderRadius: 6,
                 borderBottom: `1px dashed ${T.borderSoft || '#f1f5f9'}`,
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+              }}>
                 <span style={{ fontSize: 11.5, color: T.ink3, minWidth: 200, flexShrink: 0 }}>
                   {c.desc}
                 </span>

@@ -314,15 +314,16 @@ export default function FilesFace() {
             parts.pop();
             setCurPath(parts.join('/'));
           }}
+          className="edge-press edge-btn-secondary"
           style={{ ...btnSecondary, height: 30, padding: '0 10px',
             opacity: breadcrumbSegments.length === 0 ? 0.4 : 1,
             cursor: breadcrumbSegments.length === 0 ? 'not-allowed' : 'pointer' }}>
           <Icon name="chevLeft" size={12} stroke={2}/>
         </button>
-        <button style={{ ...btnSecondary, height: 30, padding: '0 10px' }}>
+        <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px' }}>
           <Icon name="chevRight" size={12} stroke={2}/>
         </button>
-        <button onClick={() => setCurPath(p => p)} style={{ ...btnSecondary, height: 30, padding: '0 10px' }}>
+        <button onClick={() => setCurPath(p => p)} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px' }}>
           <Icon name="refresh" size={12} stroke={1.8}/>
         </button>
         {/* Breadcrumb: 工作区 > seg1 > seg2 ... 每段 clickable，根节点 = 「工作区」 */}
@@ -374,6 +375,7 @@ export default function FilesFace() {
         <button
           disabled={uploading}
           onClick={() => fileInputRef.current?.click()}
+          className="edge-press edge-btn-primary"
           style={{ ...btnPrimary, height: 30, padding: '0 12px',
             opacity: uploading ? 0.65 : 1,
             cursor: uploading ? 'wait' : 'pointer' }}>
@@ -382,6 +384,7 @@ export default function FilesFace() {
         <button
           title={showDetails ? '隐藏详情' : '显示详情'}
           onClick={() => setShowDetails(v => !v)}
+          className="edge-press edge-btn-secondary"
           style={{
             ...btnSecondary, height: 30, padding: '0 10px',
             background: showDetails ? T.blueSoft : 'white',
@@ -410,7 +413,7 @@ export default function FilesFace() {
         </div>
         <span className="mono tnum" style={{ color: T.ink, fontWeight: 600 }}>{diskUsed} GB / {diskTotal} GB</span>
         <span style={{ color: T.ink3 }}>({diskPct}% 已用)</span>
-        <button style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
+        <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
           <Icon name="sparkle" size={11} stroke={1.8}/>分析占用
         </button>
       </div>
@@ -426,15 +429,14 @@ export default function FilesFace() {
               防止用户认为可以访问宿主任意目录。后端 chroot 校验同步生效，
               即使 URL 注入也会返 403 PATH_FORBIDDEN。
               「云端」段（HuggingFace / MinIO）未实现后端，先一并隐藏。 */}
-          <div onClick={() => setCurPath('')} style={{
+          <div onClick={() => setCurPath('')} className={curPath !== '' ? 'edge-row-hover' : undefined} style={{
             display: 'flex', alignItems: 'center', gap: 8,
             padding: '6px 10px', borderRadius: 6, fontSize: 12.5,
             color: curPath === '' ? T.blueDeep : T.ink, cursor: 'pointer',
             background: curPath === '' ? T.blueSoft : 'transparent',
             fontWeight: curPath === '' ? 600 : 500,
-          }}
-          onMouseEnter={(e) => { if (curPath !== '') e.currentTarget.style.background = T.surface; }}
-          onMouseLeave={(e) => { if (curPath !== '') e.currentTarget.style.background = 'transparent'; }}>
+            '--edge-row-hover-bg': T.surface,
+          }}>
             <Icon name="folder" size={13} stroke={1.8} style={{ color: curPath === '' ? T.blueDeep : T.ink3 }}/>
             工作区
           </div>
