@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { animate } from 'motion/react';
 import { T } from '../tokens';
-import { Icon } from '../icons';
+import { motion, springs, useMotionPref } from '../motion';
 
 export const StatusDot = ({ tone = 'green', size = 8, pulse = false }) => {
   const colors = { green: T.green, amber: T.amber, red: T.red, gray: T.ink4, blue: T.blue };
@@ -37,18 +38,34 @@ export const Chip = ({ tone = 'gray', children, style }) => {
 // Ring progress (CSS conic)
 export const Ring = ({ value = 0, size = 96, thickness = 10, color = T.blue, track = '#e2e8f0', label, sublabel }) => {
   const pct = Math.max(0, Math.min(100, value));
+  const pref = useMotionPref();
+  const [displayPct, setDisplayPct] = useState(() => (pref.reduced ? pct : 0));
+  const displayPctRef = useRef(displayPct);
+
+  useEffect(() => {
+    const controls = animate(displayPctRef.current, pct, {
+      ...(pref.reduced ? { duration: 0 } : springs.default),
+      onUpdate: (latest) => {
+        displayPctRef.current = latest;
+        setDisplayPct(latest);
+      },
+    });
+
+    return () => controls.stop();
+  }, [pct, pref.reduced]);
+
   return (
-    <div style={{ position: 'relative', width: size, height: size }}>
+    <div aria-label={label || sublabel || `${Math.round(pct)}%`} style={{ position: 'relative', width: size, height: size }}>
       <div style={{
         width: size, height: size, borderRadius: '50%',
-        background: `conic-gradient(${color} ${pct * 3.6}deg, ${track} 0)`,
+        background: `conic-gradient(${color} ${displayPct * 3.6}deg, ${track} 0)`,
       }}/>
       <div style={{
         position: 'absolute', inset: thickness, borderRadius: '50%', background: 'white',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       }}>
         <div className="mono tnum" style={{ fontSize: size * 0.24, fontWeight: 700, color: T.ink, lineHeight: 1 }}>
-          {Math.round(pct)}<span style={{ fontSize: size * 0.13, color: T.ink3, fontWeight: 600 }}>%</span>
+          {Math.round(displayPct)}<span style={{ fontSize: size * 0.13, color: T.ink3, fontWeight: 600 }}>%</span>
         </div>
         {sublabel && <div style={{ fontSize: 10.5, color: T.ink3, marginTop: 3 }}>{sublabel}</div>}
       </div>
@@ -85,7 +102,18 @@ function monotonePath(pts) {
 //  - 横向虚线网格 (CartesianGrid horizontal-only)
 //  - 左侧 Y 轴 4 个 tick label (showAxis 时)
 // max prop 仍保留作上限 cap（如果需要锁 0-100 可显式传 100）。
-export const Sparkline = ({ data, color = T.blue, width = 520, height = 84, fill = true, showAxis = false, max, unit = '%' }) => {
+export const Sparkline = ({ data, color = T.blue, width = 520, height = 84, fill = true, showAxis = false, max, unit = '%', style, ...svgProps }) => {
+  const pref = useMotionPref();
+  const hasAnimated = useRef(false);
+  const [hasDrawn, setHasDrawn] = useState(false);
+  const shouldAnimate = Boolean(data?.length) && !pref.reduced && !hasDrawn;
+
+  const markAnimated = () => {
+    if (hasAnimated.current) return;
+    hasAnimated.current = true;
+    setHasDrawn(true);
+  };
+
   if (!data || data.length === 0) return null;
   const lo = 0;
   const dataMax = Math.max(...data, 1);
@@ -108,8 +136,8 @@ export const Sparkline = ({ data, color = T.blue, width = 520, height = 84, fill
     y: padT + innerH - ((v - lo) / (hi - lo)) * innerH,
   }));
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none"
-         style={{ display: 'block', width: '100%', height }}>
+    <svg {...svgProps} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none"
+         style={{ display: 'block', width: '100%', height, ...style }}>
       {showAxis && ticks.map((t, i) => (
         <line key={i} x1={padL} x2={padL + innerW} y1={t.y} y2={t.y}
               stroke="#e5e7eb" strokeDasharray="3 3" vectorEffect="non-scaling-stroke"/>
@@ -118,8 +146,29 @@ export const Sparkline = ({ data, color = T.blue, width = 520, height = 84, fill
         <text key={`l-${i}`} x={padL - 4} y={t.y + 3}
               textAnchor="end" fontSize="9" fill="#9ca3af">{Math.round(t.v)}{unit}</text>
       ))}
-      {fill && <path d={fillPath} fill={color} opacity="0.20"/>}
-      <path d={path} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+      {fill && (
+        <motion.path
+          d={fillPath}
+          fill={color}
+          initial={shouldAnimate ? { opacity: 0 } : false}
+          animate={{ opacity: 0.20 }}
+          transition={shouldAnimate ? { duration: 0.2, delay: 0.6, ease: 'easeOut' } : { duration: 0 }}
+          onAnimationComplete={markAnimated}
+        />
+      )}
+      <motion.path
+        d={path}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+        initial={shouldAnimate ? { pathLength: 0 } : false}
+        animate={{ pathLength: 1 }}
+        transition={shouldAnimate ? { duration: 0.6, ease: 'easeOut' } : { duration: 0 }}
+        onAnimationComplete={fill ? undefined : markAnimated}
+      />
     </svg>
   );
 };
