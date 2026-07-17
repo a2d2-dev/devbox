@@ -122,7 +122,7 @@ export default function DashboardApp({ onOpenApp }) {
       {/* Header strip */}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>仪表盘 · 总览</div>
+          <div style={{ ...T.type.heading, color: T.ink }}>仪表盘 · 总览</div>
           <div style={{ fontSize: 12, color: T.ink3, marginTop: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span><span className="edge-live-dot" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: T.green, marginRight: 5, verticalAlign: 'middle' }}/>实时刷新中</span>
             <span style={{ color: '#cbd5e1' }}>·</span>

@@ -131,7 +131,7 @@ export default function AppWindow({ app, active = false, visible = true, minimiz
         }}>
           <Icon name={app.icon} size={13} stroke={1.8}/>
         </div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{app.name}</div>
+        <div style={{ ...T.type.body, fontWeight: 600, color: T.ink }}>{app.name}</div>
         {breadcrumb && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: T.ink3, fontSize: 12.5 }}>
             <Icon name="chevRight" size={12} stroke={2}/>

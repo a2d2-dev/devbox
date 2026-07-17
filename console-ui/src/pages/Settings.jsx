@@ -379,7 +379,7 @@ export default function Diagnostics() {
   return (
     <div style={{ flex: 1, padding: 24, overflow: 'auto', background: T.surfaceAlt }}>
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 17, fontWeight: 700, color: T.ink }}>系统设置</div>
+        <div style={{ ...T.type.heading, color: T.ink }}>系统设置</div>
         <div style={{ fontSize: 12, color: T.ink3, marginTop: 3 }}>诊断工具 · 网络管理 · 设备信息</div>
       </div>
 

@@ -144,7 +144,7 @@ function DeployDialog({ app, onClose, onSuccess }) {
             {app.iconUrl ? <img src={app.iconUrl} style={{ width: 32, height: 32, objectFit: 'cover' }} /> : <Icon name={app.icon} size={18} stroke={1.7}/>}
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>部署 {app.name}</div>
+            <div style={{ ...T.type.heading, color: T.ink }}>部署 {app.name}</div>
             <div style={{ fontSize: 11, color: T.ink3 }} className="mono">{app.ver}</div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: T.ink3 }}>
@@ -308,7 +308,7 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>{app.name}</div>
+              <div style={{ ...T.type.title, fontWeight: 700, color: T.ink }}>{app.name}</div>
               <Chip tone="gray"><span className="mono">{app.ver}</span></Chip>
               <Chip tone="blue">{app.cat}</Chip>
               {(app.installed || deployResult) && <Chip tone="green"><StatusDot tone="green" size={6}/>{deployResult ? '已部署' : '已安装'}</Chip>}
@@ -659,7 +659,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
                   {f.icon ? <img src={f.icon} alt="" style={{ width: 20, height: 20 }}/> : <Icon name="sparkle" size={20} stroke={1.7}/>}
                 </div>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em' }}>{f.name}</div>
+                  <div style={{ ...T.type.heading }}>{f.name}</div>
                   <div style={{ fontSize: 11.5, opacity: 0.85, marginTop: 2 }}>{f.category}</div>
                 </div>
               </div>

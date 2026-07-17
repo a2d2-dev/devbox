@@ -16,10 +16,9 @@ function KpiCell({ label, value, unit, tone, mono }) {
       padding: '8px 10px', borderRadius: 7,
       background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`,
     }}>
-      <div style={{ fontSize: 10, color: T.ink3, fontWeight: 600,
-        letterSpacing: '0.04em', textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ ...T.type.label, color: T.ink3 }}>{label}</div>
       <div className={mono === false ? '' : 'mono tnum'} style={{
-        marginTop: 4, fontSize: 17, fontWeight: 700, color: tone, letterSpacing: '-0.01em',
+        marginTop: 4, ...T.type.heading, color: tone,
       }}>{value}</div>
     </div>
   );
@@ -94,8 +93,7 @@ function MgmtOverview({ app, cpu, gpu }) {
       {/* Resource limits */}
       {(app.cpuLimit || app.memLimit) && (
         <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 10.5, color: T.ink3, fontWeight: 600,
-            letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>
+          <div style={{ ...T.type.label, color: T.ink3, marginBottom: 6 }}>
             资源配额
           </div>
           <div style={{ background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`,
@@ -907,7 +905,7 @@ function UninstallConfirm({ app, onCancel, onConfirm }) {
               <Icon name={app.icon} size={22} stroke={1.6}/>
             </div>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>{app.name}</div>
+              <div style={{ ...T.type.heading, color: T.ink }}>{app.name}</div>
               <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 2 }} className="mono">{app.version} · {app.category}</div>
             </div>
           </div>
@@ -1187,7 +1185,7 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>{app.name}</div>
+                <div style={{ ...T.type.heading, color: T.ink }}>{app.name}</div>
                 <Chip tone={stateCfg.tone}>
                   <StatusDot tone={stateCfg.dot} size={6} pulse={stateCfg.pulse}/>{stateCfg.label}
                 </Chip>
