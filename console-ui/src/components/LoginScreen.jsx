@@ -88,14 +88,15 @@ export function LoginScreen({ onLogin, deviceName }) {
   const submit = async (e) => {
     if (e) e.preventDefault()
     if (phase !== 'idle') return
-    if (!username || !password) { setError('请输入账号与密码'); return }
+    const cleanPassword = password.trim()
+    if (!username || !cleanPassword) { setError('请输入账号与密码'); return }
     setError('')
     setPhase('verifying')
     try {
       const r = await fetch('/api/v1/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ password: cleanPassword }),
       })
       const data = await r.json().catch(() => ({}))
       if (!r.ok || !data.authenticated) {

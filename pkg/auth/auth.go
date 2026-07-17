@@ -31,7 +31,7 @@ func New(cfg Config) *Auth {
 		ttl = time.Hour
 	}
 	return &Auth{
-		password:   cfg.Password,
+		password:   strings.TrimSpace(cfg.Password),
 		sessionTTL: ttl,
 		sessions:   make(map[string]time.Time),
 	}
@@ -47,6 +47,7 @@ func (a *Auth) Verify(password string) (string, bool) {
 	if !a.Enabled() {
 		return "", true
 	}
+	password = strings.TrimSpace(password)
 	if password != a.password {
 		return "", false
 	}
