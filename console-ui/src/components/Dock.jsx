@@ -1,24 +1,41 @@
 import { useState } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
+import { motion, AnimatePresence, PopScale, springs, useMotionPref } from '../motion'
 
 function DockTooltip({ label }) {
+  const pref = useMotionPref()
   return (
     <div style={{
       position: 'absolute', bottom: 'calc(100% + 10px)', left: '50%',
       transform: 'translateX(-50%)',
-      background: 'rgba(15,23,42,0.92)', color: 'white',
-      fontSize: 11.5, fontWeight: 500,
-      padding: '4px 9px', borderRadius: 6, whiteSpace: 'nowrap',
       pointerEvents: 'none',
-      boxShadow: '0 4px 12px -2px rgba(15,23,42,0.3)',
-    }}>{label}</div>
+    }}>
+      <motion.div
+        initial={pref.reduced ? { opacity: 0 } : { opacity: 0, y: 4 }}
+        animate={pref.reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
+        exit={pref.reduced ? { opacity: 0 } : { opacity: 0, y: 4 }}
+        transition={pref.reduced ? pref.fadeTransition : springs.snappy}
+      >
+        <PopScale origin="bottom center" style={{
+          background: 'rgba(15,23,42,0.92)', color: 'white',
+          fontSize: 11.5, fontWeight: 500,
+          padding: '4px 9px', borderRadius: 6, whiteSpace: 'nowrap',
+          boxShadow: '0 4px 12px -2px rgba(15,23,42,0.3)',
+        }}>{label}</PopScale>
+      </motion.div>
+    </div>
   );
 }
 
 export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, onCloseApp, anyVisible, hidden = false,
                 authed, authBadge, onToggleAuth, alertBadge, loginUser, onLogout }) {
   const [hoverId, setHoverId] = useState(null);
+  const pref = useMotionPref();
+  const dockMotion = pref.reduced ? {} : {
+    whileHover: { y: -4, scale: 1.1 },
+    whileTap: { scale: 0.95 },
+  };
 
   // "Show desktop" is the home button — it lives on the left,
   // and is shown as "active" only when no window is visible.
@@ -31,7 +48,7 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
       opacity: hidden ? 0 : 1,
       pointerEvents: hidden ? 'none' : 'auto',
     }}>
-      <div className="edge-glass"
+      <div className="edge-material-chrome"
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '8px 12px', borderRadius: 20,
@@ -40,10 +57,12 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
           transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
         }}>
         {/* Show-desktop button */}
-        <div className="edge-dock-item" onClick={onShowDesktop}
+        <motion.div onClick={onShowDesktop}
              onMouseEnter={() => setHoverId('__home')}
              onMouseLeave={() => setHoverId(null)}
              title="显示桌面"
+             transition={pref.spring('snappy')}
+             {...dockMotion}
              style={{
                position: 'relative', width: 44, height: 44, borderRadius: 12,
                background: desktopActive ? '#1f2937' : 'rgba(15,23,42,0.04)',
@@ -59,10 +78,12 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
               width: 5, height: 5, borderRadius: '50%', background: T.ink2,
             }}/>
           )}
-          {hoverId === '__home' && (
-            <DockTooltip label="显示桌面"/>
-          )}
-        </div>
+          <AnimatePresence>
+            {hoverId === '__home' && (
+              <DockTooltip label="显示桌面"/>
+            )}
+          </AnimatePresence>
+        </motion.div>
 
         {/* Divider between system controls and running apps */}
         <div style={{ width: 1, height: 28, background: 'rgba(15,23,42,0.08)', margin: '0 4px' }}/>
@@ -86,13 +107,15 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
             const hovered = hoverId === app.id;
             const rememberRect = (node) => registerDockIconRect?.(app.id, node);
             return (
-              <div key={app.id} className="edge-dock-item"
+              <motion.div key={app.id}
                    ref={rememberRect}
                    onClick={(e) => { rememberRect(e.currentTarget); onFocusApp(app.id); }}
                    onMouseEnter={(e) => { rememberRect(e.currentTarget); setHoverId(app.id); }}
                    onMouseLeave={() => setHoverId(null)}
                    onContextMenu={(e) => { e.preventDefault(); onCloseApp(app.id); }}
                    title={app.name}
+                   transition={pref.spring('snappy')}
+                   {...dockMotion}
                    style={{
                      position: 'relative', width: 44, height: 44, borderRadius: 12,
                      background: app.isActive ? app.bg : 'rgba(15,23,42,0.04)',
@@ -173,8 +196,10 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
                   opacity: app.isMinimized ? 0.6 : 1,
                 }}/>
 
-                {hovered && <DockTooltip label={`${app.name}${app.isMinimized ? ' · 已最小化' : ''}`}/>}
-              </div>
+                <AnimatePresence>
+                  {hovered && <DockTooltip label={`${app.name}${app.isMinimized ? ' · 已最小化' : ''}`}/>}
+                </AnimatePresence>
+              </motion.div>
             );
           })
         )}

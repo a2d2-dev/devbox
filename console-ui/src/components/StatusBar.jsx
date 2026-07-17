@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { StatusDot, useClock } from './ui'
+import { AnimatePresence, PopScale } from '../motion'
 
 export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenAlerts, theme = 'light', deviceLabel, DEVICE, loginUser, onLogout }) {
   const isDarkBar = theme === 'dark'
@@ -198,30 +199,29 @@ function UserMenu({ user, theme, onLogout }) {
         <Icon name="chevDown" size={11} stroke={2}
           style={{ color: dark ? 'rgba(255,255,255,0.6)' : '#64748b' }}/>
       </button>
-      {open && (
-        <div style={{
-          position: 'absolute', top: 34, right: 0, zIndex: 1000,
-          minWidth: 180, background: 'white', borderRadius: 10,
-          boxShadow: '0 12px 32px -4px rgba(15,23,42,0.18), 0 0 0 1px rgba(15,23,42,0.06)',
-          padding: 6, color: '#0f172a',
-        }}>
-          <div style={{ padding: '8px 12px 10px', borderBottom: '1px solid #f1f5f9' }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: '#0f172a' }}>{user}</div>
-            <div style={{ fontSize: 10.5, color: '#64748b', marginTop: 2 }}>已登录</div>
-          </div>
-          <button onClick={() => { setOpen(false); onLogout && onLogout() }} style={{
-            width: '100%', textAlign: 'left', padding: '8px 12px',
-            border: 'none', background: 'transparent', cursor: 'pointer',
-            fontSize: 13, color: '#dc2626', fontWeight: 500,
-            borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8,
-          }}
-            onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
-            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-            <Icon name="lock" size={13} stroke={1.8}/>退出登录
-          </button>
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <PopScale origin="top right" style={{
+            position: 'absolute', top: 34, right: 0, zIndex: 1000,
+            minWidth: 180, background: 'white', borderRadius: 10,
+            boxShadow: '0 12px 32px -4px rgba(15,23,42,0.18), 0 0 0 1px rgba(15,23,42,0.06)',
+            padding: 6, color: '#0f172a',
+          }}>
+            <div style={{ padding: '8px 12px 10px', borderBottom: '1px solid #f1f5f9' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: '#0f172a' }}>{user}</div>
+              <div style={{ fontSize: 10.5, color: '#64748b', marginTop: 2 }}>已登录</div>
+            </div>
+            <button className="edge-menu-item" onClick={() => { setOpen(false); onLogout && onLogout() }} style={{
+              width: '100%', textAlign: 'left', padding: '8px 12px',
+              border: 'none', background: 'transparent', cursor: 'pointer',
+              fontSize: 13, color: '#dc2626', fontWeight: 500,
+              borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <Icon name="lock" size={13} stroke={1.8}/>退出登录
+            </button>
+          </PopScale>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
-
