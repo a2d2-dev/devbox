@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { motion, AnimatePresence, PopScale, springs, useMotionPref } from '../motion'
@@ -41,11 +41,21 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
   // and is shown as "active" only when no window is visible.
   const desktopActive = !anyVisible;
 
+  useEffect(() => {
+    if (!hidden) return undefined;
+    const frame = requestAnimationFrame(() => setHoverId(null));
+    return () => cancelAnimationFrame(frame);
+  }, [hidden]);
+
   return (
-    <div style={{
+    <div
+      aria-hidden={hidden}
+      inert={hidden ? true : undefined}
+      style={{
       position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
       zIndex: 25,
       opacity: hidden ? 0 : 1,
+      visibility: hidden ? 'hidden' : 'visible',
       pointerEvents: hidden ? 'none' : 'auto',
     }}>
       <div className="edge-material-chrome"
