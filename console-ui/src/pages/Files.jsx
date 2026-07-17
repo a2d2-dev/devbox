@@ -4,7 +4,7 @@ import { Icon } from '../icons'
 import { StatusDot, Chip, Sparkline } from '../components/ui'
 import { useMetrics, authFetch } from '../hooks/useApi'
 import { FileIcon } from '../components/AppShell'
-import { useToast } from '../components/Toast'
+import { useToast } from '../components/toastContext'
 
 const btnSecondary = {
   display: 'inline-flex', alignItems: 'center', gap: 5,

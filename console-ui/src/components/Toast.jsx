@@ -1,7 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, springs, useMotionPref } from '../motion'
-
-const ToastContext = createContext(null)
+import { ToastContext } from './toastContext'
 
 const TONES = {
   ok: { bg: '#f0fdf4', border: '#bbf7d0', text: '#166534', dot: '#22c55e' },
@@ -13,8 +12,10 @@ export function ToastProvider({ children }) {
   const [items, setItems] = useState([])
   const timers = useRef(new Map())
   const seq = useRef(0)
+  const mountedRef = useRef(true)
 
   const remove = useCallback((id) => {
+    if (!mountedRef.current) return
     const timer = timers.current.get(id)
     if (timer) clearTimeout(timer)
     timers.current.delete(id)
@@ -22,6 +23,7 @@ export function ToastProvider({ children }) {
   }, [])
 
   const push = useCallback((kind, text) => {
+    if (!mountedRef.current) return undefined
     const safeKind = TONES[kind] ? kind : 'ok'
     const id = `${Date.now()}-${seq.current++}`
     setItems(current => [...current, { id, kind: safeKind, text }])
@@ -29,9 +31,14 @@ export function ToastProvider({ children }) {
     return id
   }, [remove])
 
-  useEffect(() => () => {
-    timers.current.forEach(timer => clearTimeout(timer))
-    timers.current.clear()
+  useEffect(() => {
+    const activeTimers = timers.current
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      activeTimers.forEach(timer => clearTimeout(timer))
+      activeTimers.clear()
+    }
   }, [])
 
   const api = useMemo(() => ({
@@ -47,12 +54,6 @@ export function ToastProvider({ children }) {
       <ToastStack items={items}/>
     </ToastContext.Provider>
   )
-}
-
-export function useToast() {
-  const toast = useContext(ToastContext)
-  if (!toast) throw new Error('useToast must be used inside ToastProvider')
-  return toast
 }
 
 function ToastStack({ items }) {
