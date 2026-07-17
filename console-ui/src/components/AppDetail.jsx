@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { Icon } from '../icons'
 import { StatusDot, Chip, Sparkline, Card } from './ui'
 import { btnSecondary, btnPrimary, btnDanger } from './AppWindow'
+import TabBar from './TabBar'
 
 function Kpi({ label, value, unit, tone }) {
   const colors = { blue: T.blue, indigo: T.indigo, green: T.green, amber: T.amber };
@@ -282,20 +283,19 @@ export default function AppDetail({ appId, authed, onRequireAuth }) {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 4 }}>
-          {tabs.map(t => (
-            <div key={t.id} onClick={() => setTab(t.id)} style={{
-              padding: '10px 14px 12px', fontSize: 13, cursor: 'pointer',
-              color: tab === t.id ? T.blueDeep : T.ink3,
-              fontWeight: tab === t.id ? 600 : 500,
-              borderBottom: `2px solid ${tab === t.id ? T.blue : 'transparent'}`,
-              display: 'flex', alignItems: 'center', gap: 6, marginBottom: -1,
-            }}>
+        <TabBar
+          tabs={tabs}
+          active={tab}
+          onChange={setTab}
+          style={{ gap: 4 }}
+          itemStyle={{ padding: '10px 14px 12px', fontSize: 13, marginBottom: -1 }}
+          renderLabel={(t) => (
+            <>
               <Icon name={t.icon} size={13} stroke={1.8}/>
               {t.label}
-            </div>
-          ))}
-        </div>
+            </>
+          )}
+        />
       </div>
 
       {/* Tab content */}

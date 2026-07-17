@@ -10,6 +10,7 @@ import { useState, useEffect } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { authFetch } from '../hooks/useApi'
+import TabBar from '../components/TabBar'
 
 const th = {
   padding: '8px 14px', fontSize: 10.5, fontWeight: 600, color: T.ink3,
@@ -264,19 +265,16 @@ function ProcessDetailDrawer({ pid, onClose }) {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt }}>
-          {TAB_KEYS.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              data-action="switch-tab"
-              style={{
-                padding: '10px 16px', border: 'none', background: 'transparent',
-                fontSize: 12, fontWeight: activeTab === tab.id ? 600 : 500,
-                color: activeTab === tab.id ? T.blueDeep : T.ink2,
-                borderBottom: activeTab === tab.id ? `2px solid ${T.blue}` : '2px solid transparent',
-                cursor: 'pointer',
-              }}>{tab.label}</button>
-          ))}
-        </div>
+        <TabBar
+          tabs={TAB_KEYS}
+          active={activeTab}
+          onChange={setActiveTab}
+          itemAs="button"
+          inactiveTextColor={T.ink2}
+          style={{ borderBottom: `1px solid ${T.border}`, background: T.surfaceAlt }}
+          itemStyle={{ padding: '10px 16px', fontSize: 12 }}
+          getItemProps={() => ({ 'data-action': 'switch-tab' })}
+        />
 
         {/* Content */}
         <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>

@@ -2,22 +2,14 @@ import { useMemo, useState, useEffect, useRef } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { cleanupStaleCodex, useAIActivity, useAITranscript } from '../hooks/useApi'
+import TabBar from '../components/TabBar'
 
-const tabStyle = (active) => ({
+const aiTabItemStyle = {
   height: 39,
   padding: '0 14px',
-  border: 'none',
-  borderBottom: `2px solid ${active ? T.blue : 'transparent'}`,
   borderRadius: '6px 6px 0 0',
-  background: active ? '#eff6ff' : 'transparent',
-  color: active ? T.blue : T.ink3,
   fontSize: 13,
-  fontWeight: active ? 800 : 600,
-  cursor: 'pointer',
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-});
+};
 
 const th = {
   padding: '8px 12px',
@@ -1077,18 +1069,30 @@ export default function AIActivity() {
               borderBottom: `1px solid ${T.borderSoft}`,
               background: T.surface,
             }}>
-              {[
-                ['board', 'Board', 'dashboard'],
-                ['overview', '概览', 'dashboard'],
-                ['processes', '进程', 'cpu'],
-                ['sessions', '会话 / Chat', 'message'],
-                ['configs', '配置', 'file'],
-                ['events', '事件', 'clock'],
-              ].map(([id, label, icon]) => (
-                <button key={id} onClick={() => setTab(id)} style={tabStyle(tab === id)}>
-                  <Icon name={icon} size={13} stroke={2}/>{label}
-                </button>
-              ))}
+              <TabBar
+                tabs={[
+                  { id: 'board', label: 'Board', icon: 'dashboard' },
+                  { id: 'overview', label: '概览', icon: 'dashboard' },
+                  { id: 'processes', label: '进程', icon: 'cpu' },
+                  { id: 'sessions', label: '会话 / Chat', icon: 'message' },
+                  { id: 'configs', label: '配置', icon: 'file' },
+                  { id: 'events', label: '事件', icon: 'clock' },
+                ]}
+                active={tab}
+                onChange={setTab}
+                itemAs="button"
+                activeTextColor={T.blue}
+                activeWeight={800}
+                inactiveWeight={600}
+                style={{ gap: 4 }}
+                itemStyle={aiTabItemStyle}
+                activeItemStyle={{ background: '#eff6ff' }}
+                renderLabel={(t2) => (
+                  <>
+                    <Icon name={t2.icon} size={13} stroke={2}/>{t2.label}
+                  </>
+                )}
+              />
             </div>
             <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
               {tab !== 'board' && !active && <Empty />}

@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { Icon } from '../icons'
 import { StatusDot, Chip, Card, Sparkline, useTicker } from './ui'
 import { btnSecondary, btnPrimary, btnDanger } from './AppWindow'
+import TabBar from './TabBar'
 import TerminalFace from '../pages/Terminal'
 import FilesFace from '../pages/Files'
 import PortsFace from '../pages/Ports'
@@ -215,29 +216,34 @@ function VSCodeFace({ onMgmt }) {
         {/* Editor + terminal */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* Tabs */}
-          <div style={{
+          <TabBar
+            tabs={openTabs}
+            active={tab}
+            onChange={setTab}
+            getId={(t2) => t2.name}
+            activeColor="#0078d4"
+            activeTextColor="#ffffff"
+            inactiveTextColor="#969696"
+            indicatorPosition="top"
+            style={{
             display: 'flex', background: '#252526', borderBottom: '1px solid #1e1e1e',
             height: 35, flexShrink: 0, overflowX: 'auto',
-          }}>
-            {openTabs.map(t2 => {
-              const active = tab === t2.name;
-              return (
-                <div key={t2.name} onClick={() => setTab(t2.name)} style={{
-                  padding: '0 14px 0 12px', display: 'flex', alignItems: 'center', gap: 6,
-                  background: active ? '#1e1e1e' : 'transparent',
-                  borderRight: '1px solid #1e1e1e', cursor: 'pointer',
-                  borderTop: active ? '2px solid #0078d4' : '2px solid transparent',
-                  marginTop: active ? -2 : 0, fontSize: 12.5,
-                  color: active ? '#ffffff' : '#969696',
-                }}>
-                  <FileIcon type={t2.icon} size={13}/>
-                  {t2.name}
-                  {t2.dirty && <span style={{ color: '#cccccc', fontSize: 16, lineHeight: 0 }}>●</span>}
-                  <span style={{ color: '#858585', marginLeft: 4, fontSize: 14 }}>×</span>
-                </div>
-              );
-            })}
-          </div>
+            }}
+            itemStyle={{
+              padding: '0 14px 0 12px',
+              borderRight: '1px solid #1e1e1e',
+              fontSize: 12.5,
+            }}
+            activeItemStyle={{ background: '#1e1e1e', marginTop: -2 }}
+            renderLabel={(t2) => (
+              <>
+                <FileIcon type={t2.icon} size={13}/>
+                {t2.name}
+                {t2.dirty && <span style={{ color: '#cccccc', fontSize: 16, lineHeight: 0 }}>●</span>}
+                <span style={{ color: '#858585', marginLeft: 4, fontSize: 14 }}>×</span>
+              </>
+            )}
+          />
 
           {/* Editor */}
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
@@ -1235,18 +1241,18 @@ function SDWebUIFace({ onMgmt }) {
         version="v1.10.1" onMgmt={onMgmt}/>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', background: T.surface, borderBottom: `1px solid ${T.border}`,
-        padding: '0 16px', flexShrink: 0 }}>
-        {['txt2img', 'img2img', 'extras', 'PNG Info', 'LoRA', '设置'].map(t2 => (
-          <div key={t2} onClick={() => setTab(t2)} style={{
-            padding: '10px 14px 12px', fontSize: 12.5,
-            color: tab === t2 ? T.ink : T.ink3,
-            fontWeight: tab === t2 ? 600 : 500, cursor: 'pointer',
-            borderBottom: `2px solid ${tab === t2 ? '#ec4899' : 'transparent'}`,
-            marginBottom: -1,
-          }}>{t2}</div>
-        ))}
-      </div>
+      <TabBar
+        tabs={['txt2img', 'img2img', 'extras', 'PNG Info', 'LoRA', '设置'].map((id) => ({ id, label: id }))}
+        active={tab}
+        onChange={setTab}
+        activeColor="#ec4899"
+        activeTextColor={T.ink}
+        style={{
+          background: T.surface, borderBottom: `1px solid ${T.border}`,
+          padding: '0 16px', flexShrink: 0,
+        }}
+        itemStyle={{ padding: '10px 14px 12px', fontSize: 12.5, marginBottom: -1 }}
+      />
 
       {/* Top model selector */}
       <div style={{ padding: '10px 16px', background: T.surface, borderBottom: `1px solid ${T.borderSoft}`,

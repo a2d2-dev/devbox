@@ -4,6 +4,7 @@ import { Icon } from '../icons'
 import { StatusDot, Chip, Ring, Sparkline, Card, useTicker } from '../components/ui'
 import { useDevice, useMetrics, useMetricsHistory, useApps, useAlerts, useNetwork, authFetch } from '../hooks/useApi'
 import { btnSecondary, btnPrimary, btnDanger } from '../components/AppWindow'
+import TabBar from '../components/TabBar'
 
 function NetFirewall() {
   const rules = [
@@ -260,30 +261,23 @@ function NetworkManagement() {
       </div>
 
       {/* Tab bar */}
-      <div style={{ display: 'flex', padding: '4px 16px 0', gap: 2, marginTop: 8 }}>
-        {[
-          { id: 'interfaces', label: '网络配置', icon: 'network', count: ifaces.length },
-        ].map(t2 => {
-          const on = tab === t2.id;
-          return (
-            <div key={t2.id} onClick={() => setTab(t2.id)} style={{
-              padding: '8px 12px 10px', fontSize: 12.5, cursor: 'pointer',
-              color: on ? T.blueDeep : T.ink3,
-              fontWeight: on ? 600 : 500,
-              borderBottom: `2px solid ${on ? T.blue : 'transparent'}`,
-              marginBottom: -1,
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}>
-              <Icon name={t2.icon} size={13} stroke={1.8}/>{t2.label}
-              <span className="mono tnum" style={{
-                fontSize: 10, color: on ? T.blueDeep : T.ink4,
-                background: on ? '#dbeafe' : T.surfaceAlt,
-                padding: '0 5px', borderRadius: 999, lineHeight: '16px', marginLeft: 2,
-              }}>{t2.count}</span>
-            </div>
-          );
-        })}
-      </div>
+      <TabBar
+        tabs={[{ id: 'interfaces', label: '网络配置', icon: 'network', count: ifaces.length }]}
+        active={tab}
+        onChange={setTab}
+        style={{ padding: '4px 16px 0', gap: 2, marginTop: 8 }}
+        itemStyle={{ padding: '8px 12px 10px', fontSize: 12.5, marginBottom: -1 }}
+        renderLabel={(t2, on) => (
+          <>
+            <Icon name={t2.icon} size={13} stroke={1.8}/>{t2.label}
+            <span className="mono tnum" style={{
+              fontSize: 10, color: on ? T.blueDeep : T.ink4,
+              background: on ? '#dbeafe' : T.surfaceAlt,
+              padding: '0 5px', borderRadius: 999, lineHeight: '16px', marginLeft: 2,
+            }}>{t2.count}</span>
+          </>
+        )}
+      />
 
       {/* Interfaces from API */}
       <div style={{ padding: 16 }}>

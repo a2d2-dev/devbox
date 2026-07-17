@@ -4,6 +4,7 @@ import { Icon } from '../icons'
 import { StatusDot, Chip, Ring, Sparkline, Card, useTicker } from '../components/ui'
 import { useDevice, useMetrics, useMetricsHistory, useApps, useAlerts, useNetwork, getAuthToken } from '../hooks/useApi'
 import { btnSecondary, btnPrimary, btnDanger } from '../components/AppWindow'
+import TabBar from '../components/TabBar'
 
 function guessAppStyle(id, name, category) {
   const n = (id + ' ' + name).toLowerCase();
@@ -607,32 +608,27 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
         {/* 顶部 3 tab —— 对齐 1Panel 应用商店「全部 / 已安装 / 可升级」交互。
             tab 是状态主轴，sidebar category 是二次过滤维度。tab 计数实时反映
             cross-reference 结果（store apps × 已部署 apps） */}
-        <div style={{
-          display: 'flex', gap: 4, marginBottom: 18,
-          borderBottom: `1px solid ${T.borderSoft}`,
-        }}>
-          {[
-            ['all',        '全部',    allCount],
-            ['installed',  '已安装',  installedCount],
-            ['upgradable', '可升级',  upgradableCount],
-          ].map(([id, label, count]) => (
-            <div key={id} onClick={() => setTab(id)} style={{
-              padding: '10px 16px 12px', fontSize: 13, cursor: 'pointer',
-              color: tab === id ? T.blueDeep : T.ink3,
-              fontWeight: tab === id ? 600 : 500,
-              borderBottom: `2px solid ${tab === id ? T.blue : 'transparent'}`,
-              marginBottom: -1,
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}>
-              {label}
+        <TabBar
+          tabs={[
+            { id: 'all', label: '全部', count: allCount },
+            { id: 'installed', label: '已安装', count: installedCount },
+            { id: 'upgradable', label: '可升级', count: upgradableCount },
+          ]}
+          active={tab}
+          onChange={setTab}
+          style={{ gap: 4, marginBottom: 18, borderBottom: `1px solid ${T.borderSoft}` }}
+          itemStyle={{ padding: '10px 16px 12px', fontSize: 13, marginBottom: -1 }}
+          renderLabel={(t2, on) => (
+            <>
+              {t2.label}
               <span style={{
                 fontSize: 11, color: T.ink4, fontWeight: 500,
                 padding: '1px 6px', borderRadius: 3,
-                background: tab === id ? T.blueSoft : T.surfaceAlt,
-              }} className="mono tnum">{count}</span>
-            </div>
-          ))}
-        </div>
+                background: on ? T.blueSoft : T.surfaceAlt,
+              }} className="mono tnum">{t2.count}</span>
+            </>
+          )}
+        />
 
         {/* Featured — 仅展示 StoreApp CR 上有 label app.theriseunion.io/pinned=true 的应用
             （之前是 slice(0,4) 粗暴拿前 4 个，没有"推荐"机制）
