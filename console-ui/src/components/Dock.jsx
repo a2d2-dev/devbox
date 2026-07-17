@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 
@@ -16,7 +16,7 @@ function DockTooltip({ label }) {
   );
 }
 
-export function Dock({ apps, onShowDesktop, onFocusApp, onCloseApp, anyVisible,
+export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, onCloseApp, anyVisible,
                 authed, authBadge, onToggleAuth, alertBadge, loginUser, onLogout }) {
   const [hoverId, setHoverId] = useState(null);
 
@@ -82,10 +82,12 @@ export function Dock({ apps, onShowDesktop, onFocusApp, onCloseApp, anyVisible,
             }[app.state] || null;
             const isError = app.state === 'error';
             const hovered = hoverId === app.id;
+            const rememberRect = (node) => registerDockIconRect?.(app.id, node);
             return (
               <div key={app.id} className="edge-dock-item"
-                   onClick={() => onFocusApp(app.id)}
-                   onMouseEnter={() => setHoverId(app.id)}
+                   ref={rememberRect}
+                   onClick={(e) => { rememberRect(e.currentTarget); onFocusApp(app.id); }}
+                   onMouseEnter={(e) => { rememberRect(e.currentTarget); setHoverId(app.id); }}
                    onMouseLeave={() => setHoverId(null)}
                    onContextMenu={(e) => { e.preventDefault(); onCloseApp(app.id); }}
                    title={app.name}
@@ -180,4 +182,3 @@ export function Dock({ apps, onShowDesktop, onFocusApp, onCloseApp, anyVisible,
     </div>
   );
 }
-

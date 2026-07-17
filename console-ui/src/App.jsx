@@ -55,6 +55,7 @@ import { LoginScreen } from './components/LoginScreen'
 import { TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakToggle, TweakColor } from './components/TweaksPanel'
 import { useMetrics, useMetricsHistory, useApps, useAlerts, useDevice, setAuthToken, getAuthToken, clearAuth, setOnAuthExpired } from './hooks/useApi'
 import { SYSTEM_APPS } from './data/systemApps'
+import { AnimatePresence } from './motion'
 
 const TWEAK_DEFAULTS = {
   "preset": "platform-dark",
@@ -158,6 +159,12 @@ export default function App() {
   // Per-app maximized state — each app remembers whether it was full-screen
   // or framed before it was minimized / unfocused.
   const [maxByApp, setMaxByApp] = useState({}); // { [appId]: boolean }
+  const dockIconRects = useRef(new Map());
+  const registerDockIconRect = useCallback((id, node) => {
+    if (!id || !node) return;
+    dockIconRects.current.set(id, node.getBoundingClientRect());
+  }, []);
+  const getDockIconRect = useCallback((id) => dockIconRects.current.get(id), []);
   const maximized = activeId ? (maxByApp[activeId] ?? true) : true;
   const setMaximized = (next) => {
     if (!activeId) return;
@@ -384,17 +391,21 @@ export default function App() {
           />
         </div>
 
-        {/* Windows — all open apps stay mounted, hidden via display:none */}
-        {openApps.map(appId => {
-          const app = appById[appId];
-          if (!app) return null;
-          const isVisible = activeId === appId && !minimized.has(appId);
-          const isMax = maxByApp[appId] ?? true;
-          return (
-            <div key={appId} style={{ display: isVisible ? 'contents' : 'none' }}>
+        {/* Windows — open apps stay mounted; AppWindow owns visible/minimized animation. */}
+        <AnimatePresence>
+          {openApps.map(appId => {
+            const app = appById[appId];
+            if (!app) return null;
+            const isVisible = activeId === appId && !minimized.has(appId);
+            const isMax = maxByApp[appId] ?? true;
+            return (
               <AppWindow
+                key={appId}
                 app={app}
+                visible={isVisible}
+                minimized={minimized.has(appId)}
                 maximized={isMax}
+                getDockIconRect={getDockIconRect}
                 onMaximize={() => setMaxByApp(m => ({ ...m, [appId]: !(m[appId] ?? true) }))}
                 onMinimize={minimizeWindow}
                 onClose={closeWindow}
@@ -428,14 +439,15 @@ export default function App() {
                   />
                 )}
               </AppWindow>
-            </div>
-          );
-        })}
+            );
+          })}
+        </AnimatePresence>
 
         {/* Dock — visible on desktop and when window is in framed (non-maximized) mode */}
         {(!showWindow || !maximized) && (
           <Dock
             apps={dockApps}
+            registerDockIconRect={registerDockIconRect}
             onShowDesktop={showDesktop}
             onFocusApp={focusApp}
             onCloseApp={closeApp}
