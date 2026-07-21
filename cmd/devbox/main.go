@@ -49,16 +49,28 @@ func main() {
 	col := collector.New(logger, version)
 	go col.Start(ctx)
 
-	// K8s 应用管理器：可选，初始化失败仅禁用相关功能。
-	var appMgr *apps.Manager
-	if mgr, err := apps.NewManager(logger, apps.Config{
-		Kubeconfig: cfg.Kubernetes.Kubeconfig,
-		Namespace:  cfg.Kubernetes.Namespace,
-	}); err != nil {
-		logger.Warn("K8s app manager unavailable; app management disabled", zap.Error(err))
+	// 应用管理 Controller（统一 K8s + Docker Compose 运行时，Issue #2）。
+	// 装配失败仅禁用应用管理，不影响控制台其它功能。
+	var appController apps.Controller
+	var appCleanup func()
+	if c, cleanup, err := apps.AssembleController(ctx, apps.ControllerConfig{
+		DataDir:           cfg.Compose.DataDir,
+		DockerSocket:      cfg.Compose.DockerSocket,
+		ComposeEnabled:    cfg.Compose.Enabled,
+		Kubeconfig:        cfg.Kubernetes.Kubeconfig,
+		Namespace:         cfg.Kubernetes.Namespace,
+		KubernetesEnabled: true,
+	}, logger); err != nil {
+		logger.Warn("App controller unavailable; app management disabled", zap.Error(err))
 	} else {
-		appMgr = mgr
+		appController = c
+		appCleanup = cleanup
 	}
+	defer func() {
+		if appCleanup != nil {
+			appCleanup()
+		}
+	}()
 
 	// 应用商店管理器：仅在显式配置 APIServerURL 时启用。
 	var storeMgr *apps.StoreManager
@@ -85,7 +97,7 @@ func main() {
 		AuthPassword:      cfg.Auth.Password,
 		AuthSessionTTL:    cfg.Auth.SessionTTL,
 		LinksPath:         cfg.Console.LinksPath,
-	}, col, appMgr, storeMgr)
+	}, col, appController, storeMgr)
 
 	go func() {
 		if err := consoleServer.Start(ctx); err != nil {

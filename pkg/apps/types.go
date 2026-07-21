@@ -4,27 +4,28 @@ import "time"
 
 // AppInfo 已部署应用信息（返回给前端）
 type AppInfo struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Namespace  string    `json:"namespace"`
-	Kind       string    `json:"kind"`      // "app" | "system"
-	State      string    `json:"state"`     // "running" | "stopped" | "error" | "pending"
-	Replicas   int32     `json:"replicas"`
-	Ready      int32     `json:"ready"`
-	Image      string    `json:"image"`
-	Version    string    `json:"version"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID         string        `json:"id"`
+	Name       string        `json:"name"`
+	Namespace  string        `json:"namespace"`
+	Kind       string        `json:"kind"`  // "app" | "system"
+	State      string        `json:"state"` // "running" | "stopped" | "error" | "pending"
+	Replicas   int32         `json:"replicas"`
+	Ready      int32         `json:"ready"`
+	Image      string        `json:"image"`
+	Version    string        `json:"version"`
+	CreatedAt  time.Time     `json:"createdAt"`
 	Ports      []PortMapping `json:"ports,omitempty"`
-	CPURequest string    `json:"cpuRequest,omitempty"`
-	CPULimit   string    `json:"cpuLimit,omitempty"`
-	MemRequest string    `json:"memRequest,omitempty"`
-	MemLimit   string    `json:"memLimit,omitempty"`
+	CPURequest string        `json:"cpuRequest,omitempty"`
+	CPULimit   string        `json:"cpuLimit,omitempty"`
+	MemRequest string        `json:"memRequest,omitempty"`
+	MemLimit   string        `json:"memLimit,omitempty"`
 }
 
 // PortMapping 端口映射
 type PortMapping struct {
 	Name          string `json:"name"`
 	ContainerPort int32  `json:"containerPort"`
+	HostPort      int32  `json:"hostPort,omitempty"`
 	Protocol      string `json:"protocol"`
 	NodePort      int32  `json:"nodePort,omitempty"`
 }

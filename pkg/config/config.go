@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Console    ConsoleConfig    `mapstructure:"console"`
 	Kubernetes KubernetesConfig `mapstructure:"kubernetes"`
+	Compose    ComposeConfig    `mapstructure:"compose"`
 	Auth       AuthConfig       `mapstructure:"auth"`
 	Logging    LoggingConfig    `mapstructure:"logging"`
 }
@@ -39,6 +40,14 @@ type KubernetesConfig struct {
 	Kubeconfig   string `mapstructure:"kubeconfig"`    // kubeconfig 路径（空则尝试 in-cluster）
 	Namespace    string `mapstructure:"namespace"`     // 默认 namespace
 	APIServerURL string `mapstructure:"apiserver_url"` // 应用商店 API 地址（可选）
+}
+
+// ComposeConfig Docker Compose 应用管理（Issue #2）。
+// Compose 与 K8s 并列；Compose 默认启用，Docker 不可用时仅该运行时降级，不影响 K8s。
+type ComposeConfig struct {
+	Enabled      bool   `mapstructure:"enabled"`       // 默认 true
+	DataDir      string `mapstructure:"data_dir"`      // 数据根（apps.db + apps/<id>）；默认 /var/lib/devbox
+	DockerSocket string `mapstructure:"docker_socket"` // Docker daemon unix socket；默认 /var/run/docker.sock
 }
 
 // LoggingConfig 日志配置。
@@ -78,6 +87,9 @@ func Load(configFile string) (*Config, error) {
 	v.BindEnv("kubernetes.kubeconfig", "DEVBOX_KUBECONFIG")
 	v.BindEnv("kubernetes.namespace", "DEVBOX_NAMESPACE")
 	v.BindEnv("kubernetes.apiserver_url", "DEVBOX_APISERVER_URL")
+	v.BindEnv("compose.enabled", "DEVBOX_COMPOSE_ENABLED")
+	v.BindEnv("compose.data_dir", "DEVBOX_COMPOSE_DATA_DIR")
+	v.BindEnv("compose.docker_socket", "DEVBOX_COMPOSE_DOCKER_SOCKET")
 	v.BindEnv("auth.password", "DEVBOX_AUTH_PASSWORD")
 	v.BindEnv("auth.session_ttl", "DEVBOX_AUTH_SESSION_TTL")
 	v.BindEnv("logging.level", "DEVBOX_LOGGING_LEVEL")
@@ -111,6 +123,10 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("kubernetes.kubeconfig", "")
 	v.SetDefault("kubernetes.namespace", "default")
+
+	v.SetDefault("compose.enabled", true)
+	v.SetDefault("compose.data_dir", "/var/lib/devbox")
+	v.SetDefault("compose.docker_socket", "/var/run/docker.sock")
 
 	v.SetDefault("auth.password", "")
 	v.SetDefault("auth.session_ttl", 86400)

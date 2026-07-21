@@ -47,7 +47,7 @@ type Server struct {
 	logger        *zap.Logger
 	mux           *http.ServeMux
 	collector     *collector.Collector
-	appManager    *apps.Manager
+	controller    apps.Controller
 	storeManager  *apps.StoreManager
 	fileBrowser   *files.Browser
 	modelScanner  *models.Scanner
@@ -61,13 +61,13 @@ type Server struct {
 }
 
 // NewServer 创建控制台服务器
-func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, appMgr *apps.Manager, storeMgr *apps.StoreManager) *Server {
+func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, controller apps.Controller, storeMgr *apps.StoreManager) *Server {
 	s := &Server{
 		config:       cfg,
 		logger:       logger,
 		mux:          http.NewServeMux(),
 		collector:    col,
-		appManager:   appMgr,
+		controller:   controller,
 		storeManager: storeMgr,
 		fileBrowser:  files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
 		modelScanner: models.NewScanner(models.Config{}),

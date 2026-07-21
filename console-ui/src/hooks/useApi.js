@@ -300,6 +300,8 @@ export function useApps(interval = 10000) {
       return apps.map((a) => ({
         id: a.id,
         kind: 'app',
+        // runtime 由后端提供（compose | kubernetes）；旧 K8s app 默认 kubernetes。
+        runtime: a.runtime || 'kubernetes',
         name: a.name,
         icon: guessIcon(a.name),
         color: '#3b82f6',
@@ -597,4 +599,104 @@ export async function getLogs(appId, tail = 100) {
   } catch {
     return '';
   }
+}
+
+// ─── Docker Compose 应用管理（Issue #2） ──────────────────────────
+//
+// 写操作统一返回 Task（202）。前端提交后用 useTask 轮询进度。
+// 兼容旧 action（appOp）与旧 delete（deleteApp）保留；以下为新异步 API。
+
+export function useAppCapability(interval = 15000) {
+  return usePoll('/apps/capability', { interval, fallback: null });
+}
+
+// useTask 轮询单个任务到终态后停止。
+export function useTask(taskId, interval = 1500) {
+  const [task, setTask] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    if (!taskId) { setTask(null); setLoading(false); return; }
+    let timer = null;
+    async function poll() {
+      try {
+        const r = await authFetch(`${API}/tasks/${encodeURIComponent(taskId)}`);
+        if (!r.ok) return;
+        const t = await r.json();
+        if (!mountedRef.current) return;
+        setTask(t);
+        if (t.status && ['succeeded', 'failed', 'canceled', 'superseded'].includes(t.status)) {
+          if (timer) clearInterval(timer);
+          setLoading(false);
+          return;
+        }
+      } catch { /* keep */ }
+      finally { if (mountedRef.current) setLoading(false); }
+    }
+    poll();
+    timer = setInterval(poll, interval);
+    return () => { mountedRef.current = false; if (timer) clearInterval(timer); };
+  }, [taskId, interval]);
+
+  return { task, loading };
+}
+
+// useAppOperations 轮询某应用的最近操作历史。
+export function useAppOperations(appId, interval = 4000) {
+  const url = appId ? `/apps/${encodeURIComponent(appId)}/operations` : null;
+  return usePoll(url, { interval, fallback: [] });
+}
+
+export function useAppRevisions(appId) {
+  const url = appId ? `/apps/${encodeURIComponent(appId)}/revisions` : null;
+  return usePoll(url, { interval: 0, fallback: [] });
+}
+
+async function readErr(r) {
+  const t = await r.text().catch(() => '');
+  return t || `HTTP ${r.status}`;
+}
+
+// 预检（不落盘）。
+export async function validateCompose(req) {
+  const r = await authFetch(`${API}/apps/validate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
+  });
+  if (!r.ok) throw new Error(await readErr(r));
+  return r.json();
+}
+
+// 创建/更新 inline Compose（202 + Task）。
+export async function applyComposeApp(desired, idempotencyKey) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+  const isUpdate = !!desired.id;
+  const r = await authFetch(`${API}/apps${isUpdate ? '/' + encodeURIComponent(desired.id) : ''}`, {
+    method: isUpdate ? 'PUT' : 'POST', headers, body: JSON.stringify(desired),
+  });
+  if (!r.ok) throw new Error(await readErr(r));
+  return r.json();
+}
+
+// 异步生命周期（202 + Task）。
+export async function appActionAsync(appId, action) {
+  const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}/actions/${action}`, { method: 'POST' });
+  if (!r.ok) throw new Error(await readErr(r));
+  return r.json();
+}
+
+// 卸载（兼容同步；purge=true 删除受管数据，external 永不删）。
+export async function removeAppEx(appId, purge = false) {
+  const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}${purge ? '?purge=true' : ''}`, { method: 'DELETE' });
+  if (!r.ok) throw new Error(await readErr(r));
+  return r.json();
+}
+
+// 回滚到历史 revision（202 + Task）。
+export async function restoreAppRevision(appId, rev) {
+  const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}/revisions/${rev}/restore`, { method: 'POST' });
+  if (!r.ok) throw new Error(await readErr(r));
+  return r.json();
 }
