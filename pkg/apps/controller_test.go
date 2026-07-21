@@ -421,7 +421,3 @@ func TestControllerRestoreRevisionAppNotFound(t *testing.T) {
 		assert.NotEqual(t, "ghost-app", m.ID)
 	}
 }
-
-// MED#7：渲染后风险分析覆盖 ${VAR} 绕过 —— 真实渲染展开验证见
-// compose_cli_test.TestRenderConfigInterpolationBlocked（使用真实 docker compose 二进制）。
-

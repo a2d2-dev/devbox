@@ -618,7 +618,7 @@ export function useTask(taskId, interval = 1500) {
 
   useEffect(() => {
     mountedRef.current = true;
-    if (!taskId) { setTask(null); setLoading(false); return; }
+    if (!taskId) return () => { mountedRef.current = false; };
     let timer = null;
     async function poll() {
       try {
@@ -640,7 +640,7 @@ export function useTask(taskId, interval = 1500) {
     return () => { mountedRef.current = false; if (timer) clearInterval(timer); };
   }, [taskId, interval]);
 
-  return { task, loading };
+  return { task: taskId ? task : null, loading: taskId ? loading : false };
 }
 
 // useAppOperations 轮询某应用的最近操作历史。
