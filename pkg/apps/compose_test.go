@@ -15,6 +15,8 @@ func TestAggregatePhase(t *testing.T) {
 		{"all running healthy", []ServiceStatus{{State: "running", Health: "healthy"}, {State: "running", Health: "healthy"}}, PhaseRunning},
 		{"one unhealthy", []ServiceStatus{{State: "running", Health: "healthy"}, {State: "running", Health: "unhealthy"}}, PhaseDegraded},
 		{"all exited", []ServiceStatus{{State: "exited"}, {State: "exited"}}, PhaseStopped},
+		{"all dead failed", []ServiceStatus{{State: "dead"}, {State: "dead"}}, PhaseFailed},
+		{"exited and dead failed", []ServiceStatus{{State: "exited"}, {State: "dead"}}, PhaseFailed},
 		{"partial running", []ServiceStatus{{State: "running", Health: "healthy"}, {State: "exited"}}, PhaseDegraded},
 		{"created deploying", []ServiceStatus{{State: "created"}, {State: "running", Health: "healthy"}}, PhaseDeploying},
 		{"empty unknown", []ServiceStatus{}, PhaseUnknown},

@@ -79,13 +79,20 @@ type Repository interface {
 	SaveIdempotency(ctx context.Context, key, requestHash, taskID string) error
 	GetIdempotency(ctx context.Context, key string) (idemRecord, bool, error)
 
+	// 原子写（Issue #2 一致性）：把多步 DB 变更放进单事务，避免半状态。
+	// CommitApply：revision + app meta + task (+ idempotency) 同事务。
+	CommitApply(ctx context.Context, meta AppRecord, rev Revision, task Task, idemKey, requestHash string) error
+	// CommitTask：task (+ idempotency) 同事务（operate/remove 用）。
+	CommitTask(ctx context.Context, task Task, idemKey, requestHash string) error
+
 	// audit
 	InsertAudit(ctx context.Context, a AuditRecord) error
 }
 
 // sqliteRepo Repository 的 SQLite 实现。
 type sqliteRepo struct {
-	db *sql.DB
+	db  *sql.DB
+	now func() time.Time // 时钟注入（默认 time.Now；测试可覆盖）
 }
 
 // OpenRepository 打开/创建 SQLite 仓库并执行 migration。
@@ -101,12 +108,19 @@ func OpenRepository(ctx context.Context, dbPath string) (Repository, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
-	r := &sqliteRepo{db: db}
+	r := &sqliteRepo{db: db, now: time.Now}
 	if err := r.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return r, nil
+}
+
+// setClock 注入仓库时钟（仅测试用）。
+func (r *sqliteRepo) setClock(now func() time.Time) {
+	if now != nil {
+		r.now = now
+	}
 }
 
 func (r *sqliteRepo) migrate(ctx context.Context) error {
@@ -190,9 +204,18 @@ func (r *sqliteRepo) Close() error { return r.db.Close() }
 
 // --- apps ---
 
+// dbExecer 被 *sql.DB 与 *sql.Tx 同时满足，便于把多条写放进同一事务。
+type dbExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
 func (r *sqliteRepo) UpsertAppMeta(ctx context.Context, a AppRecord) error {
+	return upsertAppMetaExec(r.db, ctx, a)
+}
+
+func upsertAppMetaExec(e dbExecer, ctx context.Context, a AppRecord) error {
 	params, _ := json.Marshal(a.Parameters)
-	_, err := r.db.ExecContext(ctx, `INSERT INTO apps
+	_, err := e.ExecContext(ctx, `INSERT INTO apps
 		(id,name,runtime,source_kind,source_store_id,source_version,revision,observed_revision,parameters,created_at,updated_at)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -247,7 +270,7 @@ func (r *sqliteRepo) DeleteAppMeta(ctx context.Context, id string) error {
 // SetObservedRevision apply 成功后更新已部署 revision。
 func (r *sqliteRepo) SetObservedRevision(ctx context.Context, appID string, rev int64) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE apps SET observed_revision=?, updated_at=? WHERE id=?`,
-		rev, time.Now().UTC().Format(time.RFC3339Nano), appID)
+		rev, r.now().UTC().Format(time.RFC3339Nano), appID)
 	return err
 }
 
@@ -263,6 +286,49 @@ func (r *sqliteRepo) PurgeApp(ctx context.Context, appID string) error {
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM apps WHERE id=?`, appID); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+// CommitApply 原子写入 revision + app meta + task (+ idempotency)。任一步失败整体回滚，
+// 不留半状态。task.CreatedAt 复用为 idempotency.created_at（同一逻辑时刻）。
+func (r *sqliteRepo) CommitApply(ctx context.Context, meta AppRecord, rev Revision, task Task, idemKey, requestHash string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := insertRevisionExec(tx, ctx, rev); err != nil {
+		return err
+	}
+	if err := upsertAppMetaExec(tx, ctx, meta); err != nil {
+		return err
+	}
+	if err := createTaskExec(tx, ctx, task); err != nil {
+		return err
+	}
+	if idemKey != "" {
+		if err := saveIdempotencyExec(tx, ctx, idemKey, requestHash, task.ID, task.CreatedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// CommitTask 原子写入 task (+ idempotency)（operate/remove 用）。
+func (r *sqliteRepo) CommitTask(ctx context.Context, task Task, idemKey, requestHash string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := createTaskExec(tx, ctx, task); err != nil {
+		return err
+	}
+	if idemKey != "" {
+		if err := saveIdempotencyExec(tx, ctx, idemKey, requestHash, task.ID, task.CreatedAt); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -299,8 +365,12 @@ func (r *sqliteRepo) NextRevisionNumber(ctx context.Context, appID string) (int6
 }
 
 func (r *sqliteRepo) InsertRevision(ctx context.Context, rev Revision) error {
+	return insertRevisionExec(r.db, ctx, rev)
+}
+
+func insertRevisionExec(e dbExecer, ctx context.Context, rev Revision) error {
 	params, _ := json.Marshal(rev.Parameters)
-	_, err := r.db.ExecContext(ctx, `INSERT INTO revisions
+	_, err := e.ExecContext(ctx, `INSERT INTO revisions
 		(app_id,number,compose_hash,source_kind,source_version,parameters,created_at,created_by,note)
 		VALUES (?,?,?,?,?,?,?,?,?)`,
 		rev.AppID, rev.Number, rev.ComposeHash,
@@ -359,7 +429,11 @@ func scanRevision(scan scanner) (Revision, error) {
 // --- tasks ---
 
 func (r *sqliteRepo) CreateTask(ctx context.Context, t Task) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO tasks
+	return createTaskExec(r.db, ctx, t)
+}
+
+func createTaskExec(e dbExecer, ctx context.Context, t Task) error {
+	_, err := e.ExecContext(ctx, `INSERT INTO tasks
 		(id,app_id,type,action,status,phase,revision,purge,idempotency_key,request_summary,message,created_at,started_at,finished_at)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.ID, t.AppID, string(t.Type), string(t.Action), string(t.Status), string(t.Phase),
@@ -461,8 +535,12 @@ func scanTask(scan scanner) (Task, error) {
 // --- idempotency ---
 
 func (r *sqliteRepo) SaveIdempotency(ctx context.Context, key, requestHash, taskID string) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO idempotency (key,request_hash,task_id,created_at) VALUES (?,?,?,?)`,
-		key, requestHash, taskID, time.Now().UTC().Format(time.RFC3339Nano))
+	return saveIdempotencyExec(r.db, ctx, key, requestHash, taskID, r.now())
+}
+
+func saveIdempotencyExec(e dbExecer, ctx context.Context, key, requestHash, taskID string, now time.Time) error {
+	_, err := e.ExecContext(ctx, `INSERT INTO idempotency (key,request_hash,task_id,created_at) VALUES (?,?,?,?)`,
+		key, requestHash, taskID, now.UTC().Format(time.RFC3339Nano))
 	return err
 }
 

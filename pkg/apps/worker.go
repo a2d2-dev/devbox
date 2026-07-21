@@ -2,6 +2,7 @@ package apps
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -25,8 +26,14 @@ type worker struct {
 	now      func() time.Time
 
 	mu     sync.Mutex
-	queues map[string]chan string
+	queues map[string]*appQueue
 	ctx    context.Context
+}
+
+// appQueue 单个 app 的串行队列 + 退出信号。
+type appQueue struct {
+	ch   chan string
+	done chan struct{}
 }
 
 // NewWorker 构造 worker（未启动）。调用 Start 后开始消费 + 恢复。
@@ -37,7 +44,7 @@ func NewWorker(repo Repository, adapters map[RuntimeKind]runtimeAdapter, paths *
 		paths:    paths,
 		logger:   logger,
 		now:      time.Now,
-		queues:   map[string]chan string{},
+		queues:   map[string]*appQueue{},
 	}
 }
 
@@ -70,7 +77,8 @@ func (w *worker) Start(ctx context.Context) {
 	}
 }
 
-// Enqueue 把 taskID 投递到对应 app 的串行队列。
+// Enqueue 把 taskID 投递到对应 app 的串行队列。队列满时阻塞等待（尊重 ctx），
+// 不丢弃已持久化的 task。
 func (w *worker) Enqueue(taskID string) {
 	ctx := w.ctx
 	if ctx == nil {
@@ -84,35 +92,69 @@ func (w *worker) Enqueue(taskID string) {
 	if task.Status.IsTerminal() {
 		return
 	}
-	ch := w.ensureQueue(task.AppID)
+	q := w.ensureQueue(task.AppID)
 	select {
-	case ch <- taskID:
-	default:
-		w.logger.Warn("task queue full", zap.String("app", task.AppID))
+	case q.ch <- taskID:
+	case <-ctx.Done():
+		w.logger.Warn("enqueue canceled (worker shutting down)", zap.String("task", taskID))
 	}
 }
 
-func (w *worker) ensureQueue(appID string) chan string {
+func (w *worker) ensureQueue(appID string) *appQueue {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	ch, ok := w.queues[appID]
+	q, ok := w.queues[appID]
 	if !ok {
-		ch = make(chan string, 64)
-		w.queues[appID] = ch
-		go w.runAppQueue(appID, ch)
+		q = &appQueue{ch: make(chan string, 64), done: make(chan struct{})}
+		w.queues[appID] = q
+		go w.runAppQueue(appID, q)
 	}
-	return ch
+	return q
 }
 
-func (w *worker) runAppQueue(appID string, ch chan string) {
+// stopQueue 安全回收某 app 的队列：从 map 移除并通知消费 goroutine 退出。
+// 在 app 被彻底删除（remove 完成）后调用，避免队列/goroutine 永久增长。
+// done 仅此处关闭，且 map 删除保证只关闭一次。
+func (w *worker) stopQueue(appID string) {
+	w.mu.Lock()
+	q, ok := w.queues[appID]
+	if ok {
+		delete(w.queues, appID)
+	}
+	w.mu.Unlock()
+	if ok {
+		close(q.done)
+	}
+}
+
+func (w *worker) runAppQueue(appID string, q *appQueue) {
 	for {
 		select {
 		case <-w.ctx.Done():
 			return
-		case taskID := <-ch:
-			w.execute(w.ctx, taskID)
+		case <-q.done:
+			return
+		case taskID := <-q.ch:
+			w.executeSafe(w.ctx, taskID)
 		}
 	}
+}
+
+// executeSafe 包裹 execute：recover 任一 panic → task failed，goroutine 继续消费。
+func (w *worker) executeSafe(ctx context.Context, taskID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.logger.Error("task panic recovered", zap.String("task", taskID), zap.Any("panic", r))
+			finished := w.now()
+			_ = w.repo.UpdateTask(ctx, taskID, func(t *Task) {
+				t.Status = TaskFailed
+				t.Phase = PhaseTaskVerifying
+				t.Message = "任务执行异常（panic），已恢复"
+				t.FinishedAt = &finished
+			})
+		}
+	}()
+	w.execute(ctx, taskID)
 }
 
 func (w *worker) setPhase(ctx context.Context, taskID string, phase TaskPhase, msg string) {
@@ -144,23 +186,27 @@ func (w *worker) execute(ctx context.Context, taskID string) {
 		zap.String("app", task.AppID), zap.String("type", string(task.Type)))
 
 	// 解析运行时：有 meta 用 meta.Runtime（compose 登记项），否则 K8s。
-	meta, hasMeta, _ := w.repo.GetAppMeta(ctx, task.AppID)
-	rt := RuntimeKubernetes
-	if hasMeta {
-		rt = meta.Runtime
-	}
-	adapter := w.adapters[rt]
-	app := Application{ID: task.AppID, Runtime: rt, Revision: task.Revision}
-	if hasMeta {
-		app.Name = meta.Name
-		app.Source = meta.Source
-	}
-
+	// HIGH#2：meta 读取错误必须传播为 task 失败，避免错误降级到 K8s。
+	meta, hasMeta, gerr := w.repo.GetAppMeta(ctx, task.AppID)
 	var execErr error
-	if adapter == nil {
-		execErr = CapabilityErr("runtime " + string(rt) + " unavailable")
+	if gerr != nil {
+		execErr = fmt.Errorf("resolve runtime: %w", gerr)
 	} else {
-		execErr = w.dispatch(ctx, adapter, task, app)
+		rt := RuntimeKubernetes
+		if hasMeta {
+			rt = meta.Runtime
+		}
+		adapter := w.adapters[rt]
+		app := Application{ID: task.AppID, Runtime: rt, Revision: task.Revision}
+		if hasMeta {
+			app.Name = meta.Name
+			app.Source = meta.Source
+		}
+		if adapter == nil {
+			execErr = CapabilityErr("runtime " + string(rt) + " unavailable")
+		} else {
+			execErr = w.dispatch(ctx, adapter, task, app)
+		}
 	}
 
 	finished := w.now()
@@ -192,13 +238,26 @@ func (w *worker) dispatch(ctx context.Context, adapter runtimeAdapter, task Task
 			return err
 		}
 		w.setPhase(ctx, task.ID, PhaseTaskVerifying, "")
-		// 执行后重新观察以实际状态为准；这里先落 observed revision。
+		// MED#8：up 返回成功不代表容器已运行；重新 Observe 校验容器实际出现/状态。
+		if err := w.verifyObserved(ctx, adapter, task.AppID); err != nil {
+			return err
+		}
 		if task.Revision > 0 {
 			_ = w.repo.SetObservedRevision(ctx, task.AppID, task.Revision)
 		}
 		return nil
 	case TaskOperate:
-		return adapter.Operate(ctx, app, task.Action)
+		if err := adapter.Operate(ctx, app, task.Action); err != nil {
+			return err
+		}
+		// desired running 的动作需校验容器实际出现；stop 不校验（容器停止/消失均正常）。
+		if task.Action == ActionStart || task.Action == ActionRestart || task.Action == ActionRedeploy {
+			w.setPhase(ctx, task.ID, PhaseTaskVerifying, "")
+			if err := w.verifyObserved(ctx, adapter, task.AppID); err != nil {
+				return err
+			}
+		}
+		return nil
 	case TaskRemove:
 		w.setPhase(ctx, task.ID, PhaseTaskCleaningUp, "")
 		if err := adapter.Remove(ctx, app, task.Purge); err != nil {
@@ -209,10 +268,43 @@ func (w *worker) dispatch(ctx context.Context, adapter runtimeAdapter, task Task
 			return err
 		}
 		_ = os.RemoveAll(w.paths.AppDir(task.AppID))
+		// MED#11：app 已彻底删除，回收其串行队列/goroutine，避免永久增长。
+		w.stopQueue(task.AppID)
 		return nil
 	default:
 		return nil
 	}
+}
+
+// verifyObserved 在 apply/restore/start/restart/redeploy 后重新 Observe，确认容器
+// 已实际出现（desired running）。`compose up` 返回 0 不保证容器运行；容器缺失或进入
+// failed 状态则任务判失败。给一次短暂 grace 应对容器刚创建尚未被观测到的情况。
+func (w *worker) verifyObserved(ctx context.Context, adapter runtimeAdapter, appID string) error {
+	if err := w.checkObservedOnce(ctx, adapter, appID); err == nil {
+		return nil
+	}
+	// 容器可能刚创建，短暂等待后再看一次（尊重 ctx）。
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	return w.checkObservedOnce(ctx, adapter, appID)
+}
+
+// checkObservedOnce 单次 Observe 校验：容器存在且未进入 failed。
+func (w *worker) checkObservedOnce(ctx context.Context, adapter runtimeAdapter, appID string) error {
+	obs, _ := adapter.Observe(ctx)
+	app, hasObs := obs[appID]
+	if !hasObs || len(app.Observed.Services) == 0 {
+		return fmt.Errorf("部署后未观测到任何容器，请检查镜像/配置")
+	}
+	if app.Observed.Phase == PhaseFailed {
+		return fmt.Errorf("部署后容器进入失败状态")
+	}
+	return nil
 }
 
 // sanitizeLog 任务/日志脱敏：截断超长 + 折叠明显的环境变量赋值（KEY=value）。

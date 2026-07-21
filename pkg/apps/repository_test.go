@@ -155,3 +155,51 @@ func TestRepoMigrateIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	_ = r2.Close()
 }
+
+// MED#5：CommitApply 任一步失败必须整体回滚，不留半状态。
+func TestCommitApplyAtomicRollback(t *testing.T) {
+	repo, cleanup := newTestRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	// 预置一个已存在的 task id，迫使 CommitApply 中途 createTask 撞主键。
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "dup", AppID: "a", Type: TaskApply, Status: TaskQueued, CreatedAt: now}))
+
+	meta := AppRecord{ID: "a", Name: "a", Runtime: RuntimeCompose, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	rev := Revision{Number: 1, AppID: "a", ComposeHash: "h", CreatedAt: now}
+	task := Task{ID: "dup", AppID: "a", Type: TaskApply, Status: TaskQueued, Revision: 1, CreatedAt: now}
+
+	err := repo.CommitApply(ctx, meta, rev, task, "", "")
+	assert.Error(t, err, "重复 task id 应使事务失败")
+
+	// 回滚：revision 与 meta 都不应残留。
+	_, okRev, err := repo.GetRevision(ctx, "a", 1)
+	require.NoError(t, err)
+	assert.False(t, okRev, "事务回滚后 revision 不应存在")
+	_, okMeta, err := repo.GetAppMeta(ctx, "a")
+	require.NoError(t, err)
+	assert.False(t, okMeta, "事务回滚后 meta 不应存在")
+}
+
+// MED#5：CommitTask 原子写入 task + idempotency。
+func TestCommitTaskAtomic(t *testing.T) {
+	repo, cleanup := newTestRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now()
+	task := Task{ID: "t1", AppID: "a", Type: TaskOperate, Status: TaskQueued, CreatedAt: now}
+	require.NoError(t, repo.CommitTask(ctx, task, "k1", "hash1"))
+	got, err := repo.GetTask(ctx, "t1")
+	require.NoError(t, err)
+	assert.Equal(t, TaskOperate, got.Type)
+	rec, ok, err := repo.GetIdempotency(ctx, "k1")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "t1", rec.TaskID)
+
+	// 重复 task id → 失败，idempotency 不残留第二条。
+	err = repo.CommitTask(ctx, Task{ID: "t1", AppID: "a", Type: TaskOperate, Status: TaskQueued, CreatedAt: now}, "k2", "hash2")
+	assert.Error(t, err)
+	_, ok2, _ := repo.GetIdempotency(ctx, "k2")
+	assert.False(t, ok2, "回滚后 k2 不应存在")
+}

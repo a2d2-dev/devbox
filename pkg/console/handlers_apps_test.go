@@ -155,6 +155,41 @@ func TestHTTPCreateBlocked422(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }
 
+// LOW#12 + HIGH#1：错误统一 JSON 信封；risk_blocked 回传脱敏 findings。
+func TestHTTPErrorEnvelopeJSONAndFindings(t *testing.T) {
+	findings := []apps.RiskFinding{
+		{Level: apps.RiskBlocked, Service: "web", Field: "privileged", Message: "privileged:true"},
+	}
+	stub := &stubController{applyErr: apps.RiskBlockedErr("存在阻断级风险", findings)}
+	s := newTestServer(stub)
+	w := do(s, http.MethodPost, "/api/v1/apps", apps.DesiredApplication{Name: "x"})
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Contains(t, body, "error")
+	fl, ok := body["findings"].([]any)
+	require.True(t, ok, "应回传 findings")
+	assert.Len(t, fl, 1)
+	// findings 内不应出现 secret/compose 正文（这里本就只有脱敏字段）。
+	raw := w.Body.String()
+	assert.NotContains(t, raw, "secret")
+}
+
+// LOW#12：非 risk_blocked 错误为统一 JSON，且不含 findings 字段。
+func TestHTTPErrorEnvelopeGenericValidation(t *testing.T) {
+	stub := &stubController{applyErr: apps.ValidationErr("compose 配置无效")}
+	s := newTestServer(stub)
+	w := do(s, http.MethodPost, "/api/v1/apps", apps.DesiredApplication{Name: "x"})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "compose 配置无效", body["error"])
+	_, hasFindings := body["findings"]
+	assert.False(t, hasFindings, "非 risk_blocked 不应含 findings")
+}
+
 func TestHTTPValidate(t *testing.T) {
 	stub := &stubController{validateResult: apps.ValidateResult{OK: true}}
 	s := newTestServer(stub)

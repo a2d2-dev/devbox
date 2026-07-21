@@ -34,26 +34,47 @@ func idempotencyKey(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 }
 
-// writeAppErr 把领域错误映射到 HTTP 状态码。
+// writeAppErr 把领域错误映射到统一的 JSON 错误信封 {"error","reason","findings"}。
+// risk_blocked 附带脱敏 findings（仅字段名/描述，无 secret/compose 正文），
+// 让调用方能取得具体阻断项；非领域错误回 generic 500，不回显 compose 输出。
 func writeAppErr(w http.ResponseWriter, err error) {
 	if ae, ok := apps.AsError(err); ok {
-		switch ae.Kind {
-		case apps.ErrKindNotFound:
-			http.Error(w, ae.Message, http.StatusNotFound)
-		case apps.ErrKindConflict:
-			http.Error(w, ae.Message, http.StatusConflict)
-		case apps.ErrKindValidation:
-			http.Error(w, ae.Message, http.StatusBadRequest)
-		case apps.ErrKindRiskBlocked:
-			http.Error(w, ae.Message, http.StatusUnprocessableEntity)
-		case apps.ErrKindCapability:
-			http.Error(w, ae.Message, http.StatusServiceUnavailable)
-		default:
-			http.Error(w, ae.Message, http.StatusInternalServerError)
+		body := map[string]any{"error": ae.Message}
+		if ae.Reason != "" {
+			body["reason"] = ae.Reason
 		}
+		if ae.Kind == apps.ErrKindRiskBlocked && len(ae.Findings) > 0 {
+			body["findings"] = ae.Findings
+		}
+		writeJSONErrStatus(w, appErrHTTPStatus(ae.Kind), body)
 		return
 	}
-	http.Error(w, err.Error(), http.StatusInternalServerError)
+	writeJSONErrStatus(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+}
+
+// appErrHTTPStatus 领域错误 → HTTP 状态码。
+func appErrHTTPStatus(k apps.ErrorKind) int {
+	switch k {
+	case apps.ErrKindNotFound:
+		return http.StatusNotFound
+	case apps.ErrKindConflict:
+		return http.StatusConflict
+	case apps.ErrKindValidation:
+		return http.StatusBadRequest
+	case apps.ErrKindRiskBlocked:
+		return http.StatusUnprocessableEntity
+	case apps.ErrKindCapability:
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// writeJSONErrStatus 写统一 JSON 错误信封（application/json）。
+func writeJSONErrStatus(w http.ResponseWriter, code int, body any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 func (s *Server) jsonStatus(w http.ResponseWriter, code int, data any) {
@@ -353,7 +374,7 @@ func (s *Server) operateCompat(w http.ResponseWriter, r *http.Request, id, actio
 		body["status"] = "running"
 		body["taskId"] = task.ID
 	} else if task.Status == apps.TaskFailed {
-		http.Error(w, "operation failed: "+task.Message, http.StatusInternalServerError)
+		writeJSONErrStatus(w, http.StatusInternalServerError, map[string]any{"error": "operation failed: " + task.Message})
 		return
 	}
 	s.jsonOK(w, body)
@@ -375,7 +396,7 @@ func (s *Server) deleteAppCompat(w http.ResponseWriter, r *http.Request, id stri
 		body["status"] = "running"
 		body["taskId"] = task.ID
 	} else if task.Status == apps.TaskFailed {
-		http.Error(w, "delete failed: "+task.Message, http.StatusInternalServerError)
+		writeJSONErrStatus(w, http.StatusInternalServerError, map[string]any{"error": "delete failed: " + task.Message})
 		return
 	}
 	s.jsonOK(w, body)
@@ -397,14 +418,26 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request, id, rev
 	s.jsonStatus(w, http.StatusAccepted, task)
 }
 
-// awaitTask 轮询任务到终态或超时；用于兼容同步接口。
+// awaitTask 轮询任务到终态或超时；监听 request ctx，客户端断开立即返回。
 func (s *Server) awaitTask(r *http.Request, taskID string, timeout time.Duration) apps.Task {
+	ctx := r.Context()
 	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	var last apps.Task
 	for {
-		t, err := s.controller.GetTask(r.Context(), taskID)
-		if err != nil || t.Status.IsTerminal() || time.Now().After(deadline) {
+		t, err := s.controller.GetTask(ctx, taskID)
+		if err != nil {
+			return last
+		}
+		last = t
+		if t.Status.IsTerminal() || time.Now().After(deadline) {
 			return t
 		}
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return t
+		case <-ticker.C:
+		}
 	}
 }

@@ -35,6 +35,11 @@ func NewComposeRuntime(sockPath string, paths *Paths, logger *zap.Logger) *compo
 
 func (c *composeRuntime) Kind() RuntimeKind { return RuntimeCompose }
 
+// RenderConfig 透传到 compose CLI（实现 composePrechecker）。
+func (c *composeRuntime) RenderConfig(ctx context.Context, content, env string) (string, error) {
+	return c.cli.RenderConfig(ctx, content, env)
+}
+
 // Capability 探测 docker daemon + compose 可用性。不可用返回清晰原因。
 func (c *composeRuntime) Capability(ctx context.Context) RuntimeCapability {
 	if err := c.engine.ping(ctx); err != nil {
@@ -144,11 +149,14 @@ func parseHealth(status string) string {
 }
 
 // aggregatePhase 后端聚合 service 状态 → 应用 phase。
+//
+// best-effort：dead 容器（异常终止，常为崩溃）在「全部未运行」时判 failed，
+// 以与「全部 exited（主动停止）」区分；removing 不在此推断（由 worker 在删除流程标注）。
 func aggregatePhase(services []ServiceStatus) Phase {
 	if len(services) == 0 {
 		return PhaseUnknown
 	}
-	var running, unhealthy, exited, created int
+	var running, unhealthy, exited, dead, created int
 	for _, s := range services {
 		switch s.State {
 		case "running":
@@ -156,8 +164,10 @@ func aggregatePhase(services []ServiceStatus) Phase {
 			if s.Health == "unhealthy" {
 				unhealthy++
 			}
-		case "exited", "dead":
+		case "exited":
 			exited++
+		case "dead":
+			dead++
 		case "created", "restarting":
 			created++
 		default:
@@ -167,10 +177,12 @@ func aggregatePhase(services []ServiceStatus) Phase {
 	switch {
 	case unhealthy > 0:
 		return PhaseDegraded
-	case exited == len(services):
-		return PhaseStopped
 	case running == len(services):
 		return PhaseRunning
+	case exited+dead == len(services) && dead > 0:
+		return PhaseFailed // 全部未运行且存在 dead → 崩溃而非主动停止
+	case exited+dead == len(services):
+		return PhaseStopped
 	case created > 0 && running < len(services):
 		return PhaseDeploying
 	case running > 0:
@@ -180,7 +192,8 @@ func aggregatePhase(services []ServiceStatus) Phase {
 	}
 }
 
-// Apply 部署：compose config 预检 → up（pull + up -d）。超时 15 分钟（拉大镜像）。
+// Apply 部署：compose config 预检 → pull（best-effort，失败记录）→ up -d。
+// 超时 15 分钟（拉大镜像）。
 func (c *composeRuntime) Apply(ctx context.Context, app Application, composeFile string) error {
 	dir := filepath.Dir(composeFile)
 	project := ProjectName(app.ID)
@@ -189,7 +202,17 @@ func (c *composeRuntime) Apply(ctx context.Context, app Application, composeFile
 	}
 	runCtx, cancel := withTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	return c.cli.up(runCtx, dir, project)
+	return c.pullUp(runCtx, dir, project, app.ID)
+}
+
+// pullUp 执行 pull（best-effort，失败仅记录）+ up -d。pull 失败不中断：私有镜像
+// 可能已存在，由 up 自拉取并在真正缺失时报错。
+func (c *composeRuntime) pullUp(ctx context.Context, dir, project, appID string) error {
+	if _, perr := c.cli.pull(ctx, dir, project); perr != nil {
+		c.logger.Warn("compose pull failed; continuing to up",
+			zap.String("app", appID), zap.Error(perr))
+	}
+	return c.cli.up(ctx, dir, project)
 }
 
 // Operate start/stop/restart/redeploy。
@@ -205,8 +228,8 @@ func (c *composeRuntime) Operate(ctx context.Context, app Application, action Ac
 	case ActionRestart:
 		return c.cli.restart(runCtx, dir, project)
 	case ActionRedeploy:
-		// redeploy = 重新 up（应用最新 compose）。
-		return c.cli.up(runCtx, dir, project)
+		// redeploy = 重新 up（应用最新 compose，并尝试拉取新镜像）。
+		return c.pullUp(runCtx, dir, project, app.ID)
 	default:
 		return ValidationErr("unknown action: " + string(action))
 	}

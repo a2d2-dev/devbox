@@ -161,9 +161,10 @@ func (p *Paths) SafeWriteFile(appID, rel string, data []byte, mode os.FileMode) 
 	}
 	appDir := p.AppDir(appID)
 	full := filepath.Join(appDir, rel)
-	// 规范化后必须仍在 appDir 内。
+	// 规范化后必须仍在 appDir 内（显式括号：err 或 逃逸 都拒绝）。
 	clean, err := filepath.Abs(filepath.Clean(full))
-	if err != nil || !strings.HasPrefix(clean, appDir+string(filepath.Separator)) && clean != appDir {
+	escaped := !strings.HasPrefix(clean, appDir+string(filepath.Separator)) && clean != appDir
+	if err != nil || escaped {
 		return ValidationErr("path escapes app directory")
 	}
 	if err := os.MkdirAll(filepath.Dir(clean), 0o755); err != nil {

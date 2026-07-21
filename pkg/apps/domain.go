@@ -352,12 +352,15 @@ const (
 	ErrKindInternal    ErrorKind = "internal"
 )
 
-// Error 领域错误。Detail 为机器可读原因码，Message 为人读描述。
+// Error 领域错误。Reason 为机器可读原因码，Message 为人读描述。
 type Error struct {
 	Kind    ErrorKind
 	Reason  string // 机器可读原因码（如 "revision_mismatch" / "idempotency_conflict"）
 	Message string
 	Cause   error
+	// Findings 仅 ErrKindRiskBlocked 携带：阻断/需确认的具体风险项。内容仅含
+	// 字段名与脱敏描述（不含 compose 正文 / secret 值），可安全回传调用方。
+	Findings []RiskFinding
 }
 
 func (e *Error) Error() string {
@@ -388,9 +391,10 @@ func ValidationErr(msg string) *Error {
 	return newErr(ErrKindValidation, "validation_failed", msg, nil)
 }
 
-// RiskBlockedErr 风险策略阻断（→ HTTP 422）。
+// RiskBlockedErr 风险策略阻断（→ HTTP 422）。findings 随错误携带，供调用方/HTTP
+// 取得具体风险项；findings 仅含字段名与脱敏描述，不含 secret。
 func RiskBlockedErr(msg string, findings []RiskFinding) *Error {
-	return &Error{Kind: ErrKindRiskBlocked, Reason: "risk_blocked", Message: msg}
+	return &Error{Kind: ErrKindRiskBlocked, Reason: "risk_blocked", Message: msg, Findings: findings}
 }
 
 // CapabilityErr 运行时不可用（→ HTTP 503）。

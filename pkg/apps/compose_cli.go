@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -54,11 +57,77 @@ func (c *composeCLI) config(ctx context.Context, dir, project string) error {
 	return err
 }
 
-func (c *composeCLI) up(ctx context.Context, dir, project string) error {
-	// pull + up 分两步：pull 失败更易定位；up -d 后台启动。
-	if _, err := c.run(ctx, dir, project, "pull", "--ignore-pull-failures"); err != nil {
-		// pull 失败不立即放弃（私有镜像可能已存在）；继续 up，由 up 报错。
+// precheckProject 固定的安全临时 project 名。`config` 纯客户端、不触碰 daemon，
+// 多次并发预检共用同一 project 名也不会冲突。
+const precheckProject = "devbox-precheck"
+
+// RenderConfig 用 `docker compose config` 在隔离临时目录中渲染 content，返回插值/
+// 规范化后的 Compose 文本，用于落盘前预检与（渲染后）风险分析。
+//
+// 安全约束：
+//   - 临时目录 0700、compose/.env 文件 0600；固定临时 project；无 shell（独立参数数组）。
+//   - 30s 超时；stdout/stderr 各 1MB 上限；目录用后清理。
+//   - 渲染输出（stdout）可能含被插值替换的 secret 原值 —— 仅在成功时返回，供调用方
+//     在内存做风险分析，绝不写入 task/revision/audit/log/error。
+//   - 失败时只回显 stderr（结构化校验信息，经脱敏截断），丢弃 stdout。
+//   - docker/compose 二进制缺失 → ErrKindCapability；配置非法 → ErrKindValidation。
+func (c *composeCLI) RenderConfig(ctx context.Context, content, env string) (string, error) {
+	dir, err := os.MkdirTemp("", "devbox-precheck-*")
+	if err != nil {
+		return "", err
 	}
+	defer os.RemoveAll(dir)
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(content), 0o600); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(env) != "" {
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600); err != nil {
+			return "", err
+		}
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, c.binary, c.argsFor(dir, precheckProject, "config")...)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{w: &stdout, max: 1 << 20}
+	cmd.Stderr = &limitedWriter{w: &stderr, max: 1 << 20}
+	if err := cmd.Run(); err != nil {
+		if isExecNotFound(err) {
+			return "", CapabilityErr("docker compose 不可用，无法预检 Compose 配置")
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", CapabilityErr("compose 预检超时")
+		}
+		// 仅回显 stderr（结构化校验信息，脱敏截断）；丢弃 stdout（可能含渲染后的 secret）。
+		return "", ValidationErr("compose 配置无效: " + sanitizeLog(strings.TrimSpace(stderr.String())))
+	}
+	return stdout.String(), nil
+}
+
+// isExecNotFound 判定是否为 docker/compose 二进制缺失。
+func isExecNotFound(err error) bool {
+	if errors.Is(err, exec.ErrNotFound) {
+		return true
+	}
+	var pErr *exec.Error
+	if errors.As(err, &pErr) && pErr.Err == exec.ErrNotFound {
+		return true
+	}
+	return strings.Contains(err.Error(), "executable file not found")
+}
+
+// pull 拉取服务镜像（best-effort：--ignore-pull-failures，私有镜像可能已存在）。
+// 调用方应记录返回的 error 而非吞掉；失败后仍可继续 up（up 会自拉取）。
+func (c *composeCLI) pull(ctx context.Context, dir, project string) (string, error) {
+	return c.run(ctx, dir, project, "pull", "--ignore-pull-failures")
+}
+
+func (c *composeCLI) up(ctx context.Context, dir, project string) error {
 	_, err := c.run(ctx, dir, project, "up", "-d", "--remove-orphans")
 	return err
 }

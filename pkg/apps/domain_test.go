@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPhaseLegacyState(t *testing.T) {
@@ -44,4 +45,21 @@ func TestErrorKindMapping(t *testing.T) {
 	// 普通错误不识别为领域错误。
 	_, ok = AsError(assert.AnError)
 	assert.False(t, ok)
+}
+
+// HIGH#1：RiskBlockedErr 必须携带 findings，供调用方/HTTP 取得具体阻断项。
+func TestRiskBlockedErrCarriesFindings(t *testing.T) {
+	findings := []RiskFinding{
+		{Level: RiskBlocked, Service: "web", Field: "privileged", Message: "privileged:true"},
+		{Level: RiskConfirmation, Service: "web", Field: "cap_add", Message: "SYS_ADMIN"},
+	}
+	ae, ok := AsError(RiskBlockedErr("存在阻断级风险", findings))
+	require.True(t, ok)
+	assert.Equal(t, ErrKindRiskBlocked, ae.Kind)
+	assert.Equal(t, findings, ae.Findings, "findings 必须被保存并返回")
+
+	// findings 仅含字段名/描述，不含 secret/compose 正文。
+	for _, f := range ae.Findings {
+		assert.NotEmpty(t, f.Message)
+	}
 }

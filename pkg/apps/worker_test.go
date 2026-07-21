@@ -149,3 +149,104 @@ func TestWorkerSkipsTerminalRequeue(t *testing.T) {
 	assert.Empty(t, compose.applied)
 	compose.mu.Unlock()
 }
+
+// MED#4：adapter panic 必须被 recover，task 标 failed，worker 继续消费后续任务。
+func TestWorkerPanicRecovered(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose, panicsRemaining: 1}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	prepApp(t, repo, paths, "a")
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "t1", AppID: "a", Type: TaskApply, Revision: 1, Status: TaskQueued, CreatedAt: time.Now()}))
+
+	// 通过消费循环执行（executeSafe recover）；不应 panic 外溢。
+	require.NotPanics(t, func() { w.executeSafe(ctx, "t1") })
+	got, _ := repo.GetTask(ctx, "t1")
+	assert.Equal(t, TaskFailed, got.Status)
+
+	// 后续任务仍可正常执行（worker 未死）。
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "t2", AppID: "a", Type: TaskApply, Revision: 1, Status: TaskQueued, CreatedAt: time.Now()}))
+	w.executeSafe(ctx, "t2")
+	got2, _ := repo.GetTask(ctx, "t2")
+	assert.Equal(t, TaskSucceeded, got2.Status)
+}
+
+// MED#4：入队数量超过 channel 缓冲（64）也不丢弃已持久化 task。
+func TestWorkerQueueFullDoesNotDrop(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose, delay: 5 * time.Millisecond}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	prepApp(t, repo, paths, "a")
+
+	const n = 80 // 超过缓冲 64
+	for i := 0; i < n; i++ {
+		require.NoError(t, repo.CreateTask(ctx, Task{
+			ID: "t" + itoa(int64(i)), AppID: "a", Type: TaskApply, Revision: 1,
+			Status: TaskQueued, CreatedAt: time.Now(),
+		}))
+	}
+	for i := 0; i < n; i++ {
+		w.Enqueue("t" + itoa(int64(i)))
+	}
+	// 全部应最终到达终态（无丢弃）。
+	require.Eventually(t, func() bool {
+		for i := 0; i < n; i++ {
+			tk, _ := repo.GetTask(ctx, "t"+itoa(int64(i)))
+			if !tk.Status.IsTerminal() {
+				return false
+			}
+		}
+		return true
+	}, 10*time.Second, 50*time.Millisecond)
+}
+
+// MED#8：apply 后未观测到容器（desired running）→ 任务判 failed，而非 succeeded。
+func TestWorkerApplyFailsWhenNoContainers(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose, applyNoObserve: true}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	prepApp(t, repo, paths, "a")
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "t1", AppID: "a", Type: TaskApply, Revision: 1, Status: TaskQueued, CreatedAt: time.Now()}))
+
+	w.execute(ctx, "t1")
+	got, _ := repo.GetTask(ctx, "t1")
+	assert.Equal(t, TaskFailed, got.Status, "无容器应判 failed")
+	assert.Contains(t, got.Message, "未观测到")
+}
+
+// MED#8：start 后容器出现 → 任务 succeeded。
+func TestWorkerStartVerifiesRunning(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	prepApp(t, repo, paths, "a")
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "t1", AppID: "a", Type: TaskOperate, Action: ActionStart, Status: TaskQueued, CreatedAt: time.Now()}))
+	w.execute(ctx, "t1")
+	got, _ := repo.GetTask(ctx, "t1")
+	assert.Equal(t, TaskSucceeded, got.Status)
+}
+
+// MED#11：remove 成功后回收 app 的串行队列（不再永久驻留）。
+func TestWorkerStopQueueOnRemove(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	prepApp(t, repo, paths, "a")
+	// 触发 ensureQueue 创建队列。
+	q := w.ensureQueue("a")
+	require.NotNil(t, q)
+	require.Contains(t, w.queues, "a")
+
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "t1", AppID: "a", Type: TaskRemove, Purge: true, Status: TaskQueued, CreatedAt: time.Now()}))
+	w.execute(ctx, "t1") // dispatch 中 TaskRemove 成功后调用 stopQueue
+
+	require.Eventually(t, func() bool {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		_, ok := w.queues["a"]
+		return !ok
+	}, time.Second, 10*time.Millisecond, "remove 后队列应被回收")
+
+	// 二次 stopQueue 不应 panic（幂等）。
+	require.NotPanics(t, func() { w.stopQueue("a") })
+	_ = paths
+}

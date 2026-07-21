@@ -223,13 +223,20 @@ func analyzeBindSource(service, src string, f *[]RiskFinding) {
 	add := func(level RiskLevel, field, msg string) {
 		*f = append(*f, RiskFinding{Level: level, Service: service, Field: "volumes", Message: msg})
 	}
-	// docker.sock 挂载（任意写法）：硬阻断。
+	// docker.sock 挂载（任意写法，含 ${SOCK} 已被渲染展开的情形）：硬阻断。
 	lower := strings.ToLower(src)
 	if strings.HasSuffix(lower, "docker.sock") {
 		add(RiskBlocked, "volumes", "挂载 docker.sock 等价于授予宿主 root，已阻断")
 		return
 	}
 	clean := filepath.Clean(src)
+	// 相对路径穿越：Clean 后仍含 ".." 表示试图逃出项目目录（绝对路径的 ".." 会被
+	// Clean 折叠，故仅相对 bind 会残留）。渲染路径下 compose config 会把相对 bind
+	// 解析为绝对，配合下面的系统目录检查；此处覆盖静态/未渲染场景。
+	if strings.Contains(clean, "..") {
+		add(RiskConfirmation, "volumes", "相对 bind 含路径穿越（..），可能逃出项目目录，需确认")
+		return
+	}
 	for _, p := range systemCriticalPaths {
 		if clean == p {
 			add(RiskBlocked, "volumes", fmt.Sprintf("bind 挂载系统关键目录 %s，已阻断", p))

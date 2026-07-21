@@ -133,7 +133,7 @@ func (k *kubernetesRuntime) Logs(ctx context.Context, app Application, opts LogO
 	if err != nil {
 		return LogPage{}, fmt.Errorf("get logs for pod %s: %w", pod.Name, err)
 	}
-	return LogPage{AppID: app.ID, Logs: string(raw)}, nil
+	return LogPage{AppID: app.ID, Logs: sanitizeLog(string(raw))}, nil
 }
 
 func (k *kubernetesRuntime) scale(ctx context.Context, name string, replicas int32) error {
@@ -185,17 +185,9 @@ func deploymentToApplication(d *appsv1.Deployment) Application {
 	app.Replicas = replicas
 	app.Ready = ready
 
-	// Phase 聚合。
-	switch {
-	case replicas == 0:
-		app.Observed.Phase = PhaseStopped
-	case ready == replicas:
-		app.Observed.Phase = PhaseRunning
-	case ready == 0:
-		app.Observed.Phase = PhaseFailed
-	default:
-		app.Observed.Phase = PhaseDeploying
-	}
+	// Phase 聚合：按 Deployment conditions 区分 failed/deploying，避免 rollout
+	// 进行中（ready==0）被误判为 failed。
+	app.Observed.Phase = deploymentPhase(d, replicas, ready)
 	app.State = app.Observed.Phase.LegacyState()
 
 	svc := ServiceStatus{Name: d.Name, Replicas: replicas, Ready: ready, State: stateFromPhase(app.Observed.Phase)}
@@ -249,4 +241,38 @@ func stateFromPhase(p Phase) string {
 	default:
 		return "pending"
 	}
+}
+
+// findDepCondition 按类型查找 Deployment condition（不存在返回 nil）。
+func findDepCondition(d *appsv1.Deployment, t appsv1.DeploymentConditionType) *appsv1.DeploymentCondition {
+	for i := range d.Status.Conditions {
+		if d.Status.Conditions[i].Type == t {
+			return &d.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
+// deploymentPhase 基于 replicas/ready + Deployment conditions 聚合 phase。
+//
+// ready==0 不再直接判 failed：滚动发布/更新初期 ready 为 0 属正常（deploying）。
+// 仅当出现 ReplicaFailure 或 Progressing 超过 progressDeadline（False 且 reason
+// ProgressDeadlineExceeded）才判 failed。
+func deploymentPhase(d *appsv1.Deployment, replicas, ready int32) Phase {
+	switch {
+	case replicas == 0:
+		return PhaseStopped
+	case ready >= replicas && replicas > 0:
+		return PhaseRunning
+	}
+	if c := findDepCondition(d, appsv1.DeploymentReplicaFailure); c != nil && c.Status == corev1.ConditionTrue {
+		return PhaseFailed
+	}
+	if prog := findDepCondition(d, appsv1.DeploymentProgressing); prog != nil {
+		// Progressing=False 且超时 → 真失败；True/Unknown 都视为进行中。
+		if prog.Status == corev1.ConditionFalse && prog.Reason == "ProgressDeadlineExceeded" {
+			return PhaseFailed
+		}
+	}
+	return PhaseDeploying
 }

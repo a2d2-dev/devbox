@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -57,14 +58,22 @@ type taskRunner interface {
 	Enqueue(taskID string)
 }
 
+// composePrechecker 落盘前用 `docker compose config` 渲染 Compose，用于真实预检
+// 与「渲染后」风险分析（避免 ${VAR} 绕过 privileged/socket/root bind/host mode）。
+// 渲染输出可能含 secret 值，调用方不得写入 task/revision/audit/log/error。
+type composePrechecker interface {
+	RenderConfig(ctx context.Context, content, env string) (string, error)
+}
+
 // service Controller 的默认实现。
 type service struct {
-	repo     Repository
-	paths    *Paths
-	adapters map[RuntimeKind]runtimeAdapter
-	runner   taskRunner
-	logger   *zap.Logger
-	now      func() time.Time
+	repo       Repository
+	paths      *Paths
+	adapters   map[RuntimeKind]runtimeAdapter
+	runner     taskRunner
+	prechecker composePrechecker
+	logger     *zap.Logger
+	now        func() time.Time
 }
 
 // ServiceOption 构造选项。
@@ -73,6 +82,11 @@ type ServiceOption func(*service)
 // WithClock 注入时钟（测试用）。
 func WithClock(now func() time.Time) ServiceOption {
 	return func(s *service) { s.now = now }
+}
+
+// WithPrechecker 注入 Compose 预检器（生产用真实 compose adapter，测试用 fake）。
+func WithPrechecker(p composePrechecker) ServiceOption {
+	return func(s *service) { s.prechecker = p }
 }
 
 // NewController 构造 Controller。adapters 至少含一个运行时；runner 由 worker 提供。
@@ -299,23 +313,30 @@ func (s *service) Logs(ctx context.Context, id string, opts LogOptions) (LogPage
 // --- Validate（不落盘）---
 
 func (s *service) Validate(ctx context.Context, req ValidateRequest) (ValidateResult, error) {
-	return validateCompose(req)
-}
-
-// validateCompose 纯函数：解析 + 风险 + 服务预览 + 端口/路径冲突提示。
-func validateCompose(req ValidateRequest) (ValidateResult, error) {
 	res := ValidateResult{}
 	if strings.TrimSpace(req.ComposeContent) == "" {
 		res.Errors = append(res.Errors, "compose 内容为空")
 		return res, nil
 	}
-	previews, err := ExtractServicePreviews(req.ComposeContent)
+	// 真实预检：渲染（docker compose config，无 secret——Validate 仅 params 插值）。
+	// compose CLI 不可用时回退静态分析并加 warning；配置非法 → res.Errors。
+	env := renderEnvFile(nil, req.Parameters)
+	rendered, warn, rerr := s.renderForCheck(ctx, req.ComposeContent, env, false)
+	if rerr != nil {
+		res.Errors = append(res.Errors, rerr.Error())
+		return res, nil
+	}
+	if warn != "" {
+		res.Warnings = append(res.Warnings, warn)
+	}
+	// 解析与风险分析均基于渲染后内容（插值已展开，${VAR} 无法绕过风险策略）。
+	previews, err := ExtractServicePreviews(rendered)
 	if err != nil {
 		res.Errors = append(res.Errors, "解析失败: "+err.Error())
 		return res, nil
 	}
 	res.Services = previews
-	findings, err := AnalyzeCompose(req.ComposeContent)
+	findings, err := AnalyzeCompose(rendered)
 	if err != nil {
 		res.Errors = append(res.Errors, "风险分析失败: "+err.Error())
 		return res, nil
@@ -336,21 +357,52 @@ func validateCompose(req ValidateRequest) (ValidateResult, error) {
 	return res, nil
 }
 
+// renderForCheck 用 prechecker 渲染 compose 用于预检/风险分析。
+//   - 成功：返回渲染后文本（可能含 secret，调用方不得持久化）。
+//   - compose CLI 不可用（capability）：strict=true 返回该错误；strict=false 回退原文
+//     并通过 warn 提示「仅静态预检」。
+//   - 配置非法（validation）：返回该错误，调用方应拒绝/展示。
+func (s *service) renderForCheck(ctx context.Context, content, env string, strict bool) (rendered, warn string, err error) {
+	if s.prechecker == nil {
+		return content, "", nil
+	}
+	out, rerr := s.prechecker.RenderConfig(ctx, content, env)
+	if rerr == nil {
+		return out, "", nil
+	}
+	if ae, ok := AsError(rerr); ok && ae.Kind == ErrKindCapability {
+		if strict {
+			return "", "", rerr
+		}
+		return content, "docker compose 不可用，仅做静态预检: " + ae.Message, nil
+	}
+	return "", "", rerr
+}
+
 // --- Apply（创建/更新）---
 
 func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts ApplyOptions) (Task, error) {
 	// 0. 幂等短路（在任何副作用前）。
+	applyHash := hashApplyRequest(desired)
 	if opts.IdempotencyKey != "" {
-		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, hashApplyRequest(desired)); err != nil {
+		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, applyHash); err != nil {
 			return Task{}, err
 		} else if hit {
 			return t, nil
 		}
 	}
-	// 1. 解析 + 风险预检。
-	findings, err := AnalyzeCompose(desired.ComposeContent)
+
+	// 1. 真实预检：docker compose config 渲染（strict：CLI 不可用 → capability，
+	//    配置非法 → validation；均不落盘）。secret 仅用于本次渲染，不入任何持久层。
+	env := renderEnvFile(desired.Secrets, desired.Parameters)
+	rendered, _, err := s.renderForCheck(ctx, desired.ComposeContent, env, true)
 	if err != nil {
-		return Task{}, ValidationErr("compose 解析失败: " + err.Error())
+		return Task{}, err
+	}
+	// 2. 风险分析基于「渲染后」内容（${VAR} 已展开，无法绕过 privileged/socket/root bind）。
+	findings, ferr := AnalyzeCompose(rendered)
+	if ferr != nil {
+		return Task{}, ValidationErr("渲染后风险分析失败: " + ferr.Error())
 	}
 	if HasBlocked(findings) {
 		return Task{}, RiskBlockedErr("存在阻断级风险，已拒绝", findings)
@@ -359,7 +411,7 @@ func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts Ap
 		return Task{}, RiskBlockedErr("存在需确认的风险，请显式确认后重试", findings)
 	}
 
-	// 2. 解析 app ID（创建/更新）。
+	// 3. 解析 app ID（创建/更新）+ 乐观并发。
 	appID := strings.TrimSpace(desired.ID)
 	creating := false
 	meta, exists, err := s.repo.GetAppMeta(ctx, appID)
@@ -383,65 +435,105 @@ func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts Ap
 		}
 		meta = AppRecord{ID: appID, Name: desired.Name, Runtime: RuntimeCompose, CreatedAt: now}
 	} else {
-		// 更新：乐观并发。
 		if desired.ExpectedRevision != 0 && desired.ExpectedRevision != meta.Revision {
 			return Task{}, ConflictErr("revision_mismatch",
 				fmt.Sprintf("expected revision %d but current is %d", desired.ExpectedRevision, meta.Revision))
 		}
 	}
 
-	// 3. 落盘 compose.yaml + .env（secret 仅写文件，不入 SQLite/revision）。
+	// 4. 暂存 compose.yaml/.env 到 staging（不覆盖现有事实源；DB 提交后再 atomic rename）。
 	if err := s.paths.EnsureAppDir(appID); err != nil {
 		return Task{}, err
 	}
-	if err := s.paths.SafeWriteFile(appID, "compose.yaml", []byte(desired.ComposeContent), 0o644); err != nil {
-		return Task{}, err
-	}
-	if env := renderEnvFile(desired.Secrets, desired.Parameters); env != "" {
-		if err := s.paths.SafeWriteFile(appID, ".env", []byte(env), 0o600); err != nil {
-			return Task{}, err
-		}
-	}
-
-	// 4. 新 revision（内容 hash + 非敏感参数）。
-	revNum, err := s.repo.NextRevisionNumber(ctx, appID)
+	composeStage, composeFinal, err := s.stageFile(appID, "compose.yaml", []byte(desired.ComposeContent), 0o644)
 	if err != nil {
 		return Task{}, err
 	}
-	hash := composeHash(desired.ComposeContent, desired.Parameters)
-	rev := Revision{
-		Number: revNum, AppID: appID, ComposeHash: hash, Source: desired.Source,
-		Parameters: desired.Parameters, CreatedAt: now, CreatedBy: opts.Actor,
-		Note: ternary(creating, "initial", "update"),
+	cleanupStage := func() { os.Remove(composeStage) }
+	var envStage, envFinal string
+	if env != "" {
+		if envStage, envFinal, err = s.stageFile(appID, ".env", []byte(env), 0o600); err != nil {
+			cleanupStage()
+			return Task{}, err
+		}
+		prev := cleanupStage
+		cleanupStage = func() { prev(); os.Remove(envStage) }
 	}
-	if err := s.repo.InsertRevision(ctx, rev); err != nil {
+
+	// 5. revision + meta + task (+ idempotency) 单事务提交（任一失败回滚，无半状态）。
+	revNum, err := s.repo.NextRevisionNumber(ctx, appID)
+	if err != nil {
+		cleanupStage()
 		return Task{}, err
 	}
-	// revision 快照文件（历史可回滚）。
-	_ = s.paths.SafeWriteFile(appID, fmt.Sprintf("revisions/%d.yaml", revNum), []byte(desired.ComposeContent), 0o644)
-
-	// 5. 更新元数据 desired revision。
+	hash := composeHash(desired.ComposeContent, desired.Parameters)
 	meta.Name = desired.Name
 	meta.Source = desired.Source
 	meta.Parameters = desired.Parameters
 	meta.Revision = revNum
 	meta.Runtime = RuntimeCompose
 	meta.UpdatedAt = now
-	if err := s.repo.UpsertAppMeta(ctx, meta); err != nil {
+	rev := Revision{
+		Number: revNum, AppID: appID, ComposeHash: hash, Source: desired.Source,
+		Parameters: desired.Parameters, CreatedAt: now, CreatedBy: opts.Actor,
+		Note: ternary(creating, "initial", "update"),
+	}
+	summary := sanitizeSummary(desired)
+	task := Task{
+		ID: uuid.NewString(), AppID: appID, Type: TaskApply,
+		Status: TaskQueued, Revision: revNum, IdempotencyKey: opts.IdempotencyKey,
+		RequestSummary: summary, CreatedAt: now,
+	}
+	if err := s.repo.CommitApply(ctx, meta, rev, task, opts.IdempotencyKey, applyHash); err != nil {
+		cleanupStage()
 		return Task{}, err
 	}
 
-	// 6. 提交 apply task。
-	summary := sanitizeSummary(desired)
-	task, err := s.submit(ctx, submitReq{
-		appID: appID, taskType: TaskApply, idemKey: opts.IdempotencyKey,
-		requestHash: hashApplyRequest(desired), summary: summary, targetRev: revNum,
-	})
-	if err != nil {
-		return Task{}, err
+	// 6. 提交后提升 staging → 事实源（同目录 rename 原子）+ revision 快照。
+	//    rename 失败（极罕见）补偿：清 staging 并标 task failed，状态仍一致。
+	if err := os.Rename(composeStage, composeFinal); err != nil {
+		cleanupStage()
+		s.markTaskFailed(ctx, task.ID, "落盘 compose.yaml 失败: "+err.Error())
+		s.logger.Error("promote compose.yaml after commit failed", zap.String("app", appID), zap.Error(err))
+		t, _ := s.repo.GetTask(ctx, task.ID)
+		return t, nil
+	}
+	if envStage != "" {
+		if err := os.Rename(envStage, envFinal); err != nil {
+			os.Remove(envStage) // .env 缺失非致命；保留 compose，继续。
+			s.logger.Warn("promote .env after commit failed", zap.String("app", appID), zap.Error(err))
+		}
+	}
+	_ = s.paths.SafeWriteFile(appID, fmt.Sprintf("revisions/%d.yaml", revNum), []byte(desired.ComposeContent), 0o644)
+
+	// 7. 入队执行 + 审计。
+	if s.runner != nil {
+		s.runner.Enqueue(task.ID)
 	}
 	s.audit(ctx, opts.Actor, appID, "apply:rev="+itoa(revNum), task.ID, summary)
 	return task, nil
+}
+
+// stageFile 写入暂存文件（同目录、唯一后缀），返回 staging 与最终绝对路径。
+// DB 提交后由调用方 os.Rename(stage, final) 原子提升。
+func (s *service) stageFile(appID, rel string, data []byte, mode os.FileMode) (stage, final string, err error) {
+	final = filepath.Join(s.paths.AppDir(appID), rel)
+	stage = final + ".stage-" + uuid.NewString()
+	if err = os.WriteFile(stage, data, mode); err != nil {
+		return "", "", err
+	}
+	return stage, final, nil
+}
+
+// markTaskFailed 把任务标为 failed（带脱敏信息），用于提交后文件提升失败等补偿路径。
+func (s *service) markTaskFailed(ctx context.Context, taskID, msg string) {
+	finished := s.now()
+	_ = s.repo.UpdateTask(ctx, taskID, func(t *Task) {
+		t.Status = TaskFailed
+		t.Phase = PhaseTaskVerifying
+		t.Message = sanitizeLog(msg)
+		t.FinishedAt = &finished
+	})
 }
 
 // --- Operate / Remove / Restore ---
@@ -497,8 +589,9 @@ func (s *service) Remove(ctx context.Context, id string, opts RemoveOptions) (Ta
 }
 
 func (s *service) RestoreRevision(ctx context.Context, id string, rev int64, opts ApplyOptions) (Task, error) {
+	restoreHash := hashRestoreRequest(id, rev)
 	if opts.IdempotencyKey != "" {
-		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, hashRestoreRequest(id, rev)); err != nil {
+		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, restoreHash); err != nil {
 			return Task{}, err
 		} else if hit {
 			return t, nil
@@ -511,39 +604,71 @@ func (s *service) RestoreRevision(ctx context.Context, id string, rev int64, opt
 	if !ok {
 		return Task{}, NotFoundErr(fmt.Sprintf("revision %d of %s", rev, id))
 	}
-	// 把历史 compose 写回为事实源，并创建新 revision。
+	// HIGH#2：严格处理 meta 读取，避免空 ID Upsert 污染表。
+	meta, ok, err := s.repo.GetAppMeta(ctx, id)
+	if err != nil {
+		return Task{}, err
+	}
+	if !ok {
+		return Task{}, NotFoundErr(id)
+	}
 	content, err := os.ReadFile(s.paths.RevisionFile(id, rev))
 	if err != nil {
 		return Task{}, fmt.Errorf("read revision snapshot: %w", err)
 	}
-	if err := s.paths.SafeWriteFile(id, "compose.yaml", content, 0o644); err != nil {
+	// 预检历史内容（strict）+ 渲染后风险分析（策略可能已变更）。
+	rendered, _, err := s.renderForCheck(ctx, string(content), "", true)
+	if err != nil {
 		return Task{}, err
 	}
+	findings, ferr := AnalyzeCompose(rendered)
+	if ferr != nil {
+		return Task{}, ValidationErr("渲染后风险分析失败: " + ferr.Error())
+	}
+	if HasBlocked(findings) {
+		return Task{}, RiskBlockedErr("历史 revision 存在阻断级风险（策略可能已变更），已拒绝", findings)
+	}
+	if NeedsConfirmation(findings, opts.AllowRiskyConfirmation) {
+		return Task{}, RiskBlockedErr("历史 revision 存在需确认的风险，请显式确认后重试", findings)
+	}
+
+	// staging compose.yaml；.env（含 secret）保留现状不动。
+	composeStage, composeFinal, err := s.stageFile(id, "compose.yaml", content, 0o644)
+	if err != nil {
+		return Task{}, err
+	}
+	now := s.now()
 	newRev, err := s.repo.NextRevisionNumber(ctx, id)
 	if err != nil {
+		os.Remove(composeStage)
 		return Task{}, err
 	}
-	meta, _, _ := s.repo.GetAppMeta(ctx, id)
 	newRevision := Revision{
 		Number: newRev, AppID: id, ComposeHash: r.ComposeHash, Source: r.Source,
-		Parameters: r.Parameters, CreatedAt: s.now(), CreatedBy: opts.Actor,
+		Parameters: r.Parameters, CreatedAt: now, CreatedBy: opts.Actor,
 		Note: fmt.Sprintf("restored from revision %d", rev),
 	}
-	if err := s.repo.InsertRevision(ctx, newRevision); err != nil {
+	meta.Revision = newRev
+	meta.UpdatedAt = now
+	task := Task{
+		ID: uuid.NewString(), AppID: id, Type: TaskRestore,
+		Status: TaskQueued, Revision: newRev, IdempotencyKey: opts.IdempotencyKey,
+		RequestSummary: fmt.Sprintf("restore rev %d→%d", rev, newRev), CreatedAt: now,
+	}
+	if err := s.repo.CommitApply(ctx, meta, newRevision, task, opts.IdempotencyKey, restoreHash); err != nil {
+		os.Remove(composeStage)
 		return Task{}, err
 	}
+	if err := os.Rename(composeStage, composeFinal); err != nil {
+		os.Remove(composeStage)
+		s.markTaskFailed(ctx, task.ID, "落盘 compose.yaml 失败: "+err.Error())
+		s.logger.Error("promote compose.yaml after restore failed", zap.String("app", id), zap.Error(err))
+		t, _ := s.repo.GetTask(ctx, task.ID)
+		return t, nil
+	}
 	_ = s.paths.SafeWriteFile(id, fmt.Sprintf("revisions/%d.yaml", newRev), content, 0o644)
-	meta.Revision = newRev
-	meta.UpdatedAt = s.now()
-	_ = s.repo.UpsertAppMeta(ctx, meta)
-
-	task, err := s.submit(ctx, submitReq{
-		appID: id, taskType: TaskRestore, idemKey: opts.IdempotencyKey,
-		requestHash: hashRestoreRequest(id, rev), summary: fmt.Sprintf("restore rev %d→%d", rev, newRev),
-		targetRev: newRev,
-	})
-	if err != nil {
-		return Task{}, err
+	if s.runner != nil {
+		s.runner.Enqueue(task.ID)
 	}
 	s.audit(ctx, opts.Actor, id, fmt.Sprintf("restore:%d", rev), task.ID, "")
 	return task, nil
@@ -602,13 +727,9 @@ func (s *service) submit(ctx context.Context, r submitReq) (Task, error) {
 		Status: TaskQueued, Revision: r.targetRev, Purge: r.purge, IdempotencyKey: r.idemKey,
 		RequestSummary: r.summary, CreatedAt: s.now(),
 	}
-	if err := s.repo.CreateTask(ctx, task); err != nil {
+	// task + idempotency 单事务（operate/remove）。
+	if err := s.repo.CommitTask(ctx, task, r.idemKey, r.requestHash); err != nil {
 		return Task{}, err
-	}
-	if r.idemKey != "" {
-		if err := s.repo.SaveIdempotency(ctx, r.idemKey, r.requestHash, task.ID); err != nil {
-			return Task{}, err
-		}
 	}
 	if s.runner != nil {
 		s.runner.Enqueue(task.ID)

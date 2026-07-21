@@ -81,9 +81,13 @@ func resolveDockerEndpoint(endpoint string) (dialAddr string, useUnix bool, base
 	}
 }
 
-// ping 探测 daemon 是否可达。
+// ping 探测 daemon 是否可达（尊重调用 ctx，便于超时/取消）。
 func (e *dockerEngine) ping(ctx context.Context) error {
-	resp, err := e.client.Get(e.baseURL + "/_ping")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL+"/_ping", nil)
+	if err != nil {
+		return fmt.Errorf("docker daemon 不可达 (%s): %w", e.baseURL, err)
+	}
+	resp, err := e.client.Do(req)
 	if err != nil {
 		// 给出可读端点信息，便于排查。
 		return fmt.Errorf("docker daemon 不可达 (%s): %w", e.baseURL, err)

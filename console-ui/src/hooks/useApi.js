@@ -656,7 +656,15 @@ export function useAppRevisions(appId) {
 
 async function readErr(r) {
   const t = await r.text().catch(() => '');
-  return t || `HTTP ${r.status}`;
+  if (t) {
+    // 后端错误为统一 JSON 信封 {"error","reason","findings"}；优先取 error 字段。
+    try {
+      const j = JSON.parse(t);
+      if (j && typeof j.error === 'string') return j.error;
+    } catch { /* 非 JSON，按纯文本返回 */ }
+    return t;
+  }
+  return `HTTP ${r.status}`;
 }
 
 // 预检（不落盘）。

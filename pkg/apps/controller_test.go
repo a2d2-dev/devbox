@@ -21,6 +21,8 @@ type fakeAdapter struct {
 	operateErr error
 	removeErr  error
 	delay      time.Duration // Apply/Operate 模拟耗时（串行测试用）
+	panicsRemaining int      // Apply 触发 panic 的次数（测试 recover）
+	applyNoObserve bool      // Apply 成功但不产生运行态（测试 verifyObserved 失败）
 	mu         sync.Mutex
 	applied    []string
 	applyTimes []time.Time
@@ -30,23 +32,56 @@ type fakeAdapter struct {
 
 func (f *fakeAdapter) Kind() RuntimeKind { return f.kind }
 func (f *fakeAdapter) Observe(context.Context) (map[string]Application, error) {
-	return f.observed, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// 返回副本，避免测试间共享底层数据。
+	out := make(map[string]Application, len(f.observed))
+	for k, v := range f.observed {
+		out[k] = v
+	}
+	return out, nil
 }
 func (f *fakeAdapter) Apply(_ context.Context, app Application, _ string) error {
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
+	if f.panicsRemaining > 0 {
+		f.mu.Lock()
+		f.panicsRemaining--
+		f.mu.Unlock()
+		panic("simulated adapter panic")
+	}
 	f.mu.Lock()
 	f.applied = append(f.applied, app.ID)
 	f.applyTimes = append(f.applyTimes, time.Now())
+	// 模拟 apply 成功后容器实际出现（供 worker 的 verifyObserved 通过）。
+	if f.applyErr == nil && !f.applyNoObserve {
+		f.setObservedLocked(app.ID, ActionStart)
+	}
 	f.mu.Unlock()
 	return f.applyErr
 }
 func (f *fakeAdapter) Operate(_ context.Context, app Application, action Action) error {
 	f.mu.Lock()
 	f.operated = append(f.operated, app.ID+":"+string(action))
+	if f.operateErr == nil {
+		f.setObservedLocked(app.ID, action)
+	}
 	f.mu.Unlock()
 	return f.operateErr
+}
+
+// setObservedLocked 按动作设置模拟运行态（调用方持锁）。
+func (f *fakeAdapter) setObservedLocked(appID string, action Action) {
+	if f.observed == nil {
+		f.observed = map[string]Application{}
+	}
+	switch action {
+	case ActionStop:
+		f.observed[appID] = Application{ID: appID, Observed: ObservedState{Phase: PhaseStopped, Services: []ServiceStatus{{Name: "web", State: "exited"}}}}
+	default: // start/restart/redeploy/apply
+		f.observed[appID] = Application{ID: appID, Observed: ObservedState{Phase: PhaseRunning, Services: []ServiceStatus{{Name: "web", State: "running"}}}}
+	}
 }
 func (f *fakeAdapter) Remove(_ context.Context, app Application, _ bool) error {
 	f.mu.Lock()
@@ -69,6 +104,19 @@ func (f *fakeRunner) Enqueue(id string) {
 	f.mu.Unlock()
 }
 
+// echoPrechecker 模拟「渲染成功」：直接透传 content（供单元测试跑通预检/风险路径，
+// 不依赖真实 docker compose 二进制）。
+type echoPrechecker struct {
+	err error // 非空时渲染返回该错误
+}
+
+func (e *echoPrechecker) RenderConfig(_ context.Context, content, _ string) (string, error) {
+	if e.err != nil {
+		return "", e.err
+	}
+	return content, nil
+}
+
 func newTestController(t *testing.T, adapters map[RuntimeKind]runtimeAdapter) (Controller, *fakeRunner, Repository, *Paths) {
 	t.Helper()
 	dir := t.TempDir()
@@ -76,9 +124,11 @@ func newTestController(t *testing.T, adapters map[RuntimeKind]runtimeAdapter) (C
 	require.NoError(t, err)
 	paths := NewPaths(dir)
 	runner := &fakeRunner{}
-	ctrl := NewController(repo, paths, adapters, runner, zap.NewNop(), WithClock(func() time.Time {
-		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	}))
+	ctrl := NewController(repo, paths, adapters, runner, zap.NewNop(),
+		WithPrechecker(&echoPrechecker{}),
+		WithClock(func() time.Time {
+			return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		}))
 	t.Cleanup(func() { _ = repo.Close() })
 	return ctrl, runner, repo, paths
 }
@@ -291,3 +341,87 @@ func TestControllerOperateRemoveSubmit(t *testing.T) {
 	_, ok, _ = repo.GetAppMeta(ctx, "op-app")
 	assert.True(t, ok)
 }
+
+// newTestControllerWithPrechecker 用指定 prechecker 构造 controller（测试预检拒绝路径）。
+func newTestControllerWithPrechecker(t *testing.T, adapters map[RuntimeKind]runtimeAdapter, pc composePrechecker) (Controller, *fakeRunner, Repository, *Paths) {
+	t.Helper()
+	dir := t.TempDir()
+	repo, err := OpenRepository(context.Background(), filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	paths := NewPaths(dir)
+	runner := &fakeRunner{}
+	ctrl := NewController(repo, paths, adapters, runner, zap.NewNop(),
+		WithPrechecker(pc),
+		WithClock(func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }))
+	t.Cleanup(func() { _ = repo.Close() })
+	return ctrl, runner, repo, paths
+}
+
+// HIGH#3：预检失败（配置非法）时不得落盘/建 revision/建 task。
+func TestControllerApplyPrecheckRejectsBeforePersist(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose}
+	ctrl, runner, repo, paths := newTestControllerWithPrechecker(t,
+		map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose},
+		&echoPrechecker{err: ValidationErr("compose 配置无效: syntax")})
+
+	_, err := ctrl.Apply(context.Background(), DesiredApplication{
+		Name: "bad-app", ComposeContent: "garbage", Source: ApplicationSource{Kind: SourceInline},
+	}, ApplyOptions{Actor: "tester"})
+	ae, ok := AsError(err)
+	require.True(t, ok)
+	assert.Equal(t, ErrKindValidation, ae.Kind)
+
+	// 无任何副作用：无文件、无 meta、无 revision、无 task、未入队。
+	assert.NoFileExists(t, paths.ComposeFile("bad-app"))
+	_, okMeta, _ := repo.GetAppMeta(context.Background(), "bad-app")
+	assert.False(t, okMeta)
+	revs, _ := repo.ListRevisions(context.Background(), "bad-app")
+	assert.Empty(t, revs)
+	assert.Empty(t, runner.queued)
+}
+
+// HIGH#3：compose CLI 不可用（capability）时 Apply 明确拒绝，不落盘。
+func TestControllerApplyCapabilityWhenPrecheckUnavailable(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose}
+	ctrl, runner, repo, paths := newTestControllerWithPrechecker(t,
+		map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose},
+		&echoPrechecker{err: CapabilityErr("docker compose 不可用")})
+
+	_, err := ctrl.Apply(context.Background(), DesiredApplication{
+		Name: "cap-app", ComposeContent: safeCompose, Source: ApplicationSource{Kind: SourceInline},
+	}, ApplyOptions{})
+	ae, ok := AsError(err)
+	require.True(t, ok)
+	assert.Equal(t, ErrKindCapability, ae.Kind)
+	assert.NoFileExists(t, paths.ComposeFile("cap-app"))
+	_, okMeta, _ := repo.GetAppMeta(context.Background(), "cap-app")
+	assert.False(t, okMeta)
+	assert.Empty(t, runner.queued)
+}
+
+// HIGH#2：RestoreRevision 对不存在的 app 返回 NotFound，不以空 ID 污染表。
+func TestControllerRestoreRevisionAppNotFound(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose}
+	ctrl, _, repo, _ := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	// 先建一个 app + revision，再单独 restore 一个不存在的 app。
+	_, err := ctrl.Apply(ctx, DesiredApplication{Name: "exists", ComposeContent: safeCompose}, ApplyOptions{})
+	require.NoError(t, err)
+
+	_, err = ctrl.RestoreRevision(ctx, "ghost-app", 1, ApplyOptions{})
+	ae, ok := AsError(err)
+	require.True(t, ok)
+	assert.Equal(t, ErrKindNotFound, ae.Kind)
+
+	// ghost-app 不应被写入 apps 表（无空 ID 行）。
+	metas, err := repo.ListAppMetas(ctx)
+	require.NoError(t, err)
+	for _, m := range metas {
+		assert.NotEqual(t, "", m.ID, "不应存在空 ID 元数据行")
+		assert.NotEqual(t, "ghost-app", m.ID)
+	}
+}
+
+// MED#7：渲染后风险分析覆盖 ${VAR} 绕过 —— 真实渲染展开验证见
+// compose_cli_test.TestRenderConfigInterpolationBlocked（使用真实 docker compose 二进制）。
+

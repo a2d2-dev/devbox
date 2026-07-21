@@ -136,3 +136,19 @@ func TestAnalyzeComposeLongSyntaxBind(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, HasBlocked(f))
 }
+
+// MED#7：相对 bind 含 ".." 路径穿越不应被 filepath.Clean 折叠后漏检 → 需确认。
+func TestAnalyzeComposeRelativeTraversalBind(t *testing.T) {
+	for _, spec := range []string{"../../etc:/host", "../../../:/host"} {
+		yaml := "services:\n  a:\n    image: nginx:1.27\n    volumes:\n      - " + spec
+		f, err := AnalyzeCompose(yaml)
+		require.NoError(t, err)
+		assert.True(t, NeedsConfirmation(f, false), "相对 .. 穿越 bind 应需确认: %s", spec)
+	}
+	// 子目录（非系统关键目录本身，无 ..）不应误判。
+	yaml := "services:\n  a:\n    image: nginx:1.27\n    volumes:\n      - /etc/devbox:/host"
+	f, err := AnalyzeCompose(yaml)
+	require.NoError(t, err)
+	assert.False(t, HasBlocked(f), "/etc 子目录不应阻断")
+	assert.False(t, NeedsConfirmation(f, false), "/etc 子目录不应需确认")
+}
