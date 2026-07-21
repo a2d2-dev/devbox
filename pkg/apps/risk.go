@@ -62,7 +62,7 @@ func NeedsConfirmation(findings []RiskFinding, confirmed bool) bool {
 // 系统关键目录：bind 这些 ≈ 篡改/逃逸宿主，硬阻断。
 var systemCriticalPaths = []string{
 	"/", "/etc", "/usr", "/bin", "/sbin", "/boot", "/lib", "/lib64",
-	"/proc", "/sys", "/dev", "/var/lib/docker",
+	"/proc", "/sys", "/dev", "/run", "/var", "/var/run", "/var/lib/docker",
 }
 
 // 危险 Linux capability：需 confirmation。
@@ -115,7 +115,32 @@ func AnalyzeCompose(raw string) ([]RiskFinding, error) {
 	for name, svc := range root.Services {
 		findings = append(findings, analyzeService(name, svc)...)
 	}
+	findings = append(findings, analyzeNetworks(root.Networks)...)
 	return findings, nil
+}
+
+type composeNetwork struct {
+	Driver string `yaml:"driver"`
+	Name   string `yaml:"name"`
+}
+
+// analyzeNetworks 阻断通过顶层 network 定义接入 Docker 预置 host network。
+// 这与 service.network_mode=host 具有相同的隔离绕过效果。
+func analyzeNetworks(networks map[string]yaml.Node) []RiskFinding {
+	var findings []RiskFinding
+	for name, node := range networks {
+		var network composeNetwork
+		if err := node.Decode(&network); err != nil {
+			continue
+		}
+		if strings.EqualFold(network.Driver, "host") || strings.EqualFold(network.Name, "host") {
+			findings = append(findings, RiskFinding{
+				Level: RiskBlocked, Field: "networks." + name,
+				Message: "host network 绕过网络命名空间隔离，已阻断",
+			})
+		}
+	}
+	return findings
 }
 
 func analyzeService(name string, svc composeService) []RiskFinding {

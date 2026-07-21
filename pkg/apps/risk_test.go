@@ -33,7 +33,7 @@ func TestAnalyzeComposeBlockedDockerSocket(t *testing.T) {
 }
 
 func TestAnalyzeComposeBlockedRootBind(t *testing.T) {
-	for _, p := range []string{"/", "/etc", "/usr", "/proc", "/var/lib/docker"} {
+	for _, p := range []string{"/", "/etc", "/usr", "/proc", "/run", "/var", "/var/run", "/var/lib/docker"} {
 		yaml := "services:\n  a:\n    image: nginx:1.27\n    volumes:\n      - " + p + ":/host"
 		f, err := AnalyzeCompose(yaml)
 		require.NoError(t, err)
@@ -44,6 +44,18 @@ func TestAnalyzeComposeBlockedRootBind(t *testing.T) {
 	f, err := AnalyzeCompose(yaml)
 	require.NoError(t, err)
 	assert.False(t, HasBlocked(f), "/etc 子目录不应阻断")
+}
+
+func TestAnalyzeComposeBlockedTopLevelHostNetwork(t *testing.T) {
+	for _, network := range []string{
+		"networks:\n  hostnet:\n    driver: host",
+		"networks:\n  hostnet:\n    external: true\n    name: host",
+	} {
+		raw := "services:\n  app:\n    image: nginx:1.27\n    networks: [hostnet]\n" + network
+		findings, err := AnalyzeCompose(raw)
+		require.NoError(t, err)
+		assert.True(t, HasBlocked(findings), "顶层 host network 必须阻断")
+	}
 }
 
 func TestAnalyzeComposeBlockedHostNetworkAndPID(t *testing.T) {

@@ -128,14 +128,18 @@ func (w *worker) stopQueue(appID string) {
 }
 
 func (w *worker) runAppQueue(appID string, q *appQueue) {
+	ctx := w.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	for {
 		select {
-		case <-w.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-q.done:
 			return
 		case taskID := <-q.ch:
-			w.executeSafe(w.ctx, taskID)
+			w.executeSafe(ctx, taskID)
 		}
 	}
 }
@@ -296,7 +300,11 @@ func (w *worker) verifyObserved(ctx context.Context, adapter runtimeAdapter, app
 
 // checkObservedOnce 单次 Observe 校验：容器存在且未进入 failed。
 func (w *worker) checkObservedOnce(ctx context.Context, adapter runtimeAdapter, appID string) error {
-	obs, _ := adapter.Observe(ctx)
+	obs, err := adapter.Observe(ctx)
+	if err != nil {
+		w.logger.Warn("verify: observe runtime state failed", zap.String("app", appID), zap.Error(err))
+		return fmt.Errorf("部署后无法观测运行时状态")
+	}
 	app, hasObs := obs[appID]
 	if !hasObs || len(app.Observed.Services) == 0 {
 		return fmt.Errorf("部署后未观测到任何容器，请检查镜像/配置")

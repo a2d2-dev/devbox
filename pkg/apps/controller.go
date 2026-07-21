@@ -233,9 +233,6 @@ func (s *service) fillCompatFields(app *Application) {
 		if state == "running" {
 			ready++
 		}
-		if svc.Health == "unhealthy" {
-			// 任一不健康 → degraded（聚合由后端完成）。
-		}
 		if app.Image == "" {
 			app.Image = svc.Image
 		}
