@@ -164,9 +164,11 @@ func analyzeService(name string, svc composeService) []RiskFinding {
 		add(RiskBlocked, "privileged", "privileged:true 几乎等价于宿主 root，已阻断")
 	}
 
-	// host network：硬阻断（绕过网络隔离）。
-	if strings.EqualFold(svc.NetworkMode, "host") {
-		add(RiskBlocked, "network_mode", "network_mode:host 绕过网络命名空间隔离，已阻断")
+	// host 或 container:<id> network：硬阻断。后者可借用另一个 host-network
+	// 容器的网络命名空间，不能作为 host 模式的旁路。
+	networkMode := strings.ToLower(strings.TrimSpace(svc.NetworkMode))
+	if networkMode == "host" || strings.HasPrefix(networkMode, "container:") {
+		add(RiskBlocked, "network_mode", "network_mode 绕过独立网络命名空间隔离，已阻断")
 	}
 
 	// pid host / ipc host。

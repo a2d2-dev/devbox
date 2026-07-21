@@ -77,6 +77,16 @@ func TestAnalyzeComposeBlockedHostNetworkAndPID(t *testing.T) {
 	assert.Equal(t, 2, blocked)
 }
 
+func TestAnalyzeComposeBlockedContainerNetworkMode(t *testing.T) {
+	raw := `services:
+  app:
+    image: nginx:1.27
+    network_mode: container:host-network-container`
+	findings, err := AnalyzeCompose(raw)
+	require.NoError(t, err)
+	assert.True(t, HasBlocked(findings))
+}
+
 func TestAnalyzeComposeWarningLatest(t *testing.T) {
 	for _, img := range []string{"nginx", "nginx:latest", "nginx:main"} {
 		yaml := "services:\n  a:\n    image: " + img

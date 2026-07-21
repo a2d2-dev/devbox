@@ -61,6 +61,7 @@ func (c *composeRuntime) Observe(ctx context.Context) (map[string]Application, e
 	containers, err := c.engine.listContainers(ctx, nil)
 	if err != nil {
 		// daemon 不可用：空 map + nil（controller 层降级，不影响 K8s）。
+		c.logger.Warn("observe compose apps failed; returning Kubernetes results only", zap.Error(err))
 		return map[string]Application{}, nil
 	}
 	// 按 app-id（来自 compose project）分组容器。
