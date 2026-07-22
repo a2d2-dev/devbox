@@ -233,6 +233,12 @@ func (s *Server) handleAppByID(w http.ResponseWriter, r *http.Request) {
 		s.getCompose(w, r, id)
 	case len(segments) == 2 && segments[1] == "revisions" && r.Method == http.MethodGet:
 		s.listRevisions(w, r, id)
+	case len(segments) == 2 && segments[1] == "storage" && r.Method == http.MethodGet:
+		s.storageInventory(w, r, id)
+	case len(segments) == 2 && segments[1] == "env" && r.Method == http.MethodGet:
+		s.envInventory(w, r, id)
+	case len(segments) == 2 && segments[1] == "remove-preview" && r.Method == http.MethodGet:
+		s.removePreview(w, r, id)
 	case len(segments) == 2 && segments[1] == "operations" && r.Method == http.MethodGet:
 		s.listOperations(w, r, id)
 	case len(segments) == 2 && isCompatAction(segments[1]) && r.Method == http.MethodPost:
@@ -315,6 +321,38 @@ func (s *Server) listOperations(w http.ResponseWriter, r *http.Request, id strin
 		tasks = []apps.Task{}
 	}
 	s.jsonOK(w, tasks)
+}
+
+// storageInventory GET /apps/{id}/storage：卷清单（managed/external/bind/socket）+
+// 受管数据目录。external 永不删；managed 仅 purge 删。
+func (s *Server) storageInventory(w http.ResponseWriter, r *http.Request, id string) {
+	inv, err := s.controller.StorageInventory(r.Context(), id)
+	if err != nil {
+		writeAppErr(w, err)
+		return
+	}
+	s.jsonOK(w, inv)
+}
+
+// envInventory GET /apps/{id}/env：环境变量元信息（仅 key/configured/type，不回值）。
+func (s *Server) envInventory(w http.ResponseWriter, r *http.Request, id string) {
+	inv, err := s.controller.EnvInventory(r.Context(), id)
+	if err != nil {
+		writeAppErr(w, err)
+		return
+	}
+	s.jsonOK(w, inv)
+}
+
+// removePreview GET /apps/{id}/remove-preview?purge=true：明确列出将被删除/保留的资源。
+func (s *Server) removePreview(w http.ResponseWriter, r *http.Request, id string) {
+	purge := r.URL.Query().Has("purge") && r.URL.Query().Get("purge") != "false"
+	pre, err := s.controller.RemovePreview(r.Context(), id, purge)
+	if err != nil {
+		writeAppErr(w, err)
+		return
+	}
+	s.jsonOK(w, pre)
 }
 
 // updateApp PUT /apps/{id}：更新期望状态（乐观并发 via expectedRevision）。

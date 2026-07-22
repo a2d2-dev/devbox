@@ -146,19 +146,19 @@ func (s *StoreManager) ListStoreApps(ctx context.Context) ([]StoreApp, error) {
 	for _, item := range data.Items {
 		rt, runtimes, installable, reason := runtimeFromProvisioner(item.Metadata.Labels)
 		app := StoreApp{
-			ID:                  item.Metadata.Name,
-			Name:                item.Metadata.Annotations["theriseunion.io/alias-name"],
-			Category:            item.Metadata.Labels["app.theriseunion.io/category"],
-			Description:         item.Metadata.Annotations["theriseunion.io/description"],
-			Icon:                item.Metadata.Annotations["app.theriseunion.io/icon"],
-			Provider:            item.Metadata.Annotations["app.theriseunion.io/provider"],
-			Version:             item.Status.LatestVersion,
-			VersionCount:        item.Status.VersionCount,
-			Runtime:             rt,
-			Runtimes:            runtimes,
-			Installable:         installable,
+			ID:                   item.Metadata.Name,
+			Name:                 item.Metadata.Annotations["theriseunion.io/alias-name"],
+			Category:             item.Metadata.Labels["app.theriseunion.io/category"],
+			Description:          item.Metadata.Annotations["theriseunion.io/description"],
+			Icon:                 item.Metadata.Annotations["app.theriseunion.io/icon"],
+			Provider:             item.Metadata.Annotations["app.theriseunion.io/provider"],
+			Version:              item.Status.LatestVersion,
+			VersionCount:         item.Status.VersionCount,
+			Runtime:              rt,
+			Runtimes:             runtimes,
+			Installable:          installable,
 			NotInstallableReason: reason,
-			Pinned:              item.Metadata.Labels["app.theriseunion.io/pinned"] == "true",
+			Pinned:               item.Metadata.Labels["app.theriseunion.io/pinned"] == "true",
 		}
 		if app.Name == "" {
 			app.Name = item.Metadata.Name
@@ -179,9 +179,9 @@ type StoreAppVersion struct {
 	AppID   string `json:"appId"`
 	Version string `json:"version"`
 	// Runtime 权威运行时：存在 compose 模板 → compose；否则 kubernetes。
-	Runtime            RuntimeKind `json:"runtime"`
-	Installable        bool        `json:"installable"`
-	NotInstallableReason string    `json:"notInstallableReason,omitempty"`
+	Runtime              RuntimeKind `json:"runtime"`
+	Installable          bool        `json:"installable"`
+	NotInstallableReason string      `json:"notInstallableReason,omitempty"`
 
 	// ComposeTemplate catalog 提供的 Compose 模板原文（仅 compose 包）。
 	// 兼容读取 spec.composeTemplate（首选）与 spec.compose（别名）；edge-apiserver
@@ -192,6 +192,9 @@ type StoreAppVersion struct {
 	ValuesSchema json.RawMessage `json:"valuesSchema,omitempty"`
 	// DefaultValues 参数默认值（透传 edge-apiserver values，map[string]apiextv1.JSON）。
 	DefaultValues map[string]json.RawMessage `json:"defaultValues,omitempty"`
+	// Catalog 来源标识（第三方 HTTP/Git catalog，与 StoreApp 对齐；edge 商店留空）。
+	CatalogID   string `json:"catalogId,omitempty"`
+	CatalogName string `json:"catalogName,omitempty"`
 }
 
 // storeVersionsResponse edge-apiserver /storeapps/{name}/versions 返回。
@@ -209,11 +212,11 @@ type storeVersionItem struct {
 // storeVersionSpec 宽松解析 ApplicationVersionSpec：只取 devbox 关心的字段。
 // composeTemplate/compose 为向后兼容扩展字段（真实类型暂无，留空）。
 type storeVersionSpec struct {
-	Version        string                       `json:"version"`
-	ComposeTemplate string                       `json:"composeTemplate"`
-	Compose        string                       `json:"compose"`
-	ValuesSchema   json.RawMessage              `json:"valuesSchema"`
-	Values         map[string]json.RawMessage   `json:"values"`
+	Version         string                     `json:"version"`
+	ComposeTemplate string                     `json:"composeTemplate"`
+	Compose         string                     `json:"compose"`
+	ValuesSchema    json.RawMessage            `json:"valuesSchema"`
+	Values          map[string]json.RawMessage `json:"values"`
 }
 
 // GetStoreAppVersion 从 catalog 重新获取指定应用的指定版本（可信源）。
@@ -275,11 +278,11 @@ func (s *StoreManager) toStoreAppVersion(appID string, it *storeVersionItem) Sto
 		compose = strings.TrimSpace(it.Spec.Compose)
 	}
 	ver := StoreAppVersion{
-		AppID:          appID,
-		Version:        it.Spec.Version,
+		AppID:           appID,
+		Version:         it.Spec.Version,
 		ComposeTemplate: compose,
-		ValuesSchema:   it.Spec.ValuesSchema,
-		DefaultValues:  it.Spec.Values,
+		ValuesSchema:    it.Spec.ValuesSchema,
+		DefaultValues:   it.Spec.Values,
 	}
 	if compose != "" {
 		ver.Runtime = RuntimeCompose
@@ -420,6 +423,7 @@ type StoreInstallResult struct {
 // 纳入 params + secrets 的内容，确保：
 //   - 完全相同的重装请求 → 相同 key → 幂等返回原 task；
 //   - 改 params 或轮换 secret → 不同 key → 真实落盘（新 revision），不被旧 task 短路。
+//
 // 指纹本身是单向摘要，不泄露 secret 明文，可安全出现在 idempotency 记录里。
 func StoreInstallFingerprint(params, secrets map[string]string) string {
 	keys := make([]string, 0, len(params)+len(secrets))

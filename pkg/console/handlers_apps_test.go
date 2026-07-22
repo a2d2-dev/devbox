@@ -101,6 +101,15 @@ func (s *stubController) GetCompose(context.Context, string) (apps.ComposeConten
 func (s *stubController) ListRevisions(context.Context, string) ([]apps.Revision, error) {
 	return s.revisions, s.revisionsErr
 }
+func (s *stubController) StorageInventory(context.Context, string) (apps.StorageInventory, error) {
+	return apps.StorageInventory{}, nil
+}
+func (s *stubController) EnvInventory(context.Context, string) (apps.EnvInventory, error) {
+	return apps.EnvInventory{}, nil
+}
+func (s *stubController) RemovePreview(_ context.Context, id string, purge bool) (apps.RemovePreview, error) {
+	return apps.RemovePreview{AppID: id, Purge: purge}, nil
+}
 
 func newTestServer(ctrl apps.Controller) *Server {
 	s := &Server{controller: ctrl, logger: zap.NewNop(), mux: http.NewServeMux()}

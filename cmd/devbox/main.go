@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/a2d2-dev/devbox/pkg/apps"
 	"github.com/a2d2-dev/devbox/pkg/collector"
@@ -86,6 +88,20 @@ func main() {
 		}
 	}
 
+	// 第三方 catalog source 聚合（HTTP/Git 文件原生 catalog，Issue #2 阶段4）。
+	// source 仅来自配置（config.yaml/env）；启动时同步一次，按 catalog_poll 周期刷新；
+	// 单 source 失败被隔离，catalog 不可用时用上次可信缓存，不影响已安装应用。
+	var catalogs *apps.CatalogSet
+	if len(cfg.Compose.Catalogs) > 0 {
+		cacheRoot := filepath.Join(cfg.Compose.DataDir, "catalog-cache")
+		catalogs = apps.NewCatalogSetFromConfigs(toCatalogSources(cfg.Compose.Catalogs), cacheRoot, logger)
+		poll := time.Duration(cfg.Compose.CatalogPoll) * time.Second
+		catalogs.Start(ctx, poll)
+		logger.Info("Catalog sources started",
+			zap.Int("sources", len(cfg.Compose.Catalogs)),
+			zap.Duration("poll_interval", poll))
+	}
+
 	consoleServer := console.NewServer(logger, console.Config{
 		Enabled:           cfg.Console.Enabled,
 		Port:              cfg.Console.Port,
@@ -97,6 +113,7 @@ func main() {
 		AuthPassword:      cfg.Auth.Password,
 		AuthSessionTTL:    cfg.Auth.SessionTTL,
 		LinksPath:         cfg.Console.LinksPath,
+		Catalogs:          catalogs,
 	}, col, appController, storeMgr)
 
 	go func() {
@@ -140,4 +157,25 @@ func initLogger(cfg config.LoggingConfig) (*zap.Logger, error) {
 	}
 
 	return zapCfg.Build()
+}
+
+// toCatalogSources 把 config.CatalogSourceConfig 映射为 apps.CatalogSource。
+// 字段一一对应；token 作为 secret 透传（不入日志/审计；git 经 http.extraHeader 注入）。
+func toCatalogSources(cfgs []config.CatalogSourceConfig) []apps.CatalogSource {
+	out := make([]apps.CatalogSource, 0, len(cfgs))
+	for _, c := range cfgs {
+		out = append(out, apps.CatalogSource{
+			ID:       c.ID,
+			Name:     c.Name,
+			Kind:     c.Kind,
+			URL:      c.URL,
+			Platform: c.Platform,
+			Host:     c.Host,
+			Ref:      c.Ref,
+			Path:     c.Path,
+			Token:    c.Token,
+			Insecure: c.Insecure,
+		})
+	}
+	return out
 }

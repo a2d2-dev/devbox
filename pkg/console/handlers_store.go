@@ -91,6 +91,19 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	source := apps.ApplicationSource{Kind: apps.SourceStore, StoreID: req.AppID, Version: ver.Version}
+	s.installResolvedVersion(w, r, req.AppID, ver, req.Values, req.IdempotencyKey, source)
+}
+
+// installResolvedVersion store/catalog 安装的共享流程（要求 3/5）：
+// 已从可信 source 取到版本 → 校验+安全渲染 → 复用同源已装 ID → Controller.Apply。
+//   - compose 原文一律后端持有（ver），不来自前端。
+//   - 可安装性 / 风险（含 store/catalog 可变标签阻断）/ secret 仅 .env / atomic 均由 Controller 保证。
+//   - 幂等键：前端可传；为空则按 source+app+version+params+secrets 指纹生成稳定键
+//     （指纹纳入 secrets：换密码不被旧 task 短路，改 params 不被 idempotency_conflict 阻断）。
+func (s *Server) installResolvedVersion(w http.ResponseWriter, r *http.Request, appID string,
+	ver apps.StoreAppVersion, values map[string]any, idemKey string, source apps.ApplicationSource) {
 	if !ver.Installable || ver.Runtime != apps.RuntimeCompose {
 		writeJSONErrStatus(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":  "该应用不可在本机安装",
@@ -100,8 +113,7 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2/3. 校验 + 安全渲染。
-	compose, params, secrets, err := apps.RenderStoreCompose(ver, req.Values)
+	compose, params, secrets, err := apps.RenderStoreCompose(ver, values)
 	if err != nil {
 		writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{
 			"error":  err.Error(),
@@ -110,29 +122,20 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. 同源已装 → 复用 ID + ExpectedRevision；否则用 catalog appID 作 devbox app ID。
 	desired := apps.DesiredApplication{
-		Name:           req.AppID,
-		ComposeContent: compose,
-		Parameters:     params,
-		Secrets:        secrets,
-		Source:         apps.ApplicationSource{Kind: apps.SourceStore, StoreID: req.AppID, Version: ver.Version},
+		Name: appID, ComposeContent: compose, Parameters: params, Secrets: secrets, Source: source,
 	}
-	if id, rev, found := s.findInstalledStoreApp(r.Context(), req.AppID); found {
+	// 同源已装 → 复用 ID + ExpectedRevision；否则用 catalog appID 作 devbox app ID。
+	if id, rev, found := s.findInstalledVersion(r.Context(), source, appID); found {
 		desired.ID = id
 		desired.ExpectedRevision = rev
 	} else {
-		desired.ID = req.AppID
+		desired.ID = appID
 	}
 
-	// 5. 幂等键：前端可传；为空则按 app+version+params+secrets 指纹生成稳定键。
-	// 指纹纳入 secrets 是关键——否则同 app+version 换密码会被旧 task 短路（secret 静默
-	// 不更新），改 params 会被判 idempotency_conflict（reconfigure 被阻断）。
-	idemKey := req.IdempotencyKey
 	if idemKey == "" {
-		idemKey = "store:" + req.AppID + ":" + ver.Version + ":" + apps.StoreInstallFingerprint(params, secrets)
+		idemKey = string(source.Kind) + ":" + appID + ":" + ver.Version + ":" + apps.StoreInstallFingerprint(params, secrets)
 	}
-
 	task, err := s.controller.Apply(r.Context(), desired, apps.ApplyOptions{
 		IdempotencyKey: idemKey, Actor: defaultActor,
 	})
@@ -148,18 +151,21 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// findInstalledStoreApp 查找已安装的同源 catalog app（compose 运行时 + SourceStore + StoreID 匹配）。
-// 命中返回其 ID 与当前 revision（用于复用 ID + 乐观并发）；用于安装/升级同一 catalog app。
-func (s *Server) findInstalledStoreApp(ctx context.Context, appID string) (string, int64, bool) {
-	list, err := s.controller.List(ctx, apps.Filter{})
+// findInstalledVersion 查找已安装的同源应用（compose + source Kind/StoreID 匹配；
+// catalog 来源额外匹配 CatalogID）。命中返回 ID 与当前 revision（复用 ID + 乐观并发）。
+func (s *Server) findInstalledVersion(ctx context.Context, source apps.ApplicationSource, appID string) (string, int64, bool) {
+	list, err := s.controller.List(ctx, apps.Filter{Runtime: apps.RuntimeCompose})
 	if err != nil || list == nil {
 		return "", 0, false
 	}
 	for _, a := range list {
-		if a.Runtime == apps.RuntimeCompose &&
-			a.Source.Kind == apps.SourceStore && a.Source.StoreID == appID {
-			return a.ID, a.Revision, true
+		if a.Runtime != apps.RuntimeCompose || a.Source.Kind != source.Kind || a.Source.StoreID != appID {
+			continue
 		}
+		if source.Kind == apps.SourceCatalog && a.Source.CatalogID != source.CatalogID {
+			continue
+		}
+		return a.ID, a.Revision, true
 	}
 	return "", 0, false
 }

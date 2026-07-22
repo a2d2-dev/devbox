@@ -59,6 +59,20 @@ func NeedsConfirmation(findings []RiskFinding, confirmed bool) bool {
 	return false
 }
 
+// HasMutableImageRisk 返回 latest/main 这类可变镜像标签的风险项。
+// 商店/catalog 来源（StrictMutableTag）将其升格为阻断：可变标签无法锁定版本，
+// 违反项目红线（禁 latest/main）。inline 导入仅 warning 暴露，不阻断。
+func HasMutableImageRisk(findings []RiskFinding) []RiskFinding {
+	var out []RiskFinding
+	for _, f := range findings {
+		// analyzeService 对 latest/main 标签产出 Field=="image" 的 RiskWarning。
+		if f.Field == "image" && f.Level == RiskWarning {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // 系统关键目录：bind 这些 ≈ 篡改/逃逸宿主，硬阻断。
 var systemCriticalPaths = []string{
 	"/", "/etc", "/usr", "/bin", "/sbin", "/boot", "/lib", "/lib64",

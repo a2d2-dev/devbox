@@ -69,17 +69,20 @@ const (
 type SourceKind string
 
 const (
-	SourceInline SourceKind = "inline" // 粘贴/上传 Compose YAML
-	SourceStore  SourceKind = "store"  // 应用商店（阶段4 统一接入）
-	SourceLocal  SourceKind = "local"  // 导入本地已有项目（后续阶段）
-	SourceGit    SourceKind = "git"    // 后续阶段
+	SourceInline  SourceKind = "inline"  // 粘贴/上传 Compose YAML
+	SourceStore   SourceKind = "store"   // 应用商店（edge-apiserver）
+	SourceCatalog SourceKind = "catalog" // 第三方 HTTP/Git catalog source（阶段4 扩展）
+	SourceLocal   SourceKind = "local"   // 导入本地已有项目（后续阶段）
+	SourceGit     SourceKind = "git"     // 后续阶段
 )
 
 // ApplicationSource 描述应用的来源与可追溯版本。
 type ApplicationSource struct {
 	Kind    SourceKind `json:"kind"`
-	StoreID string     `json:"storeId,omitempty"` // 商店包 ID（store 来源）
-	Version string     `json:"version,omitempty"` // 商店包版本 / 来源版本
+	StoreID string     `json:"storeId,omitempty"` // 商店/catalog 包 ID
+	Version string     `json:"version,omitempty"` // 商店/catalog 包版本 / 来源版本
+	// CatalogID 第三方 catalog source 标识（仅 SourceCatalog；用于来源筛选与升级路由）。
+	CatalogID string `json:"catalogId,omitempty"`
 }
 
 // ServiceStatus 单个 service（→ container）的运行态。
@@ -292,6 +295,64 @@ type ComposeContent struct {
 	// Compose 文本（事实源）。仅含非敏感渲染结果；secret 以引用形式存在。
 	Compose  string `json:"compose"`
 	Revision int64  `json:"revision"`
+}
+
+// --- Storage / Env / Remove 详情（Issue #2 要求 6/7）---
+//
+// 这些是「读事实源（compose.yaml + .env）静态推导」的稳定详情，供详情页展示与删除预览。
+// 不查 docker daemon：事实源是 compose.yaml（可被 git/CLI 管理，卸载 devbox 后仍可用）。
+
+// VolumeKind 卷/挂载分类。
+type VolumeKind string
+
+const (
+	VolumeManaged  VolumeKind = "managed"  // 受管命名卷（compose project 创建；purge 可删）
+	VolumeExternal VolumeKind = "external" // external:true（外部数据；永不删）
+	VolumeBind     VolumeKind = "bind"     // 宿主路径挂载（生命周期由宿主管；不删）
+	VolumeSocket   VolumeKind = "socket"   // 特权 socket（docker.sock 等；安装期已阻断，防御性标识）
+)
+
+// VolumeInfo 单个卷/挂载的详情。
+type VolumeInfo struct {
+	Kind      VolumeKind `json:"kind"`
+	Source    string     `json:"source,omitempty"` // 命名卷名 / bind 宿主路径 / socket 路径
+	Target    string     `json:"target,omitempty"` // 容器内挂载点
+	External  bool       `json:"external"`         // external:true
+	Managed   bool       `json:"managed"`          // devbox 受管（purge 可删）
+	Deletable bool       `json:"deletable"`        // purge 时会被删除（仅 managed 命名卷）
+}
+
+// StorageInventory 应用存储清单（详情）。
+type StorageInventory struct {
+	AppID   string       `json:"appId"`
+	Volumes []VolumeInfo `json:"volumes"`
+	// ManagedDataDir 受管数据目录（compose.yaml/.env/revisions 所在），purge 时删除。
+	ManagedDataDir string `json:"managedDataDir,omitempty"`
+	// Note 生命周期说明（external 永不删等）。
+	Note string `json:"note,omitempty"`
+}
+
+// EnvVarInfo 环境变量元信息（仅 key/configured/type，绝不回值）。
+type EnvVarInfo struct {
+	Key        string `json:"key"`
+	Configured bool   `json:"configured"` // 是否已在 .env 提供
+	Type       string `json:"type"`       // password | text（启发式：secrety key → password）
+	Required   bool   `json:"required"`   // compose 引用但 .env 未提供
+}
+
+// EnvInventory 应用环境变量清单（详情，不含任何值）。
+type EnvInventory struct {
+	AppID string       `json:"appId"`
+	Vars  []EnvVarInfo `json:"vars"`
+}
+
+// RemovePreview 删除预览：明确列出会被删除 / 保留的资源。
+type RemovePreview struct {
+	AppID      string   `json:"appId"`
+	Purge      bool     `json:"purge"`
+	WillDelete []string `json:"willDelete"` // purge=true：受管命名卷 + 受管目录 + 容器/网络；false：仅容器/网络
+	WillKeep   []string `json:"willKeep"`   // external 卷 / 非受管 bind（purge=false 时含全部卷与数据目录）
+	Note       string   `json:"note,omitempty"`
 }
 
 // --- Capability ---

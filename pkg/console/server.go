@@ -39,6 +39,9 @@ type Config struct {
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
+	// Catalogs 第三方 HTTP/Git catalog source 聚合器（Issue #2 阶段4 扩展）。
+	// 为 nil 表示未配置 catalog（UI 隐藏 catalog 区）。
+	Catalogs *apps.CatalogSet `mapstructure:"-"`
 }
 
 // Server 本地控制台 HTTP 服务器
@@ -49,6 +52,7 @@ type Server struct {
 	collector     *collector.Collector
 	controller    apps.Controller
 	storeManager  *apps.StoreManager
+	catalogs      *apps.CatalogSet
 	fileBrowser   *files.Browser
 	modelScanner  *models.Scanner
 	alertEngine   *alerts.Engine
@@ -69,6 +73,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		collector:    col,
 		controller:   controller,
 		storeManager: storeMgr,
+		catalogs:     cfg.Catalogs,
 		fileBrowser:  files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
 		modelScanner: models.NewScanner(models.Config{}),
 		alertEngine:  alerts.NewEngine(col),
@@ -195,6 +200,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/store/apps", s.handleStoreApps)
 	s.mux.HandleFunc("/api/v1/store/version", s.handleStoreVersion)
 	s.mux.HandleFunc("/api/v1/store/install", s.handleStoreInstall)
+	// 第三方 catalog 路由（阶段4 扩展：HTTP/Git 文件原生 catalog source）
+	s.mux.HandleFunc("/api/v1/catalogs", s.handleCatalogs)
+	s.mux.HandleFunc("/api/v1/catalogs/apps", s.handleCatalogApps)
+	s.mux.HandleFunc("/api/v1/catalogs/version", s.handleCatalogVersion)
+	s.mux.HandleFunc("/api/v1/catalogs/install", s.handleCatalogInstall)
 	// 代理应用图标到 apiserver
 	s.mux.HandleFunc("/app-icons/", s.handleProxyAppIcons)
 

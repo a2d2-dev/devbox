@@ -36,6 +36,11 @@ type Controller interface {
 	ListOperations(ctx context.Context, id string) ([]Task, error)
 	GetCompose(ctx context.Context, id string) (ComposeContent, error)
 	ListRevisions(ctx context.Context, id string) ([]Revision, error)
+
+	// 详情（要求 6/7）：从事实源静态推导，不查 daemon。
+	StorageInventory(ctx context.Context, id string) (StorageInventory, error)
+	EnvInventory(ctx context.Context, id string) (EnvInventory, error)
+	RemovePreview(ctx context.Context, id string, purge bool) (RemovePreview, error)
 }
 
 // runtimeAdapter 是内部 seam：Compose 与 K8s 两个实现，不暴露给 HTTP。
@@ -404,6 +409,14 @@ func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts Ap
 	if HasBlocked(findings) {
 		return Task{}, RiskBlockedErr("存在阻断级风险，已拒绝", findings)
 	}
+	// 商店/catalog 包禁止可变镜像标签（latest/main/master/edge/nightly）：违反项目红线
+	// （禁 latest/main，无法锁定版本），升格为阻断，不可 override。inline 来源仅 warning
+	// 暴露，保留显式 confirmation override（AllowRiskyConfirmation，审计留痕）。
+	if desired.Source.Kind == SourceStore || desired.Source.Kind == SourceCatalog {
+		if mr := HasMutableImageRisk(findings); len(mr) > 0 {
+			return Task{}, RiskBlockedErr("商店/catalog 包禁止使用 latest/main 等可变镜像标签", mr)
+		}
+	}
 	if NeedsConfirmation(findings, opts.AllowRiskyConfirmation) {
 		return Task{}, RiskBlockedErr("存在需确认的风险，请显式确认后重试", findings)
 	}
@@ -625,6 +638,11 @@ func (s *service) RestoreRevision(ctx context.Context, id string, rev int64, opt
 	if HasBlocked(findings) {
 		return Task{}, RiskBlockedErr("历史 revision 存在阻断级风险（策略可能已变更），已拒绝", findings)
 	}
+	if r.Source.Kind == SourceStore || r.Source.Kind == SourceCatalog {
+		if mr := HasMutableImageRisk(findings); len(mr) > 0 {
+			return Task{}, RiskBlockedErr("历史 revision 含 latest/main 可变标签（商店/catalog 禁止）", mr)
+		}
+	}
 	if NeedsConfirmation(findings, opts.AllowRiskyConfirmation) {
 		return Task{}, RiskBlockedErr("历史 revision 存在需确认的风险，请显式确认后重试", findings)
 	}
@@ -703,6 +721,99 @@ func (s *service) ListRevisions(ctx context.Context, id string) ([]Revision, err
 		return nil, NotFoundErr(id)
 	}
 	return s.repo.ListRevisions(ctx, id)
+}
+
+// --- 详情：storage / env / remove preview（要求 6/7）---
+//
+// 从事实源（compose.yaml + .env）静态推导，不查 daemon。仅 compose 应用有意义。
+
+// readFactSources 读 compose.yaml + .env（.env 可不存在）。仅 compose 应用。
+func (s *service) readFactSources(ctx context.Context, id string) (compose, envFile string, err error) {
+	meta, ok, err := s.repo.GetAppMeta(ctx, id)
+	if err != nil {
+		return "", "", err
+	}
+	if !ok {
+		return "", "", NotFoundErr(id)
+	}
+	if meta.Runtime != RuntimeCompose {
+		return "", "", ValidationErr("storage/env 详情仅支持 compose 应用")
+	}
+	data, err := os.ReadFile(s.paths.ComposeFile(id))
+	if err != nil {
+		return "", "", fmt.Errorf("read compose: %w", err)
+	}
+	env, _ := os.ReadFile(s.paths.EnvFile(id)) // .env 可能不存在
+	return string(data), string(env), nil
+}
+
+func (s *service) StorageInventory(ctx context.Context, id string) (StorageInventory, error) {
+	compose, envFile, err := s.readFactSources(ctx, id)
+	if err != nil {
+		return StorageInventory{}, err
+	}
+	vols, _, err := analyzeStorage(compose, envFile)
+	if err != nil {
+		return StorageInventory{}, err
+	}
+	return StorageInventory{
+		AppID:          id,
+		Volumes:        vols,
+		ManagedDataDir: s.paths.AppDir(id),
+		Note:           "external 卷永不删除；受管命名卷仅在 purge 时删除；bind 挂载生命周期由宿主管",
+	}, nil
+}
+
+func (s *service) EnvInventory(ctx context.Context, id string) (EnvInventory, error) {
+	compose, envFile, err := s.readFactSources(ctx, id)
+	if err != nil {
+		return EnvInventory{}, err
+	}
+	_, vars, err := analyzeStorage(compose, envFile)
+	if err != nil {
+		return EnvInventory{}, err
+	}
+	return EnvInventory{AppID: id, Vars: vars}, nil
+}
+
+func (s *service) RemovePreview(ctx context.Context, id string, purge bool) (RemovePreview, error) {
+	if _, ok, err := s.repo.GetAppMeta(ctx, id); err != nil {
+		return RemovePreview{}, err
+	} else if !ok {
+		return RemovePreview{}, NotFoundErr(id)
+	}
+	pre := RemovePreview{AppID: id, Purge: purge}
+	if compose, envFile, rerr := s.readFactSources(ctx, id); rerr == nil {
+		if vols, _, aerr := analyzeStorage(compose, envFile); aerr == nil {
+			for _, v := range vols {
+				switch v.Kind {
+				case VolumeExternal:
+					pre.WillKeep = append(pre.WillKeep, "external volume: "+v.Source+"（永不删除）")
+				case VolumeBind:
+					pre.WillKeep = append(pre.WillKeep, "bind mount: "+v.Source+"（宿主管，不删）")
+				case VolumeSocket:
+					pre.WillKeep = append(pre.WillKeep, "socket: "+v.Source+"（不删）")
+				case VolumeManaged:
+					if purge {
+						pre.WillDelete = append(pre.WillDelete, "managed volume: "+v.Source)
+					} else {
+						pre.WillKeep = append(pre.WillKeep, "managed volume: "+v.Source+"（保留数据）")
+					}
+				}
+			}
+		}
+	}
+	dir := s.paths.AppDir(id)
+	if purge {
+		pre.WillDelete = append(pre.WillDelete, "managed data dir: "+dir+"（compose.yaml/.env/revisions）")
+		pre.Note = "purge：删除受管命名卷 + 受管数据目录；external 卷与非受管 bind 永不删除。"
+	} else {
+		pre.WillKeep = append(pre.WillKeep, "managed data dir: "+dir+"（保留）")
+		pre.Note = "默认保留数据：仅移除容器与网络，所有卷与数据目录保留。"
+	}
+	// 容器/网络始终由 compose down 移除。
+	pre.WillDelete = append(pre.WillDelete, "containers & networks（compose down）")
+	return pre, nil
 }
 
 // --- 提交 + 幂等 ---
