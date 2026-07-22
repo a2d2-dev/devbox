@@ -84,12 +84,13 @@ func (k *kubernetesRuntime) Observe(ctx context.Context) (map[string]Application
 }
 
 // Apply K8s 不通过 Controller.Apply 创建（商店流程在阶段4 统一接入）。
-func (k *kubernetesRuntime) Apply(ctx context.Context, app Application, composeFile string) error {
+func (k *kubernetesRuntime) Apply(ctx context.Context, app Application, composeFile string, progress func(TaskPhase, string)) error {
 	return errors.New("kubernetes apply via controller is not supported; use the app store")
 }
 
 // Operate start/stop/restart。
-func (k *kubernetesRuntime) Operate(ctx context.Context, app Application, action Action) error {
+func (k *kubernetesRuntime) Operate(ctx context.Context, app Application, action Action, progress func(TaskPhase, string)) error {
+	progress(PhaseTaskApplying, "更新 Kubernetes 应用")
 	switch action {
 	case ActionStart:
 		return k.scale(ctx, app.ID, 1)

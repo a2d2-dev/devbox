@@ -2,6 +2,7 @@ package apps
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestRepoAppMetaCRUD(t *testing.T) {
 
 	a := AppRecord{
 		ID: "my-app", Name: "My App", Runtime: RuntimeCompose,
-		Source: ApplicationSource{Kind: SourceInline, Version: "1.0"}, Revision: 3,
+		Source: ApplicationSource{Kind: SourceCatalog, StoreID: "package-id", CatalogID: "catalog-id", Version: "1.0"}, Revision: 3,
 		Parameters: map[string]string{"P": "1"}, CreatedAt: now, UpdatedAt: now,
 	}
 	require.NoError(t, repo.UpsertAppMeta(ctx, a))
@@ -40,6 +41,7 @@ func TestRepoAppMetaCRUD(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "My App", got.Name)
 	assert.Equal(t, RuntimeCompose, got.Runtime)
+	assert.Equal(t, a.Source, got.Source)
 	assert.Equal(t, int64(3), got.Revision)
 	assert.Equal(t, "1", got.Parameters["P"])
 
@@ -69,7 +71,8 @@ func TestRepoRevisions(t *testing.T) {
 	n1, err := repo.NextRevisionNumber(ctx, "a")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n1)
-	require.NoError(t, repo.InsertRevision(ctx, Revision{Number: 1, AppID: "a", ComposeHash: "h1", CreatedAt: time.Now()}))
+	source := ApplicationSource{Kind: SourceCatalog, StoreID: "package-id", CatalogID: "catalog-id", Version: "1.2.3"}
+	require.NoError(t, repo.InsertRevision(ctx, Revision{Number: 1, AppID: "a", ComposeHash: "h1", Source: source, CreatedAt: time.Now()}))
 	n2, _ := repo.NextRevisionNumber(ctx, "a")
 	assert.Equal(t, int64(2), n2)
 	require.NoError(t, repo.InsertRevision(ctx, Revision{Number: 2, AppID: "a", ComposeHash: "h2", CreatedAt: time.Now()}))
@@ -83,6 +86,7 @@ func TestRepoRevisions(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, "h1", got.ComposeHash)
+	assert.Equal(t, source, got.Source)
 
 	_, ok, _ = repo.GetRevision(ctx, "a", 99)
 	assert.False(t, ok)
@@ -154,6 +158,54 @@ func TestRepoMigrateIdempotent(t *testing.T) {
 	r2, err := OpenRepository(context.Background(), path)
 	require.NoError(t, err)
 	_ = r2.Close()
+}
+
+func TestRepoMigratePreservesCatalogSourceAcrossReopen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.db")
+	legacy, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`CREATE TABLE apps (
+		id TEXT PRIMARY KEY, name TEXT NOT NULL, runtime TEXT NOT NULL,
+		source_kind TEXT NOT NULL DEFAULT 'inline', source_store_id TEXT NOT NULL DEFAULT '',
+		source_version TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0,
+		observed_revision INTEGER NOT NULL DEFAULT 0, parameters TEXT NOT NULL DEFAULT '{}',
+		created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+	); CREATE TABLE revisions (
+		app_id TEXT NOT NULL, number INTEGER NOT NULL, compose_hash TEXT NOT NULL,
+		source_kind TEXT NOT NULL DEFAULT 'inline', source_version TEXT NOT NULL DEFAULT '',
+		parameters TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL,
+		created_by TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (app_id, number)
+	)`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	ctx := context.Background()
+	repo, err := OpenRepository(ctx, path)
+	require.NoError(t, err)
+	now := time.Now()
+	source := ApplicationSource{Kind: SourceCatalog, StoreID: "package-id", CatalogID: "catalog-id", Version: "2.0.0"}
+	require.NoError(t, repo.UpsertAppMeta(ctx, AppRecord{
+		ID: "catalog-app", Name: "Catalog App", Runtime: RuntimeCompose, Source: source,
+		Revision: 1, CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, repo.InsertRevision(ctx, Revision{
+		AppID: "catalog-app", Number: 1, ComposeHash: "hash", Source: source, CreatedAt: now,
+	}))
+	require.NoError(t, repo.Close())
+
+	reopened, err := OpenRepository(ctx, path)
+	require.NoError(t, err)
+	defer reopened.Close()
+	meta, ok, err := reopened.GetAppMeta(ctx, "catalog-app")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, source, meta.Source)
+	revision, ok, err := reopened.GetRevision(ctx, "catalog-app", 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, source, revision.Source)
 }
 
 // MED#5：CommitApply 任一步失败必须整体回滚，不留半状态。

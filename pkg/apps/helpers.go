@@ -49,6 +49,19 @@ func mergeEnvFile(existing string, secrets, params map[string]string) string {
 	return renderEnvFile(merged, nil)
 }
 
+// restoreEnvParameters 恢复 revision 的非敏感参数，同时保留当前 secret/未归档键。
+// currentParams 给出哪些现有键属于可回滚参数；其余键视为 secret 或外部配置。
+func restoreEnvParameters(existing string, currentParams, restoredParams map[string]string) string {
+	merged := parseEnvFile(existing)
+	for key := range currentParams {
+		delete(merged, key)
+	}
+	for key, value := range restoredParams {
+		merged[key] = value
+	}
+	return renderEnvFile(merged, nil)
+}
+
 func parseEnvFile(raw string) map[string]string {
 	out := map[string]string{}
 	for _, line := range strings.Split(raw, "\n") {
@@ -125,17 +138,23 @@ func detectDuplicateHostPorts(previews []ServicePreview) []string {
 
 func extractHostPort(spec string) string {
 	spec = strings.TrimSpace(spec)
-	// 短语法 [host:]container[/proto] 或长语法被 nodeString 转成 target。
-	if i := strings.IndexByte(spec, ':'); i >= 0 {
-		host := strings.TrimSpace(spec[:i])
-		// host 可能是 ip:port（两个冒号）。
-		if j := strings.LastIndex(host, ":"); j >= 0 {
-			host = host[j+1:]
+	// 短语法 [host_ip:]host:container[/proto]。从右向左取倒数第二段，
+	// 同时覆盖 127.0.0.1:8080:80 与 [::1]:8080:80。
+	if slash := strings.LastIndexByte(spec, '/'); slash >= 0 {
+		spec = spec[:slash]
+	}
+	last := strings.LastIndexByte(spec, ':')
+	if last >= 0 {
+		prefix := spec[:last]
+		previous := strings.LastIndexByte(prefix, ':')
+		host := prefix
+		if previous >= 0 {
+			host = prefix[previous+1:]
 		}
+		host = strings.TrimSpace(host)
 		if _, err := strconv.Atoi(host); err == nil {
 			return host
 		}
-		return ""
 	}
 	// 无冒号：单端口（仅容器端口，无宿主绑定）→ 不算冲突。
 	return ""

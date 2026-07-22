@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestComposeLogsSelectsService(t *testing.T) {
@@ -48,6 +49,7 @@ func TestAggregatePhase(t *testing.T) {
 	}{
 		{"all running healthy", []ServiceStatus{{State: "running", Health: "healthy"}, {State: "running", Health: "healthy"}}, PhaseRunning},
 		{"one unhealthy", []ServiceStatus{{State: "running", Health: "healthy"}, {State: "running", Health: "unhealthy"}}, PhaseDegraded},
+		{"health starting", []ServiceStatus{{State: "running", Health: "starting"}}, PhaseDeploying},
 		{"all exited", []ServiceStatus{{State: "exited"}, {State: "exited"}}, PhaseStopped},
 		{"all dead failed", []ServiceStatus{{State: "dead"}, {State: "dead"}}, PhaseFailed},
 		{"exited and dead failed", []ServiceStatus{{State: "exited"}, {State: "dead"}}, PhaseFailed},
@@ -87,4 +89,21 @@ func TestServiceFromContainer(t *testing.T) {
 	assert.Equal(t, int32(8080), svc.Ports[0].HostPort)
 	assert.Equal(t, int32(80), svc.Ports[0].ContainerPort)
 	assert.Equal(t, int32(0), svc.Ports[1].HostPort) // 仅容器端口
+}
+
+func TestAggregateServicesGroupsReplicas(t *testing.T) {
+	containers := []engineContainer{
+		{ID: "web-1", Image: "nginx:1.27", State: "running", Status: "Up (healthy)", Labels: map[string]string{"com.docker.compose.service": "web"}, Ports: []enginePort{{PrivatePort: 80, PublicPort: 8080, Type: "tcp"}}},
+		{ID: "web-2", Image: "nginx:1.27", State: "running", Status: "Up 2 seconds (health: starting)", Labels: map[string]string{"com.docker.compose.service": "web"}, Ports: []enginePort{{PrivatePort: 80, PublicPort: 8080, Type: "tcp"}}},
+		{ID: "db-1", Image: "postgres:16", State: "running", Status: "Up (healthy)", Labels: map[string]string{"com.docker.compose.service": "db"}},
+	}
+	services := aggregateServices(containers)
+	require.Len(t, services, 2)
+	assert.Equal(t, "db", services[0].Name)
+	web := services[1]
+	assert.Equal(t, "web", web.Name)
+	assert.Equal(t, int32(2), web.Replicas)
+	assert.Equal(t, int32(1), web.Ready)
+	assert.Equal(t, "starting", web.Health)
+	assert.Len(t, web.Ports, 1, "replica 端口必须去重")
 }

@@ -100,10 +100,13 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 // 已从可信 source 取到版本 → 校验+安全渲染 → 复用同源已装 ID → Controller.Apply。
 //   - compose 原文一律后端持有（ver），不来自前端。
 //   - 可安装性 / 风险（含 store/catalog 可变标签阻断）/ secret 仅 .env / atomic 均由 Controller 保证。
-//   - 幂等键：前端可传；为空则按 source+app+version+params+secrets 指纹生成稳定键
-//     （指纹纳入 secrets：换密码不被旧 task 短路，改 params 不被 idempotency_conflict 阻断）。
+//   - 幂等键：只使用调用方显式提供的 key。不能生成跨请求永久稳定 key，否则应用
+//     卸载后重装同版本会命中卸载前的旧成功 Task，而不会重新创建应用。
 func (s *Server) installResolvedVersion(w http.ResponseWriter, r *http.Request, appID string,
 	ver apps.StoreAppVersion, values map[string]any, idemKey string, confirmRisky bool, source apps.ApplicationSource) {
+	if idemKey == "" {
+		idemKey = idempotencyKey(r)
+	}
 	if !ver.Installable || ver.Runtime != apps.RuntimeCompose {
 		writeJSONErrStatus(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":  "该应用不可在本机安装",
@@ -133,9 +136,6 @@ func (s *Server) installResolvedVersion(w http.ResponseWriter, r *http.Request, 
 		desired.ID = appID
 	}
 
-	if idemKey == "" {
-		idemKey = string(source.Kind) + ":" + appID + ":" + ver.Version + ":" + apps.StoreInstallFingerprint(params, secrets)
-	}
 	task, err := s.controller.Apply(r.Context(), desired, apps.ApplyOptions{
 		IdempotencyKey: idemKey, Actor: defaultActor, AllowRiskyConfirmation: confirmRisky,
 	})

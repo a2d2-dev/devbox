@@ -3,8 +3,8 @@ package apps
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,7 +28,7 @@ type composeRuntime struct {
 func NewComposeRuntime(sockPath string, paths *Paths, logger *zap.Logger) *composeRuntime {
 	return &composeRuntime{
 		engine: newDockerEngine(sockPath),
-		cli:    newComposeCLI(),
+		cli:    newComposeCLI(sockPath),
 		paths:  paths,
 		logger: logger,
 	}
@@ -47,12 +47,13 @@ func (c *composeRuntime) Capability(ctx context.Context) RuntimeCapability {
 		return RuntimeCapability{Available: false, Reason: err.Error()}
 	}
 	ver, _ := c.engine.version(ctx)
-	if _, err := exec.CommandContext(ctx, "docker", "compose", "version").Output(); err != nil {
+	composeVersion, err := c.cli.command(ctx, "compose", "version", "--short").Output()
+	if err != nil {
 		return RuntimeCapability{Available: false, Reason: "docker compose 插件不可用: " + err.Error()}
 	}
 	return RuntimeCapability{
 		Available: true,
-		Version:   "docker " + ver,
+		Version:   "docker " + ver + " · compose " + strings.TrimSpace(string(composeVersion)),
 		Features:  []string{"discover", "apply", "start", "stop", "restart", "redeploy", "remove", "logs"},
 	}
 }
@@ -91,11 +92,9 @@ func (c *composeRuntime) aggregateApp(appID string, cts []engineContainer) Appli
 		Runtime:   RuntimeCompose,
 		Namespace: ProjectName(appID),
 	}
-	var services []ServiceStatus
+	services := aggregateServices(cts)
 	var endpoints []Endpoint
-	for _, ct := range cts {
-		svc := serviceFromContainer(ct)
-		services = append(services, svc)
+	for _, svc := range services {
 		if app.Image == "" {
 			app.Image = svc.Image
 		}
@@ -114,6 +113,79 @@ func (c *composeRuntime) aggregateApp(appID string, cts []engineContainer) Appli
 	return app
 }
 
+// aggregateServices 把同一 Compose service 的多个 replica 聚合成一条状态。
+// ContainerID 保留一个诊断样本，Replicas/Ready 表示容器总数与运行数。
+func aggregateServices(containers []engineContainer) []ServiceStatus {
+	byName := map[string][]engineContainer{}
+	for _, container := range containers {
+		name := container.Labels["com.docker.compose.service"]
+		byName[name] = append(byName[name], container)
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]ServiceStatus, 0, len(names))
+	for _, name := range names {
+		group := byName[name]
+		service := serviceFromContainer(group[0])
+		service.Replicas = int32(len(group))
+		service.Ready = 0
+		seenPorts := map[PortMapping]bool{}
+		service.Ports = nil
+		for _, container := range group {
+			status := serviceFromContainer(container)
+			if status.State == "running" && status.Health != "unhealthy" && status.Health != "starting" {
+				service.Ready++
+			}
+			service.State = worseContainerState(service.State, status.State)
+			service.Health = worseHealth(service.Health, status.Health)
+			for _, port := range status.Ports {
+				if !seenPorts[port] {
+					seenPorts[port] = true
+					service.Ports = append(service.Ports, port)
+				}
+			}
+		}
+		out = append(out, service)
+	}
+	return out
+}
+
+func worseContainerState(a, b string) string {
+	rank := func(state string) int {
+		switch state {
+		case "running":
+			return 0
+		case "created":
+			return 1
+		case "restarting":
+			return 2
+		case "paused":
+			return 3
+		case "exited":
+			return 4
+		case "dead":
+			return 5
+		default:
+			return 1
+		}
+	}
+	if rank(b) > rank(a) {
+		return b
+	}
+	return a
+}
+
+func worseHealth(a, b string) string {
+	rank := map[string]int{"none": 0, "healthy": 1, "starting": 2, "unhealthy": 3}
+	if rank[b] > rank[a] {
+		return b
+	}
+	return a
+}
+
 func serviceFromContainer(ct engineContainer) ServiceStatus {
 	svc := ServiceStatus{
 		Name:        ct.Labels["com.docker.compose.service"],
@@ -121,6 +193,10 @@ func serviceFromContainer(ct engineContainer) ServiceStatus {
 		State:       ct.State,
 		Health:      parseHealth(ct.Status),
 		ContainerID: shortID(ct.ID),
+		Replicas:    1,
+	}
+	if ct.State == "running" && svc.Health != "unhealthy" && svc.Health != "starting" {
+		svc.Ready = 1
 	}
 	for _, p := range ct.Ports {
 		if p.PublicPort > 0 {
@@ -158,13 +234,15 @@ func aggregatePhase(services []ServiceStatus) Phase {
 	if len(services) == 0 {
 		return PhaseUnknown
 	}
-	var running, unhealthy, exited, dead, created int
+	var running, unhealthy, starting, exited, dead, created int
 	for _, s := range services {
 		switch s.State {
 		case "running":
 			running++
 			if s.Health == "unhealthy" {
 				unhealthy++
+			} else if s.Health == "starting" {
+				starting++
 			}
 		case "exited":
 			exited++
@@ -179,6 +257,8 @@ func aggregatePhase(services []ServiceStatus) Phase {
 	switch {
 	case unhealthy > 0:
 		return PhaseDegraded
+	case starting > 0:
+		return PhaseDeploying
 	case running == len(services):
 		return PhaseRunning
 	case exited+dead == len(services) && dead > 0:
@@ -196,42 +276,48 @@ func aggregatePhase(services []ServiceStatus) Phase {
 
 // Apply 部署：compose config 预检 → pull（best-effort，失败记录）→ up -d。
 // 超时 15 分钟（拉大镜像）。
-func (c *composeRuntime) Apply(ctx context.Context, app Application, composeFile string) error {
+func (c *composeRuntime) Apply(ctx context.Context, app Application, composeFile string, progress func(TaskPhase, string)) error {
 	dir := filepath.Dir(composeFile)
 	project := ProjectName(app.ID)
+	progress(PhaseTaskResolving, "解析 Compose 配置")
 	if err := c.cli.config(ctx, dir, project); err != nil {
 		return err
 	}
 	runCtx, cancel := withTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	return c.pullUp(runCtx, dir, project, app.ID)
+	return c.pullUp(runCtx, dir, project, app.ID, progress)
 }
 
 // pullUp 执行 pull（best-effort，失败仅记录）+ up -d。pull 失败不中断：私有镜像
 // 可能已存在，由 up 自拉取并在真正缺失时报错。
-func (c *composeRuntime) pullUp(ctx context.Context, dir, project, appID string) error {
+func (c *composeRuntime) pullUp(ctx context.Context, dir, project, appID string, progress func(TaskPhase, string)) error {
+	progress(PhaseTaskPulling, "拉取镜像")
 	if _, perr := c.cli.pull(ctx, dir, project); perr != nil {
 		c.logger.Warn("compose pull failed; continuing to up",
 			zap.String("app", appID), zap.String("error", sanitizeWithEnvValues(perr.Error(), c.envFile(appID))))
 	}
+	progress(PhaseTaskApplying, "应用 Compose 项目")
 	return c.cli.up(ctx, dir, project)
 }
 
 // Operate start/stop/restart/redeploy。
-func (c *composeRuntime) Operate(ctx context.Context, app Application, action Action) error {
+func (c *composeRuntime) Operate(ctx context.Context, app Application, action Action, progress func(TaskPhase, string)) error {
 	dir, project := c.dirProject(app.ID)
 	runCtx, cancel := withTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	switch action {
 	case ActionStart:
+		progress(PhaseTaskApplying, "启动应用")
 		return c.cli.start(runCtx, dir, project)
 	case ActionStop:
+		progress(PhaseTaskApplying, "停止应用")
 		return c.cli.stop(runCtx, dir, project)
 	case ActionRestart:
+		progress(PhaseTaskApplying, "重启应用")
 		return c.cli.restart(runCtx, dir, project)
 	case ActionRedeploy:
 		// redeploy = 重新 up（应用最新 compose，并尝试拉取新镜像）。
-		return c.pullUp(runCtx, dir, project, app.ID)
+		return c.pullUp(runCtx, dir, project, app.ID, progress)
 	default:
 		return ValidationErr("unknown action: " + string(action))
 	}

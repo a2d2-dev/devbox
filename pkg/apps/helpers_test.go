@@ -53,6 +53,13 @@ func TestDetectDuplicateHostPortsNone(t *testing.T) {
 	assert.Empty(t, detectDuplicateHostPorts(previews))
 }
 
+func TestExtractHostPortWithBoundIP(t *testing.T) {
+	assert.Equal(t, "8080", extractHostPort("127.0.0.1:8080:80/tcp"))
+	assert.Equal(t, "8081", extractHostPort("[::1]:8081:80"))
+	assert.Equal(t, "8082", extractHostPort("8082:80"))
+	assert.Empty(t, extractHostPort("80"))
+}
+
 func TestRenderEnvFile(t *testing.T) {
 	out := renderEnvFile(
 		map[string]string{"DB_PASSWORD": "s3cr et", "TOKEN": "xyz"},
@@ -67,6 +74,16 @@ func TestRenderEnvFile(t *testing.T) {
 
 func TestRenderEnvFileEmpty(t *testing.T) {
 	assert.Empty(t, renderEnvFile(nil, nil))
+}
+
+func TestRestoreEnvParametersKeepsSecretsAndReplacesParameterSet(t *testing.T) {
+	got := restoreEnvParameters("PORT=9090\nOLD_FLAG=on\nDB_PASSWORD=secret\n",
+		map[string]string{"PORT": "9090", "OLD_FLAG": "on"},
+		map[string]string{"PORT": "8080", "NEW_FLAG": "off"})
+	assert.Contains(t, got, "PORT=8080")
+	assert.Contains(t, got, "NEW_FLAG=off")
+	assert.Contains(t, got, "DB_PASSWORD=secret")
+	assert.NotContains(t, got, "OLD_FLAG")
 }
 
 func TestComposeHashStable(t *testing.T) {

@@ -2,6 +2,7 @@ package apps
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -10,6 +11,32 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestComposeCLICommandPinsDockerEndpointAndIsolatesControlEnvironment(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://attacker:2375")
+	t.Setenv("DOCKER_CONTEXT", "remote-context")
+	t.Setenv("DOCKER_TLS_VERIFY", "1")
+	t.Setenv("DOCKER_CERT_PATH", "/tmp/attacker-certs")
+	t.Setenv("COMPOSE_FILE", "/tmp/attacker-compose.yaml")
+	t.Setenv("COMPOSE_PROJECT_NAME", "attacker-project")
+	t.Setenv("DEVBOX_KEEP_ME", "yes")
+
+	cli := newComposeCLI("/run/devbox/docker.sock")
+	cmd := cli.command(context.Background(), "compose", "version")
+	env := map[string]string{}
+	for _, item := range cmd.Env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			env[key] = value
+		}
+	}
+	assert.Equal(t, "unix:///run/devbox/docker.sock", env["DOCKER_HOST"])
+	assert.Equal(t, "yes", env["DEVBOX_KEEP_ME"])
+	for _, key := range []string{"DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "COMPOSE_FILE", "COMPOSE_PROJECT_NAME"} {
+		assert.NotContains(t, env, key)
+	}
+	assert.NotEmpty(t, os.Getenv("PATH"))
+}
 
 // 这些用例调用真实 `docker compose config`（纯客户端、无需 daemon）。二进制缺失则跳过。
 

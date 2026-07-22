@@ -59,9 +59,20 @@ services:
 - 设备直通、敏感 capability、关闭 seccomp/apparmor、IPC host 和普通绝对 bind 属于 confirmation 风险；首次安装返回风险清单，用户显式确认后才可再次提交。external volume、bind 和 socket 的生命周期始终不归应用所有。
 - Compose 中疑似 password/token/secret 的环境变量不得写明文，也不得使用带明文默认值的 `${PASSWORD:-literal}`；应使用 `${PASSWORD}` 或 `${PASSWORD:?required}`，并由 password 类型参数写入受管 `.env`。
 - Secret 只写入应用 `.env`（0600），不进入 revision、Task、audit、日志或读取响应。
-- 预检会提示同一 Compose 内的重复宿主端口以及与已登记应用的端口冲突；后者是部署前警告，实际占用仍由 Compose/Docker 在任务中最终校验。
+- 预检会展示 service、镜像、端口、卷、网络和 Secret key；Secret 只展示 key，不返回值。
+- 预检会提示同一 Compose 内的重复宿主端口、与已登记应用的端口冲突，以及绝对 bind source 与其他受管应用的路径冲突；这些是部署前警告，实际占用仍由 Compose/Docker 在任务中最终校验。
 - catalog 暂时不可用时继续展示上次可信缓存；已安装应用的生命周期不依赖 catalog 在线。
 - Git refresh 只更新 catalog 缓存，不会自动升级已安装应用；本功能不是 GitOps reconcile。
+- 生产装配只允许本机绝对 Unix socket；`DOCKER_HOST`、`DOCKER_CONTEXT` 与 `COMPOSE_*` 不会覆盖 devbox 选择的 daemon/project/file。
+
+## 应用数据与任务语义
+
+- 所有 Apply、start、stop、restart、redeploy、remove 和 definition restore 都返回 `202 + Task`；同一应用的提交与执行串行，不同应用有限并发。
+- 相同且已经成功 observed 的 definition 重复 Apply 返回原成功 Task，不制造新 revision；secret 轮换和失败重试不会被 no-op 吞掉。
+- 默认卸载只执行 `compose down` 并删除控制面登记，保留 managed volume 和应用目录中的 `compose.yaml`、`.env`、`app.json`、revision 快照；purge 才删除 managed volume 与应用目录。external volume、bind 和 socket 永远不自动删除。
+- 应用卸载后可以用同一 ID 重新安装；旧 revision 文件不会被覆盖，未明确保留的旧 `.env`/secret 不会被新安装继承。
+- definition restore 恢复旧 Compose 与非敏感参数、保留当前 secret，然后重新部署；它不恢复数据库或应用数据。
+- worker 在进程重启时扫描 queued/running Task，并从 task 对应的不可变 revision 快照恢复期望 Compose/.env 后继续，避免在 SQLite 已提交但事实源尚未提升时执行旧定义。
 
 ## API
 

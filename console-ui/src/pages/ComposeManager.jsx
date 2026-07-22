@@ -358,12 +358,20 @@ function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
   const [validating, setValidating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [secrets, setSecrets] = useState(''); // KEY=VALUE 每行（仅写，不回传）
+  const [parameters, setParameters] = useState(''); // 非敏感 KEY=VALUE（进 revision）
+  const [dataPath, setDataPath] = useState('');
+  const [dataTarget, setDataTarget] = useState('/data');
+  const [cpuLimit, setCpuLimit] = useState('');
+  const [memoryLimit, setMemoryLimit] = useState('');
+  const [autoStart, setAutoStart] = useState(true);
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
   const toast = useToast();
 
   const composeAvailable = !composeCap || composeCap.available !== false;
+  const invalidate = () => { setResult(null); setConfirmed(false); };
+  const settings = { dataPath, dataTarget, cpuLimit, memoryLimit, autoStart };
 
   // 上传：用 File API 真实读文本（不是 mock 文件名）。
   async function onFile(e) {
@@ -393,7 +401,7 @@ function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
     setResult(null); setConfirmed(false); setError(null);
     setValidating(true);
     try {
-      const r = await validateCompose({ compose, name, secrets: parseEnv(secrets) });
+      const r = await validateCompose({ compose, name, parameters: parseEnv(parameters), secrets: parseEnv(secrets), settings });
       setResult(r);
       if (r.ok) toast.ok('预检通过');
       else toast.warn('预检发现阻断 / 错误');
@@ -422,8 +430,10 @@ function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
         name: name.trim(),
         source: { kind: 'inline' },
         compose,
+        parameters: parseEnv(parameters),
         secrets: secretMap,
         confirmRisky: confirmed,
+        settings,
       };
       const t = await applyComposeApp(desired);
       toast.ok('已提交部署任务');
@@ -459,7 +469,7 @@ function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
         </div>
 
         <label style={fieldLabel}>应用名称（生成 ID：小写 / 数字 / 连字符）</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-app"
+        <input value={name} onChange={(e) => { setName(e.target.value); invalidate(); }} placeholder="my-app"
                aria-label="应用名称" style={input} />
         <div style={{ fontSize: 11, color: T.ink4, marginTop: 3 }}>
           {name ? `ID: ${slugify(name) || '（需含字母或数字）'}` : '应用名称为必填项，用于生成稳定的应用 ID'}
@@ -470,8 +480,24 @@ function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
                   aria-label="Compose YAML" spellCheck={false} style={textarea} rows={9}/>
 
         <label style={fieldLabel}>Secret（KEY=VALUE 每行；Compose 中请用 ${'{'}KEY{'}'} 引用；仅写入 .env，不回传 / 不入 revision）</label>
-        <textarea value={secrets} onChange={(e) => setSecrets(e.target.value)} spellCheck={false}
+        <textarea value={secrets} onChange={(e) => { setSecrets(e.target.value); invalidate(); }} spellCheck={false}
                   style={textarea} rows={3} placeholder="DB_PASSWORD=change-me"/>
+
+        <div style={fieldLabel}>配置（应用到第一个 service；复杂多服务配置请直接编辑 YAML）</div>
+        <label style={{ ...fieldLabel, marginTop: 6 }}>非敏感环境变量（KEY=VALUE，每行；写入 .env 并记录到 revision）</label>
+        <textarea value={parameters} onChange={(e) => { setParameters(e.target.value); invalidate(); }} spellCheck={false}
+                  style={textarea} rows={2} placeholder="HTTP_PORT=8080"/>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div><label style={fieldLabel}>宿主数据路径</label><input value={dataPath} onChange={(e) => { setDataPath(e.target.value); invalidate(); }} placeholder="/srv/my-app" style={input}/></div>
+          <div><label style={fieldLabel}>容器挂载点</label><input value={dataTarget} onChange={(e) => { setDataTarget(e.target.value); invalidate(); }} placeholder="/data" style={input}/></div>
+          <div><label style={fieldLabel}>CPU 限制</label><input value={cpuLimit} onChange={(e) => { setCpuLimit(e.target.value); invalidate(); }} placeholder="1.5" style={input}/></div>
+          <div><label style={fieldLabel}>内存限制</label><input value={memoryLimit} onChange={(e) => { setMemoryLimit(e.target.value); invalidate(); }} placeholder="512M" style={input}/></div>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12, color: T.ink2, cursor: 'pointer' }}>
+          <input type="checkbox" checked={autoStart} onChange={(e) => { setAutoStart(e.target.checked); invalidate(); }}/>
+          <span>Docker 启动后自动恢复应用（restart: unless-stopped）</span>
+        </label>
+        {dataPath && <div style={{ fontSize: 11, color: T.ink4, marginTop: 4 }}>绝对宿主路径会在预检中标为 confirmation，需明确确认数据与权限边界。</div>}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button onClick={onValidate} disabled={validating || !composeAvailable || !compose.trim()}
@@ -516,7 +542,8 @@ function ValidateResultView({ result, grouped, needConfirm, confirmed, setConfir
         <SummaryPill icon="download" label="镜像" value={(result.services || []).length} tone="gray"/>
         <SummaryPill icon="port" label="端口" value={allPorts.length} tone="blue"/>
         <SummaryPill icon="database" label="卷" value={allVolumes.length} tone="gray"/>
-        <SummaryPill icon="network" label="网络" value={result.ok ? '默认' : '—'} tone="gray"/>
+        <SummaryPill icon="network" label="网络" value={(result.networks || []).length} tone="gray"/>
+        <SummaryPill icon="lock" label="Secret" value={(result.secrets || []).length} tone="gray"/>
       </div>
 
       {/* 服务明细 */}
@@ -535,6 +562,12 @@ function ValidateResultView({ result, grouped, needConfirm, confirmed, setConfir
               )}
             </div>
           ))}
+        </div>
+      )}
+      {(result.networks?.length > 0 || result.secrets?.length > 0) && (
+        <div style={{ ...pane, marginBottom: 8, fontSize: 11.5, color: T.ink3 }}>
+          {result.networks?.length > 0 && <div>网络：<span className="mono">{result.networks.join(", ")}</span></div>}
+          {result.secrets?.length > 0 && <div style={{ marginTop: 3 }}>Secret keys：<span className="mono">{result.secrets.join(", ")}</span>（值不回显）</div>}
         </div>
       )}
 

@@ -98,7 +98,12 @@ function DeployDialog({ app, onClose, onSuccess }) {
     return () => { cancelled = true; };
   }, [app.id, app.ver, app.sourceId, isCatalog]);
 
-  const setField = (key, val) => setValues((prev) => ({ ...prev, [key]: val }));
+  const setField = (key, val) => {
+    setValues((prev) => ({ ...prev, [key]: val }));
+    setRiskFindings([]);
+    setConfirmRisky(false);
+    setError(null);
+  };
 
   async function handleSubmit() {
     const fields = schema?.fields || [];

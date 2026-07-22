@@ -1,6 +1,7 @@
 package apps
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -134,4 +135,23 @@ func TestAnalyzeStorage_ManagedOnlyDeletable(t *testing.T) {
 			assert.False(t, v.Deletable)
 		}
 	}
+}
+
+func TestComposeNetworkInventory(t *testing.T) {
+	defaultNetworks, err := composeNetworkInventory("services:\n  web:\n    image: nginx:1.27\n")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"default"}, defaultNetworks)
+
+	raw := "services:\n  web:\n    image: nginx:1.27\n    networks: [front]\n  db:\n    image: postgres:16\n    networks:\n      back: {}\nnetworks:\n  front: {}\n  back: {}\n"
+	networks, err := composeNetworkInventory(raw)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"back", "front"}, networks)
+}
+
+func TestPreflightSecretKeysNeverReturnsValues(t *testing.T) {
+	compose := "services:\n  web:\n    image: nginx:1.27\n    environment:\n      DB_PASSWORD: ${DB_PASSWORD:?required}\n    secrets:\n      - api_config\n      - source: tls_cert\n        target: cert.pem\nsecrets:\n  api_config:\n    external: true\n  unused_secret:\n    external: true\n"
+	keys := preflightSecretKeys(compose, "DB_PASSWORD=top-secret\n", map[string]string{"API_TOKEN": "token-value"})
+	assert.Equal(t, []string{"API_TOKEN", "DB_PASSWORD", "api_config", "tls_cert", "unused_secret"}, keys)
+	assert.NotContains(t, strings.Join(keys, " "), "top-secret")
+	assert.NotContains(t, strings.Join(keys, " "), "token-value")
 }

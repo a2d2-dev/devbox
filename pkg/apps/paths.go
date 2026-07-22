@@ -75,6 +75,12 @@ func (p *Paths) RevisionFile(appID string, rev int64) string {
 	return filepath.Join(p.RevisionsDir(appID), fmt.Sprintf("%d.yaml", rev))
 }
 
+// PendingEnvFile 是 Apply revision 对应的临时期望环境。它位于 revision 目录外、
+// 权限 0600，worker 提升为 .env 后删除；revision/audit 中永不保存 secret。
+func (p *Paths) PendingEnvFile(appID string, rev int64) string {
+	return filepath.Join(p.AppDir(appID), fmt.Sprintf(".env.pending-%d", rev))
+}
+
 // ProjectName Compose project 名（固定 devbox-<app-id>）。
 func ProjectName(appID string) string { return ProjectPrefix + appID }
 
@@ -171,4 +177,41 @@ func (p *Paths) SafeWriteFile(appID, rel string, data []byte, mode os.FileMode) 
 		return err
 	}
 	return os.WriteFile(clean, data, mode)
+}
+
+// AtomicWriteFile 在受管 app 目录内以同目录 rename 原子替换文件。
+func (p *Paths) AtomicWriteFile(appID, rel string, data []byte, mode os.FileMode) error {
+	if err := ValidateAppID(appID); err != nil {
+		return err
+	}
+	final := filepath.Join(p.AppDir(appID), rel)
+	clean, err := filepath.Abs(filepath.Clean(final))
+	escaped := !strings.HasPrefix(clean, p.AppDir(appID)+string(filepath.Separator)) && clean != p.AppDir(appID)
+	if err != nil || escaped {
+		return ValidationErr("path escapes app directory")
+	}
+	if err := os.MkdirAll(filepath.Dir(clean), 0o755); err != nil {
+		return err
+	}
+	stage, err := os.CreateTemp(filepath.Dir(clean), "."+filepath.Base(clean)+".stage-*")
+	if err != nil {
+		return err
+	}
+	stageName := stage.Name()
+	defer os.Remove(stageName)
+	if err := stage.Chmod(mode); err != nil {
+		stage.Close()
+		return err
+	}
+	if _, err := stage.Write(data); err != nil {
+		stage.Close()
+		return err
+	}
+	if err := stage.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(stageName, clean); err != nil {
+		return err
+	}
+	return nil
 }

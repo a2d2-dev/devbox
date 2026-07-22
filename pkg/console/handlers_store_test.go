@@ -1,6 +1,7 @@
 package console
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -99,11 +100,45 @@ func TestHandleStoreInstall_Success(t *testing.T) {
 	// secret 分离：进 Secrets，不进 Parameters。
 	assert.Equal(t, "secret", d.Secrets["pw"])
 	assert.NotContains(t, d.Parameters, "pw")
+	assert.Empty(t, ctrl.lastApplyOpts.IdempotencyKey, "未显式提供 key 时不得生成永久 key，以免卸载后无法重装")
 
 	var res apps.StoreInstallResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
 	assert.Equal(t, "task-1", res.TaskID)
 	assert.Equal(t, int64(7), res.Revision)
+}
+
+func TestHandleStoreInstall_PreservesExplicitIdempotencyKey(t *testing.T) {
+	ctrl := &stubController{applyTask: apps.Task{ID: "task-idem"}}
+	s := newStoreTestServer(t, ctrl, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, composeCatalogJSON)
+	})
+	w := do(s, http.MethodPost, "/api/v1/store/install", map[string]any{
+		"appId": "ghost", "version": "1.0.0", "idempotencyKey": "request-123",
+		"values": map[string]any{"tag": "1.25", "pw": "secret"},
+	})
+	require.Equal(t, http.StatusAccepted, w.Code)
+	assert.Equal(t, "request-123", ctrl.lastApplyOpts.IdempotencyKey)
+}
+
+func TestHandleStoreInstall_AcceptsIdempotencyHeader(t *testing.T) {
+	ctrl := &stubController{applyTask: apps.Task{ID: "task-idem-header"}}
+	s := newStoreTestServer(t, ctrl, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, composeCatalogJSON)
+	})
+	body := map[string]any{
+		"appId": "ghost", "version": "1.0.0",
+		"values": map[string]any{"tag": "1.25", "pw": "secret"},
+	}
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/store/install", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "header-request-123")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(t, http.StatusAccepted, w.Code)
+	assert.Equal(t, "header-request-123", ctrl.lastApplyOpts.IdempotencyKey)
 }
 
 func TestHandleStoreInstall_PassesRiskConfirmation(t *testing.T) {

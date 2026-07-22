@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +21,7 @@ import (
 // 且更易测试。
 //
 // 端点解析（与 docker CLI 的 DOCKER_HOST 一致）：
-//   - ""         → 读 DOCKER_HOST 环境变量；仍为空则默认 unix:///var/run/docker.sock
+//   - ""         → 默认 unix:///var/run/docker.sock（生产装配不继承 DOCKER_HOST）
 //   - "unix:///path" 或裸 socket 路径 → unix socket
 //   - "tcp://host:port" / "http://..." → 普通 HTTP（生产 socket、远程 daemon 均覆盖）
 //   - "https://..." 或 DOCKER_TLS_VERIFY=1 → TLS（MVP 用系统/默认证书池）
@@ -61,9 +60,6 @@ func newDockerEngine(endpoint string) *dockerEngine {
 
 // resolveDockerEndpoint 把 endpoint 解析为 (dialAddr, useUnix, baseURL)。
 func resolveDockerEndpoint(endpoint string) (dialAddr string, useUnix bool, baseURL string) {
-	if endpoint == "" {
-		endpoint = os.Getenv("DOCKER_HOST")
-	}
 	if endpoint == "" {
 		return defaultDockerSocket, true, "http://docker"
 	}

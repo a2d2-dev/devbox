@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,8 +56,8 @@ type runtimeAdapter interface {
 	// Observe 全量观测运行态。Docker/K8s 不可用时返回空 map + nil（不报错刷屏）。
 	Observe(ctx context.Context) (map[string]Application, error)
 	// Apply 部署期望：compose 为 `compose up`，k8s 为商店部署（阶段4）。
-	Apply(ctx context.Context, app Application, composeFile string) error
-	Operate(ctx context.Context, app Application, action Action) error
+	Apply(ctx context.Context, app Application, composeFile string, progress func(TaskPhase, string)) error
+	Operate(ctx context.Context, app Application, action Action, progress func(TaskPhase, string)) error
 	Remove(ctx context.Context, app Application, purge bool) error
 	Logs(ctx context.Context, app Application, opts LogOptions) (LogPage, error)
 }
@@ -81,6 +83,8 @@ type service struct {
 	prechecker composePrechecker
 	logger     *zap.Logger
 	now        func() time.Time
+	mutationMu sync.Mutex
+	mutations  map[string]*sync.Mutex
 }
 
 // ServiceOption 构造选项。
@@ -99,17 +103,30 @@ func WithPrechecker(p composePrechecker) ServiceOption {
 // NewController 构造 Controller。adapters 至少含一个运行时；runner 由 worker 提供。
 func NewController(repo Repository, paths *Paths, adapters map[RuntimeKind]runtimeAdapter, runner taskRunner, logger *zap.Logger, opts ...ServiceOption) Controller {
 	s := &service{
-		repo:     repo,
-		paths:    paths,
-		adapters: adapters,
-		runner:   runner,
-		logger:   logger,
-		now:      time.Now,
+		repo:      repo,
+		paths:     paths,
+		adapters:  adapters,
+		runner:    runner,
+		logger:    logger,
+		now:       time.Now,
+		mutations: map[string]*sync.Mutex{},
 	}
 	for _, o := range opts {
 		o(s)
 	}
 	return s
+}
+
+func (s *service) lockMutation(appID string) func() {
+	s.mutationMu.Lock()
+	lock := s.mutations[appID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.mutations[appID] = lock
+	}
+	s.mutationMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 // --- 读路径 ---
@@ -177,7 +194,9 @@ func (s *service) observeAll(ctx context.Context) ([]Application, error) {
 				continue
 			}
 			registered[m.ID] = true
-			out = append(out, s.buildComposeApp(m, obs[m.ID], true))
+			app := s.buildComposeApp(m, obs[m.ID], true)
+			s.decorateTaskState(ctx, &app)
+			out = append(out, app)
 		}
 		// 容错：受管容器存在但元数据缺失（应不会发生），跳过——以登记为准。
 	}
@@ -186,6 +205,7 @@ func (s *service) observeAll(ctx context.Context) ([]Application, error) {
 	if ka, ok := s.adapters[RuntimeKubernetes]; ok {
 		obs, _ := ka.Observe(ctx)
 		for _, app := range obs {
+			s.decorateTaskState(ctx, &app)
 			out = append(out, app)
 		}
 	}
@@ -227,6 +247,37 @@ func (s *service) buildComposeApp(meta AppRecord, obs Application, registered bo
 	return app
 }
 
+// decorateTaskState 把持久 Task 状态合并进 Application。运行时 Observe 描述容器
+// 现状，Task 描述控制面正在发生什么；两者必须同时呈现，前端不自行推断。
+func (s *service) decorateTaskState(ctx context.Context, app *Application) {
+	tasks, err := s.repo.ListTasksByApp(ctx, app.ID, 1)
+	if err != nil || len(tasks) == 0 {
+		return
+	}
+	last := tasks[0]
+	app.LastTask = &last
+	if last.Status == TaskQueued || last.Status == TaskRunning {
+		switch last.Type {
+		case TaskRemove:
+			app.Observed.Phase = PhaseRemoving
+			app.Observed.Message = "应用正在卸载"
+		case TaskApply, TaskRestore:
+			app.Observed.Phase = PhaseDeploying
+			app.Observed.Message = "正在应用期望配置"
+		case TaskOperate:
+			if last.Action == ActionStart || last.Action == ActionRestart || last.Action == ActionRedeploy {
+				app.Observed.Phase = PhaseDeploying
+				app.Observed.Message = "正在执行 " + string(last.Action)
+			}
+		}
+	}
+	if last.Status == TaskFailed && last.Revision > app.Observed.Revision {
+		app.Observed.Phase = PhaseFailed
+		app.Observed.Message = last.Message
+	}
+	app.State = app.Observed.Phase.LegacyState()
+}
+
 // fillCompatFields 填充旧前端 useApps() 期望的兼容字段（State/Image/Ports/Replicas/Ready）。
 func (s *service) fillCompatFields(app *Application) {
 	app.State = app.Observed.Phase.LegacyState()
@@ -235,10 +286,15 @@ func (s *service) fillCompatFields(app *Application) {
 	replicas := int32(0)
 	ready := int32(0)
 	for _, svc := range app.Observed.Services {
-		replicas++
-		state := strings.ToLower(svc.State)
-		if state == "running" {
-			ready++
+		if app.Runtime == RuntimeCompose && svc.Replicas > 0 {
+			replicas += svc.Replicas
+			ready += svc.Ready
+		} else {
+			replicas++
+			state := strings.ToLower(svc.State)
+			if state == "running" {
+				ready++
+			}
 		}
 		if app.Image == "" {
 			app.Image = svc.Image
@@ -269,12 +325,15 @@ func (s *service) Get(ctx context.Context, id string) (Application, error) {
 		if ca := s.adapters[RuntimeCompose]; ca != nil {
 			obs, _ = ca.Observe(ctx)
 		}
-		return s.buildComposeApp(meta, obs[id], true), nil
+		app := s.buildComposeApp(meta, obs[id], true)
+		s.decorateTaskState(ctx, &app)
+		return app, nil
 	}
 	// 否则 K8s 观测。
 	if ka := s.adapters[RuntimeKubernetes]; ka != nil {
 		obs, _ := ka.Observe(ctx)
 		if app, ok := obs[id]; ok {
+			s.decorateTaskState(ctx, &app)
 			return app, nil
 		}
 	}
@@ -322,13 +381,18 @@ func (s *service) Validate(ctx context.Context, req ValidateRequest) (ValidateRe
 		res.Errors = append(res.Errors, "compose 内容为空")
 		return res, nil
 	}
-	literalSecretRisks, err := AnalyzeLiteralSecrets(req.ComposeContent)
+	effectiveCompose, err := applyDeploymentSettings(req.ComposeContent, req.Settings)
+	if err != nil {
+		res.Errors = append(res.Errors, err.Error())
+		return res, nil
+	}
+	literalSecretRisks, err := AnalyzeLiteralSecrets(effectiveCompose)
 	if err != nil {
 		res.Errors = append(res.Errors, "解析失败: "+err.Error())
 		return res, nil
 	}
 	res.Risks = append(res.Risks, literalSecretRisks...)
-	fileAccessRisks, err := AnalyzeComposeFileAccess(req.ComposeContent)
+	fileAccessRisks, err := AnalyzeComposeFileAccess(effectiveCompose)
 	if err != nil {
 		res.Errors = append(res.Errors, "解析失败: "+err.Error())
 		return res, nil
@@ -358,7 +422,7 @@ func (s *service) Validate(ctx context.Context, req ValidateRequest) (ValidateRe
 		}
 		env = mergeEnvFile(string(b), req.Secrets, req.Parameters)
 	}
-	rendered, warn, rerr := s.renderForCheck(ctx, req.ComposeContent, env, false)
+	rendered, warn, rerr := s.renderForCheck(ctx, effectiveCompose, env, false)
 	if rerr != nil {
 		res.Errors = append(res.Errors, rerr.Error())
 		return res, nil
@@ -373,6 +437,11 @@ func (s *service) Validate(ctx context.Context, req ValidateRequest) (ValidateRe
 		return res, nil
 	}
 	res.Services = previews
+	if res.Networks, err = composeNetworkInventory(rendered); err != nil {
+		res.Errors = append(res.Errors, "网络解析失败: "+err.Error())
+		return res, nil
+	}
+	res.Secrets = preflightSecretKeys(effectiveCompose, env, req.Secrets)
 	findings, err := AnalyzeCompose(rendered)
 	if err != nil {
 		res.Errors = append(res.Errors, "风险分析失败: "+err.Error())
@@ -392,6 +461,9 @@ func (s *service) Validate(ctx context.Context, req ValidateRequest) (ValidateRe
 	}
 	if conflicts := s.detectExistingPortConflicts(ctx, req.AppID, previews); len(conflicts) > 0 {
 		res.Warnings = append(res.Warnings, "宿主端口可能已被应用占用: "+strings.Join(conflicts, ", "))
+	}
+	if conflicts := s.detectExistingPathConflicts(ctx, req.AppID, rendered); len(conflicts) > 0 {
+		res.Warnings = append(res.Warnings, "宿主路径已被其他应用挂载: "+strings.Join(conflicts, ", "))
 	}
 	res.OK = len(res.Errors) == 0 && !HasBlocked(res.Risks)
 	return res, nil
@@ -429,6 +501,48 @@ func (s *service) detectExistingPortConflicts(ctx context.Context, excludeAppID 
 	return conflicts
 }
 
+func (s *service) detectExistingPathConflicts(ctx context.Context, excludeAppID, rendered string) []string {
+	wanted := absoluteBindSources(rendered)
+	if len(wanted) == 0 {
+		return nil
+	}
+	metas, err := s.repo.ListAppMetas(ctx)
+	if err != nil {
+		return nil
+	}
+	var conflicts []string
+	for _, meta := range metas {
+		if meta.ID == excludeAppID || meta.Runtime != RuntimeCompose {
+			continue
+		}
+		content, err := os.ReadFile(s.paths.ComposeFile(meta.ID))
+		if err != nil {
+			continue
+		}
+		for source := range absoluteBindSources(string(content)) {
+			if wanted[source] {
+				conflicts = appendIfMissing(conflicts, fmt.Sprintf("%s（%s）", source, meta.Name))
+			}
+		}
+	}
+	sort.Strings(conflicts)
+	return conflicts
+}
+
+func absoluteBindSources(composeYAML string) map[string]bool {
+	volumes, _, err := analyzeStorage(composeYAML, "")
+	if err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, volume := range volumes {
+		if volume.Kind == VolumeBind && filepath.IsAbs(volume.Source) {
+			out[filepath.Clean(volume.Source)] = true
+		}
+	}
+	return out
+}
+
 // renderForCheck 用 prechecker 渲染 compose 用于预检/风险分析。
 //   - 成功：返回渲染后文本（可能含 secret，调用方不得持久化）。
 //   - compose CLI 不可用（capability）：strict=true 返回该错误；strict=false 回退原文
@@ -454,6 +568,23 @@ func (s *service) renderForCheck(ctx context.Context, content, env string, stric
 // --- Apply（创建/更新）---
 
 func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts ApplyOptions) (Task, error) {
+	lockID := strings.TrimSpace(desired.ID)
+	if lockID == "" {
+		lockID = Slugify(desired.Name)
+	}
+	if lockID == "" {
+		lockID = "__invalid__"
+	}
+	defer s.lockMutation(lockID)()
+	if desired.Source.Kind == "" {
+		desired.Source.Kind = SourceInline
+	}
+	effectiveCompose, err := applyDeploymentSettings(desired.ComposeContent, desired.Settings)
+	if err != nil {
+		return Task{}, err
+	}
+	desired.ComposeContent = effectiveCompose
+	desired.Settings = nil // 最终 YAML 是唯一事实源，不重复持久化向导状态。
 	// 0. 幂等短路（在任何副作用前）。
 	applyHash := hashApplyRequest(desired)
 	if opts.IdempotencyKey != "" {
@@ -563,31 +694,42 @@ func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts Ap
 		}
 	}
 
-	// 4. 暂存 compose.yaml/.env 到 staging（不覆盖现有事实源；DB 提交后再 atomic rename）。
+	// 相同已部署定义重复 Apply 是语义 no-op：不制造 revision/task。提交新 secret
+	// 或上次 revision 尚未成功 observed 时必须继续执行，避免吞掉轮换或失败重试。
+	if !creating && len(desired.Secrets) == 0 && meta.ObservedRevision == meta.Revision &&
+		meta.Name == desired.Name && meta.Source == desired.Source && maps.Equal(meta.Parameters, desired.Parameters) {
+		if current, ok, err := s.repo.GetRevision(ctx, appID, meta.Revision); err != nil {
+			return Task{}, err
+		} else if ok && current.ComposeHash == composeHash(desired.ComposeContent, desired.Parameters) {
+			if task, found, err := s.successfulRevisionTask(ctx, appID, meta.Revision); err != nil {
+				return Task{}, err
+			} else if found {
+				return task, nil
+			}
+		}
+	}
+
+	// 4. 可靠写入不可变 revision 与临时期望 env，再提交 DB。worker 执行前按
+	// task.Revision 提升事实源，覆盖 DB commit 后进程崩溃的恢复窗口。
 	if err := s.paths.EnsureAppDir(appID); err != nil {
 		return Task{}, err
 	}
-	composeStage, composeFinal, err := s.stageFile(appID, "compose.yaml", []byte(desired.ComposeContent), 0o644)
+	revNum, err := s.nextRevisionNumber(ctx, appID)
 	if err != nil {
 		return Task{}, err
 	}
-	cleanupStage := func() { os.Remove(composeStage) }
-	var envStage, envFinal string
-	if env != "" {
-		if envStage, envFinal, err = s.stageFile(appID, ".env", []byte(env), 0o600); err != nil {
-			cleanupStage()
-			return Task{}, err
-		}
-		prev := cleanupStage
-		cleanupStage = func() { prev(); os.Remove(envStage) }
+	revisionFile := s.paths.RevisionFile(appID, revNum)
+	pendingEnv := s.paths.PendingEnvFile(appID, revNum)
+	if err := s.paths.AtomicWriteFile(appID, fmt.Sprintf("revisions/%d.yaml", revNum), []byte(desired.ComposeContent), 0o644); err != nil {
+		return Task{}, err
 	}
+	if err := s.paths.AtomicWriteFile(appID, filepath.Base(pendingEnv), []byte(env), 0o600); err != nil {
+		os.Remove(revisionFile)
+		return Task{}, err
+	}
+	cleanupPrepared := func() { os.Remove(revisionFile); os.Remove(pendingEnv) }
 
 	// 5. revision + meta + task (+ idempotency) 单事务提交（任一失败回滚，无半状态）。
-	revNum, err := s.repo.NextRevisionNumber(ctx, appID)
-	if err != nil {
-		cleanupStage()
-		return Task{}, err
-	}
 	hash := composeHash(desired.ComposeContent, desired.Parameters)
 	meta.Name = desired.Name
 	meta.Source = desired.Source
@@ -607,26 +749,15 @@ func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts Ap
 		RequestSummary: summary, CreatedAt: now,
 	}
 	if err := s.repo.CommitApply(ctx, meta, rev, task, opts.IdempotencyKey, applyHash); err != nil {
-		cleanupStage()
+		cleanupPrepared()
 		return Task{}, err
 	}
+	s.writeAppMetaSidecar(meta)
 
-	// 6. 提交后提升 staging → 事实源（同目录 rename 原子）+ revision 快照。
-	//    rename 失败（极罕见）补偿：清 staging 并标 task failed，状态仍一致。
-	if err := os.Rename(composeStage, composeFinal); err != nil {
-		cleanupStage()
-		s.markTaskFailed(ctx, task.ID, "落盘 compose.yaml 失败: "+err.Error())
-		s.logger.Error("promote compose.yaml after commit failed", zap.String("app", appID), zap.Error(err))
-		t, _ := s.repo.GetTask(ctx, task.ID)
-		return t, nil
-	}
-	if envStage != "" {
-		if err := os.Rename(envStage, envFinal); err != nil {
-			os.Remove(envStage) // .env 缺失非致命；保留 compose，继续。
-			s.logger.Warn("promote .env after commit failed", zap.String("app", appID), zap.Error(err))
-		}
-	}
-	_ = s.paths.SafeWriteFile(appID, fmt.Sprintf("revisions/%d.yaml", revNum), []byte(desired.ComposeContent), 0o644)
+	// 6. 最佳努力立即提升，保证 202 返回后读路径看到新期望；即使这里失败，
+	// worker 仍会从 prepared 文件恢复并把 task 标为 succeeded/failed。
+	_ = s.paths.AtomicWriteFile(appID, "compose.yaml", []byte(desired.ComposeContent), 0o644)
+	_ = s.paths.AtomicWriteFile(appID, ".env", []byte(env), 0o600)
 
 	// 7. 入队执行 + 审计。
 	if s.runner != nil {
@@ -636,15 +767,27 @@ func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts Ap
 	return task, nil
 }
 
-// stageFile 写入暂存文件（同目录、唯一后缀），返回 staging 与最终绝对路径。
-// DB 提交后由调用方 os.Rename(stage, final) 原子提升。
-func (s *service) stageFile(appID, rel string, data []byte, mode os.FileMode) (stage, final string, err error) {
-	final = filepath.Join(s.paths.AppDir(appID), rel)
-	stage = final + ".stage-" + uuid.NewString()
-	if err = os.WriteFile(stage, data, mode); err != nil {
-		return "", "", err
+// nextRevisionNumber 避免默认卸载保留的数据目录在同 ID 再安装时覆盖旧快照。
+// SQLite 仍是受管 revision 的权威；磁盘最大编号只用于给保留文件让出编号。
+func (s *service) nextRevisionNumber(ctx context.Context, appID string) (int64, error) {
+	next, err := s.repo.NextRevisionNumber(ctx, appID)
+	if err != nil {
+		return 0, err
 	}
-	return stage, final, nil
+	entries, err := os.ReadDir(s.paths.RevisionsDir(appID))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
+			continue
+		}
+		n, parseErr := strconv.ParseInt(strings.TrimSuffix(entry.Name(), ".yaml"), 10, 64)
+		if parseErr == nil && n >= next {
+			next = n + 1
+		}
+	}
+	return next, nil
 }
 
 // markTaskFailed 把任务标为 failed（带脱敏信息），用于提交后文件提升失败等补偿路径。
@@ -661,6 +804,7 @@ func (s *service) markTaskFailed(ctx context.Context, taskID, msg string) {
 // --- Operate / Remove / Restore ---
 
 func (s *service) Operate(ctx context.Context, id string, action Action, opts OperationOptions) (Task, error) {
+	defer s.lockMutation(id)()
 	if opts.IdempotencyKey != "" {
 		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, hashOperateRequest(id, action)); err != nil {
 			return Task{}, err
@@ -688,6 +832,7 @@ func (s *service) Operate(ctx context.Context, id string, action Action, opts Op
 }
 
 func (s *service) Remove(ctx context.Context, id string, opts RemoveOptions) (Task, error) {
+	defer s.lockMutation(id)()
 	if opts.IdempotencyKey != "" {
 		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, hashRemoveRequest(id, opts.Purge)); err != nil {
 			return Task{}, err
@@ -711,6 +856,7 @@ func (s *service) Remove(ctx context.Context, id string, opts RemoveOptions) (Ta
 }
 
 func (s *service) RestoreRevision(ctx context.Context, id string, rev int64, opts ApplyOptions) (Task, error) {
+	defer s.lockMutation(id)()
 	restoreHash := hashRestoreRequest(id, rev)
 	if opts.IdempotencyKey != "" {
 		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, restoreHash); err != nil {
@@ -738,8 +884,13 @@ func (s *service) RestoreRevision(ctx context.Context, id string, rev int64, opt
 	if err != nil {
 		return Task{}, fmt.Errorf("read revision snapshot: %w", err)
 	}
+	currentEnv, readEnvErr := os.ReadFile(s.paths.EnvFile(id))
+	if readEnvErr != nil && !errors.Is(readEnvErr, os.ErrNotExist) {
+		return Task{}, fmt.Errorf("read current environment: %w", readEnvErr)
+	}
+	restoredEnv := restoreEnvParameters(string(currentEnv), meta.Parameters, r.Parameters)
 	// 预检历史内容（strict）+ 渲染后风险分析（策略可能已变更）。
-	rendered, _, err := s.renderForCheck(ctx, string(content), "", true)
+	rendered, _, err := s.renderForCheck(ctx, string(content), restoredEnv, true)
 	if err != nil {
 		return Task{}, err
 	}
@@ -759,15 +910,18 @@ func (s *service) RestoreRevision(ctx context.Context, id string, rev int64, opt
 		return Task{}, RiskBlockedErr("历史 revision 存在需确认的风险，请显式确认后重试", findings)
 	}
 
-	// staging compose.yaml；.env（含 secret）保留现状不动。
-	composeStage, composeFinal, err := s.stageFile(id, "compose.yaml", content, 0o644)
+	now := s.now()
+	newRev, err := s.nextRevisionNumber(ctx, id)
 	if err != nil {
 		return Task{}, err
 	}
-	now := s.now()
-	newRev, err := s.repo.NextRevisionNumber(ctx, id)
-	if err != nil {
-		os.Remove(composeStage)
+	newSnapshot := s.paths.RevisionFile(id, newRev)
+	if err := s.paths.AtomicWriteFile(id, fmt.Sprintf("revisions/%d.yaml", newRev), content, 0o644); err != nil {
+		return Task{}, err
+	}
+	pendingEnv := s.paths.PendingEnvFile(id, newRev)
+	if err := s.paths.AtomicWriteFile(id, filepath.Base(pendingEnv), []byte(restoredEnv), 0o600); err != nil {
+		os.Remove(newSnapshot)
 		return Task{}, err
 	}
 	newRevision := Revision{
@@ -776,6 +930,8 @@ func (s *service) RestoreRevision(ctx context.Context, id string, rev int64, opt
 		Note: fmt.Sprintf("restored from revision %d", rev),
 	}
 	meta.Revision = newRev
+	meta.Source = r.Source
+	meta.Parameters = r.Parameters
 	meta.UpdatedAt = now
 	task := Task{
 		ID: uuid.NewString(), AppID: id, Type: TaskRestore,
@@ -783,17 +939,13 @@ func (s *service) RestoreRevision(ctx context.Context, id string, rev int64, opt
 		RequestSummary: fmt.Sprintf("restore rev %d→%d", rev, newRev), CreatedAt: now,
 	}
 	if err := s.repo.CommitApply(ctx, meta, newRevision, task, opts.IdempotencyKey, restoreHash); err != nil {
-		os.Remove(composeStage)
+		os.Remove(newSnapshot)
+		os.Remove(pendingEnv)
 		return Task{}, err
 	}
-	if err := os.Rename(composeStage, composeFinal); err != nil {
-		os.Remove(composeStage)
-		s.markTaskFailed(ctx, task.ID, "落盘 compose.yaml 失败: "+err.Error())
-		s.logger.Error("promote compose.yaml after restore failed", zap.String("app", id), zap.Error(err))
-		t, _ := s.repo.GetTask(ctx, task.ID)
-		return t, nil
-	}
-	_ = s.paths.SafeWriteFile(id, fmt.Sprintf("revisions/%d.yaml", newRev), content, 0o644)
+	s.writeAppMetaSidecar(meta)
+	_ = s.paths.AtomicWriteFile(id, "compose.yaml", content, 0o644)
+	_ = s.paths.AtomicWriteFile(id, ".env", []byte(restoredEnv), 0o600)
 	if s.runner != nil {
 		s.runner.Enqueue(task.ID)
 	}
@@ -906,10 +1058,14 @@ func (s *service) RemovePreview(ctx context.Context, id string, purge bool) (Rem
 				case VolumeSocket:
 					pre.WillKeep = append(pre.WillKeep, "socket: "+v.Source+"（不删）")
 				case VolumeManaged:
+					name := v.Source
+					if name == "" {
+						name = "anonymous → " + v.Target
+					}
 					if purge {
-						pre.WillDelete = append(pre.WillDelete, "managed volume: "+v.Source)
+						pre.WillDelete = append(pre.WillDelete, "managed volume: "+name)
 					} else {
-						pre.WillKeep = append(pre.WillKeep, "managed volume: "+v.Source+"（保留数据）")
+						pre.WillKeep = append(pre.WillKeep, "managed volume: "+name+"（保留数据）")
 					}
 				}
 			}
@@ -975,10 +1131,43 @@ func (s *service) lookupIdempotency(ctx context.Context, key, requestHash string
 		"idempotency key reused with a different request body")
 }
 
+func (s *service) successfulRevisionTask(ctx context.Context, appID string, revision int64) (Task, bool, error) {
+	tasks, err := s.repo.ListTasksByApp(ctx, appID, 50)
+	if err != nil {
+		return Task{}, false, err
+	}
+	for _, task := range tasks {
+		if task.Revision == revision && task.Status == TaskSucceeded && (task.Type == TaskApply || task.Type == TaskRestore) {
+			return task, true, nil
+		}
+	}
+	return Task{}, false, nil
+}
+
 func (s *service) audit(ctx context.Context, actor, appID, action, taskID, detail string) {
 	_ = s.repo.InsertAudit(ctx, AuditRecord{
 		At: s.now(), Actor: actor, AppID: appID, Action: action, TaskID: taskID, Detail: detail,
 	})
+}
+
+func (s *service) writeAppMetaSidecar(meta AppRecord) {
+	type sidecar struct {
+		ID        string            `json:"id"`
+		Name      string            `json:"name"`
+		Runtime   RuntimeKind       `json:"runtime"`
+		Source    ApplicationSource `json:"source"`
+		Revision  int64             `json:"revision"`
+		UpdatedAt time.Time         `json:"updatedAt"`
+	}
+	data, err := json.MarshalIndent(sidecar{
+		ID: meta.ID, Name: meta.Name, Runtime: meta.Runtime, Source: meta.Source, Revision: meta.Revision, UpdatedAt: meta.UpdatedAt,
+	}, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := s.paths.AtomicWriteFile(meta.ID, "app.json", append(data, '\n'), 0o644); err != nil {
+		s.logger.Warn("write app metadata sidecar failed", zap.String("app", meta.ID), zap.Error(err))
+	}
 }
 
 func (s *service) idExists(ctx context.Context, id string) (bool, error) {

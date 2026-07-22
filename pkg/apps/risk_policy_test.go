@@ -2,7 +2,9 @@ package apps
 
 import (
 	"context"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -169,6 +171,20 @@ func TestController_RemovePreviewPurgeDeletesManaged(t *testing.T) {
 	// external 卷永不删 → willKeep。
 	keep := joinStrs(pre.WillKeep)
 	assert.Contains(t, keep, "external volume")
+}
+
+func TestController_RemovePreviewNamesAnonymousVolumeByTarget(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose}
+	ctrl, _, repo, paths := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	now := time.Now()
+	require.NoError(t, repo.UpsertAppMeta(context.Background(), AppRecord{
+		ID: "anonymous-app", Name: "anonymous-app", Runtime: RuntimeCompose, CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, paths.EnsureAppDir("anonymous-app"))
+	require.NoError(t, os.WriteFile(paths.ComposeFile("anonymous-app"), []byte("services:\n  web:\n    image: nginx:1.27\n    volumes: [/data]\n"), 0o644))
+	pre, err := ctrl.RemovePreview(context.Background(), "anonymous-app", true)
+	require.NoError(t, err)
+	assert.Contains(t, joinStrs(pre.WillDelete), "anonymous → /data")
 }
 
 func TestController_StorageInventoryNotFound(t *testing.T) {

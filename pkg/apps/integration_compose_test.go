@@ -4,7 +4,7 @@
 //
 //	go test -tags=integration -run TestComposeE2E ./pkg/apps/ -timeout 300s
 //
-// 环境通过 DOCKER_HOST 指定 daemon（unix socket 或 tcp）。若不可达则 t.Skip。
+// 测试可通过 DEVBOX_TEST_DOCKER 显式直连 daemon；生产装配只允许本机 Unix socket。若不可达则 t.Skip。
 package apps
 
 import (
@@ -29,6 +29,21 @@ const e2eYAML = `services:
     image: alpine:3
     command: ["sleep", "3600"]
 `
+
+func e2eVolumeYAML(externalVolume string) string {
+	return `services:
+  app:
+    image: alpine:3
+    command: ["sleep", "3600"]
+    volumes:
+      - data:/data
+      - external:/external
+volumes:
+  data: {}
+  external:
+    external: true
+    name: ` + externalVolume + "\n"
+}
 
 func skipIfNoDocker(t *testing.T, endpoint string) {
 	t.Helper()
@@ -139,4 +154,50 @@ func TestComposeE2E(t *testing.T) {
 	time.Sleep(time.Second) // 让 Observe 稳定
 	_, err = ctrl.Get(context.Background(), appID)
 	assert.Error(t, err, "remove 后 app 应不可见")
+	assert.FileExists(t, paths.ComposeFile(appID), "默认 remove 必须保留文件事实源")
+}
+
+func TestComposeVolumeLifecycleAndSettingsE2E(t *testing.T) {
+	endpoint := os.Getenv("DEVBOX_TEST_DOCKER")
+	skipIfNoDocker(t, endpoint)
+	dir := t.TempDir()
+	repo, err := OpenRepository(context.Background(), filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	defer repo.Close()
+	paths := NewPaths(dir)
+	compose := NewComposeRuntime(endpoint, paths, zap.NewNop())
+	worker := NewWorker(repo, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose}, paths, zap.NewNop())
+	worker.ctx = context.Background()
+	ctrl := NewController(repo, paths, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose}, worker, zap.NewNop(), WithPrechecker(compose))
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
+	appID := "vol-" + suffix
+	externalVolume := "devbox-test-external-" + suffix
+	require.NoError(t, compose.cli.command(context.Background(), "volume", "create", externalVolume).Run())
+	t.Cleanup(func() {
+		_ = compose.cli.command(context.Background(), "volume", "rm", "-f", externalVolume).Run()
+		_ = compose.cli.command(context.Background(), "volume", "rm", "-f", ProjectName(appID)+"_data").Run()
+	})
+
+	applyTask, err := ctrl.Apply(context.Background(), DesiredApplication{
+		ID: appID, Name: appID, Source: ApplicationSource{Kind: SourceInline},
+		ComposeContent: e2eVolumeYAML(externalVolume),
+		Settings:       &DeploymentSettings{CPULimit: "0.5", MemoryLimit: "64M", AutoStart: true},
+	}, ApplyOptions{Actor: "test"})
+	require.NoError(t, err)
+	require.Equal(t, TaskSucceeded, waitTaskTerminal(t, ctrl, applyTask.ID, 180*time.Second).Status)
+	content, err := os.ReadFile(paths.ComposeFile(appID))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "restart: unless-stopped")
+	assert.Contains(t, string(content), `cpus: "0.5"`)
+	assert.Contains(t, string(content), "memory: 64M")
+
+	remove, err := ctrl.Remove(context.Background(), appID, RemoveOptions{Purge: true, Actor: "test"})
+	require.NoError(t, err)
+	require.Equal(t, TaskSucceeded, waitTaskTerminal(t, ctrl, remove.ID, 60*time.Second).Status)
+	assert.NoDirExists(t, paths.AppDir(appID), "purge 必须删除受管数据目录")
+	managedCheck := compose.cli.command(context.Background(), "volume", "inspect", ProjectName(appID)+"_data")
+	assert.Error(t, managedCheck.Run(), "purge 必须删除 managed volume")
+	externalCheck := compose.cli.command(context.Background(), "volume", "inspect", externalVolume)
+	assert.NoError(t, externalCheck.Run(), "purge 永远不能删除 external volume")
 }

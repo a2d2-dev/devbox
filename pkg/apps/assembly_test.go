@@ -38,3 +38,14 @@ func TestAssembleControllerRejectsDataDirThatIsAFile(t *testing.T) {
 	require.Nil(t, controller)
 	require.Nil(t, cleanup)
 }
+
+func TestAssembleControllerRejectsRemoteDockerEndpoint(t *testing.T) {
+	for _, endpoint := range []string{"tcp://host:2375", "http://host:2375", "https://host:2376", "relative.sock"} {
+		controller, cleanup, err := AssembleController(context.Background(), ControllerConfig{
+			DataDir: filepath.Join(t.TempDir(), "data"), ComposeEnabled: true, DockerSocket: endpoint,
+		}, zap.NewNop())
+		require.ErrorContains(t, err, "仅允许本机 Unix socket", endpoint)
+		require.Nil(t, controller)
+		require.Nil(t, cleanup)
+	}
+}

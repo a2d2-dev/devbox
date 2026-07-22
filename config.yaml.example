@@ -31,6 +31,8 @@ kubernetes:
 compose:
   enabled: true
   data_dir: "/var/lib/devbox"
+  # 仅允许本机绝对 Unix socket；不支持 tcp/http/远程 Docker endpoint。
+  # devbox 会固定 CLI 到这个 socket，不继承 DOCKER_HOST/DOCKER_CONTEXT。
   docker_socket: "/var/run/docker.sock"
   # 第三方 catalog 刷新间隔（秒）；0 表示仅启动/手动刷新。
   catalog_poll: 300

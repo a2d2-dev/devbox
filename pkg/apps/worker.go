@@ -2,6 +2,7 @@ package apps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -36,8 +37,7 @@ type worker struct {
 
 // appQueue 单个 app 的串行队列 + 退出信号。
 type appQueue struct {
-	ch   chan string
-	done chan struct{}
+	ch chan string
 }
 
 // NewWorker 构造 worker（未启动）。调用 Start 后开始消费 + 恢复。
@@ -127,26 +127,11 @@ func (w *worker) ensureQueue(appID string) *appQueue {
 	defer w.mu.Unlock()
 	q, ok := w.queues[appID]
 	if !ok {
-		q = &appQueue{ch: make(chan string, 64), done: make(chan struct{})}
+		q = &appQueue{ch: make(chan string, 64)}
 		w.queues[appID] = q
 		go w.runAppQueue(appID, q)
 	}
 	return q
-}
-
-// stopQueue 安全回收某 app 的队列：从 map 移除并通知消费 goroutine 退出。
-// 在 app 被彻底删除（remove 完成）后调用，避免队列/goroutine 永久增长。
-// done 仅此处关闭，且 map 删除保证只关闭一次。
-func (w *worker) stopQueue(appID string) {
-	w.mu.Lock()
-	q, ok := w.queues[appID]
-	if ok {
-		delete(w.queues, appID)
-	}
-	w.mu.Unlock()
-	if ok {
-		close(q.done)
-	}
 }
 
 func (w *worker) runAppQueue(appID string, q *appQueue) {
@@ -157,8 +142,6 @@ func (w *worker) runAppQueue(appID string, q *appQueue) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-q.done:
 			return
 		case taskID := <-q.ch:
 			w.executeSafe(ctx, taskID)
@@ -184,6 +167,9 @@ func (w *worker) executeSafe(ctx context.Context, taskID string) {
 				t.Message = "任务执行异常（panic），已恢复"
 				t.FinishedAt = &finished
 			})
+			if task, err := w.repo.GetTask(ctx, taskID); err == nil && (task.Type == TaskApply || task.Type == TaskRestore) {
+				_ = os.Remove(w.paths.PendingEnvFile(task.AppID, task.Revision))
+			}
 		}
 	}()
 	w.execute(ctx, taskID)
@@ -225,25 +211,53 @@ func (w *worker) execute(ctx context.Context, taskID string) {
 	if gerr != nil {
 		execErr = fmt.Errorf("resolve runtime: %w", gerr)
 	} else {
-		rt := RuntimeKubernetes
+		rt := RuntimeKind("")
 		if hasMeta {
 			rt = meta.Runtime
 			if rt == RuntimeCompose {
-				if b, readErr := os.ReadFile(w.paths.EnvFile(task.AppID)); readErr == nil {
+				envPath := w.paths.EnvFile(task.AppID)
+				if task.Type == TaskApply || task.Type == TaskRestore {
+					envPath = w.paths.PendingEnvFile(task.AppID, task.Revision)
+				}
+				if b, readErr := os.ReadFile(envPath); readErr == nil {
 					envFile = string(b)
 				}
 			}
-		}
-		adapter := w.adapters[rt]
-		app := Application{ID: task.AppID, Runtime: rt, Revision: task.Revision}
-		if hasMeta {
-			app.Name = meta.Name
-			app.Source = meta.Source
-		}
-		if adapter == nil {
-			execErr = CapabilityErr("runtime " + string(rt) + " unavailable")
 		} else {
-			execErr = w.dispatch(ctx, adapter, task, app)
+			if task.Type != TaskRemove {
+				execErr = NotFoundErr(task.AppID)
+			}
+			// remove 可能已删 meta、但进程尚未来得及写 Task 终态就崩溃。此时不能
+			// 默认成 K8s：先确认 K8s 是否真有同名对象，否则用 Compose 的幂等
+			// remove 恢复（project 已不存在也会成功）。
+			if execErr == nil {
+				if k8s := w.adapters[RuntimeKubernetes]; k8s != nil {
+					if observed, observeErr := k8s.Observe(ctx); observeErr == nil {
+						if _, exists := observed[task.AppID]; exists {
+							rt = RuntimeKubernetes
+						}
+					}
+				}
+			}
+			if execErr == nil && rt == "" && w.adapters[RuntimeCompose] != nil {
+				rt = RuntimeCompose
+			}
+			if execErr == nil && rt == "" {
+				rt = RuntimeKubernetes
+			}
+		}
+		if execErr == nil {
+			adapter := w.adapters[rt]
+			app := Application{ID: task.AppID, Runtime: rt, Revision: task.Revision}
+			if hasMeta {
+				app.Name = meta.Name
+				app.Source = meta.Source
+			}
+			if adapter == nil {
+				execErr = CapabilityErr("runtime " + string(rt) + " unavailable")
+			} else {
+				execErr = w.dispatch(ctx, adapter, task, app)
+			}
 		}
 	}
 
@@ -263,6 +277,9 @@ func (w *worker) execute(ctx context.Context, taskID string) {
 			t.Message = safeExecMessage
 		}
 	})
+	if task.Type == TaskApply || task.Type == TaskRestore {
+		_ = os.Remove(w.paths.PendingEnvFile(task.AppID, task.Revision))
+	}
 	if execErr != nil {
 		w.logger.Warn("task failed", zap.String("id", taskID), zap.String("app", task.AppID), zap.String("error", safeExecMessage))
 	} else {
@@ -272,11 +289,14 @@ func (w *worker) execute(ctx context.Context, taskID string) {
 
 // dispatch 按 task 类型路由到 adapter，并处理副作用（observed revision / 清理）。
 func (w *worker) dispatch(ctx context.Context, adapter runtimeAdapter, task Task, app Application) error {
+	progress := func(phase TaskPhase, message string) { w.setPhase(ctx, task.ID, phase, message) }
 	switch task.Type {
 	case TaskApply, TaskRestore:
-		w.setPhase(ctx, task.ID, PhaseTaskApplying, "")
+		if err := w.promoteTaskFiles(task); err != nil {
+			return err
+		}
 		composeFile := w.paths.ComposeFile(task.AppID)
-		if err := adapter.Apply(ctx, app, composeFile); err != nil {
+		if err := adapter.Apply(ctx, app, composeFile, progress); err != nil {
 			return err
 		}
 		// up 返回成功不代表容器已就绪；有 healthcheck 时等待全部 healthy。
@@ -284,11 +304,13 @@ func (w *worker) dispatch(ctx context.Context, adapter runtimeAdapter, task Task
 			return err
 		}
 		if task.Revision > 0 {
-			_ = w.repo.SetObservedRevision(ctx, task.AppID, task.Revision)
+			if err := w.repo.SetObservedRevision(ctx, task.AppID, task.Revision); err != nil {
+				return fmt.Errorf("persist observed revision: %w", err)
+			}
 		}
 		return nil
 	case TaskOperate:
-		if err := adapter.Operate(ctx, app, task.Action); err != nil {
+		if err := adapter.Operate(ctx, app, task.Action, progress); err != nil {
 			return err
 		}
 		// desired running 的动作需校验容器实际出现；stop 不校验（容器停止/消失均正常）。
@@ -307,13 +329,44 @@ func (w *worker) dispatch(ctx context.Context, adapter runtimeAdapter, task Task
 		if err := w.repo.PurgeApp(ctx, task.AppID); err != nil {
 			return err
 		}
-		_ = os.RemoveAll(w.paths.AppDir(task.AppID))
-		// MED#11：app 已彻底删除，回收其串行队列/goroutine，避免永久增长。
-		w.stopQueue(task.AppID)
+		if task.Purge {
+			if err := os.RemoveAll(w.paths.AppDir(task.AppID)); err != nil {
+				return fmt.Errorf("remove managed data directory: %w", err)
+			}
+		}
 		return nil
 	default:
 		return nil
 	}
+}
+
+// promoteTaskFiles 从不可变 revision 快照恢复本次任务对应的事实源。这样进程在
+// DB commit 后、compose.yaml/.env 提升前退出，重启后的 queued task 仍执行正确 revision。
+func (w *worker) promoteTaskFiles(task Task) error {
+	if task.Revision <= 0 {
+		return ValidationErr("apply task missing revision")
+	}
+	content, err := os.ReadFile(w.paths.RevisionFile(task.AppID, task.Revision))
+	if err != nil {
+		return fmt.Errorf("read desired revision snapshot: %w", err)
+	}
+	if err := w.paths.AtomicWriteFile(task.AppID, "compose.yaml", content, 0o644); err != nil {
+		return fmt.Errorf("promote desired compose: %w", err)
+	}
+	if task.Type == TaskApply || task.Type == TaskRestore {
+		pending := w.paths.PendingEnvFile(task.AppID, task.Revision)
+		env, err := os.ReadFile(pending)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // 兼容升级前已持久化的 task：沿用现有 .env。
+		}
+		if err != nil {
+			return fmt.Errorf("read desired environment: %w", err)
+		}
+		if err := w.paths.AtomicWriteFile(task.AppID, ".env", env, 0o600); err != nil {
+			return fmt.Errorf("promote desired environment: %w", err)
+		}
+	}
+	return nil
 }
 
 // waitForHealthy 在 apply/restore/start/restart/redeploy 后重新 Observe。没有 healthcheck

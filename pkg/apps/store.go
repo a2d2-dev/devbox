@@ -408,7 +408,7 @@ type StoreInstallRequest struct {
 	Values  map[string]any `json:"values,omitempty"`
 	// ConfirmRisky 表示用户已显式确认 confirmation 级运行权限；blocked 风险仍不可绕过。
 	ConfirmRisky bool `json:"confirmRisky,omitempty"`
-	// IdempotencyKey 可选；为空时后端按 appId+version 生成稳定键（同包同版本重装幂等）。
+	// IdempotencyKey 可选；仅在调用方显式提供时启用跨请求幂等。
 	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }
 
@@ -421,12 +421,8 @@ type StoreInstallResult struct {
 	Revision int64  `json:"revision,omitempty"`
 }
 
-// StoreInstallFingerprint 生成 store install 请求的稳定指纹（用于默认幂等键）。
-// 纳入 params + secrets 的内容，确保：
-//   - 完全相同的重装请求 → 相同 key → 幂等返回原 task；
-//   - 改 params 或轮换 secret → 不同 key → 真实落盘（新 revision），不被旧 task 短路。
-//
-// 指纹本身是单向摘要，不泄露 secret 明文，可安全出现在 idempotency 记录里。
+// StoreInstallFingerprint 生成参数与 secret 的单向摘要。用于请求哈希时保证 secret
+// 轮换不会被误判为同一请求；摘要不泄露 secret 明文。
 func StoreInstallFingerprint(params, secrets map[string]string) string {
 	keys := make([]string, 0, len(params)+len(secrets))
 	for k := range params {

@@ -30,6 +30,7 @@ type fakeAdapter struct {
 	mu              sync.Mutex
 	active          int
 	maxActive       int
+	progressed      []TaskPhase
 	applied         []string
 	applyTimes      []time.Time
 	operated        []string
@@ -47,7 +48,13 @@ func (f *fakeAdapter) Observe(context.Context) (map[string]Application, error) {
 	}
 	return out, f.observeErr
 }
-func (f *fakeAdapter) Apply(_ context.Context, app Application, _ string) error {
+func (f *fakeAdapter) Apply(_ context.Context, app Application, _ string, progress func(TaskPhase, string)) error {
+	for _, phase := range []TaskPhase{PhaseTaskResolving, PhaseTaskPulling, PhaseTaskApplying} {
+		f.mu.Lock()
+		f.progressed = append(f.progressed, phase)
+		f.mu.Unlock()
+		progress(phase, string(phase))
+	}
 	f.mu.Lock()
 	f.active++
 	if f.active > f.maxActive {
@@ -78,7 +85,11 @@ func (f *fakeAdapter) Apply(_ context.Context, app Application, _ string) error 
 	f.mu.Unlock()
 	return f.applyErr
 }
-func (f *fakeAdapter) Operate(_ context.Context, app Application, action Action) error {
+func (f *fakeAdapter) Operate(_ context.Context, app Application, action Action, progress func(TaskPhase, string)) error {
+	f.mu.Lock()
+	f.progressed = append(f.progressed, PhaseTaskApplying)
+	f.mu.Unlock()
+	progress(PhaseTaskApplying, "operate")
 	f.mu.Lock()
 	f.operated = append(f.operated, app.ID+":"+string(action))
 	if f.operateErr == nil {
@@ -180,6 +191,10 @@ func TestControllerApplyCreate(t *testing.T) {
 	// compose 文件落盘（事实源）。
 	assert.FileExists(t, paths.ComposeFile("my-app"))
 	assert.FileExists(t, paths.RevisionFile("my-app", 1))
+	metaSidecar, err := os.ReadFile(paths.AppMetaFile("my-app"))
+	require.NoError(t, err)
+	assert.Contains(t, string(metaSidecar), `"kind": "inline"`)
+	assert.NotContains(t, string(metaSidecar), "secret")
 	// secret 不进 revision/audit（这里无 secret，验证参数快照在）。
 	revs, _ := repo.ListRevisions(context.Background(), "my-app")
 	require.Len(t, revs, 1)
@@ -269,6 +284,133 @@ func TestControllerApplyIdempotent(t *testing.T) {
 	assert.Equal(t, "idempotency_conflict", ae.Reason)
 }
 
+func TestControllerConcurrentSameAppApplySerializesRevisionCommit(t *testing.T) {
+	ctrl, runner, repo, _ := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
+	ctx := context.Background()
+	const requests = 8
+	errCh := make(chan error, requests)
+	var wg sync.WaitGroup
+	for i := range requests {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := ctrl.Apply(ctx, DesiredApplication{
+				ID: "serial-app", Name: "serial-app", ComposeContent: safeCompose + "\n# " + itoa(int64(i)),
+			}, ApplyOptions{})
+			errCh <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+	revisions, err := repo.ListRevisions(ctx, "serial-app")
+	require.NoError(t, err)
+	assert.Len(t, revisions, requests)
+	assert.Len(t, runner.queued, requests)
+}
+
+func TestControllerConcurrentIdempotencyReturnsSameTask(t *testing.T) {
+	ctrl, runner, _, _ := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
+	ctx := context.Background()
+	tasks := make(chan Task, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			task, err := ctrl.Apply(ctx, DesiredApplication{ID: "idem-concurrent", Name: "idem-concurrent", ComposeContent: safeCompose}, ApplyOptions{IdempotencyKey: "same-key"})
+			tasks <- task
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(tasks)
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	var ids []string
+	for task := range tasks {
+		ids = append(ids, task.ID)
+	}
+	require.Len(t, ids, 2)
+	assert.Equal(t, ids[0], ids[1])
+	assert.Len(t, runner.queued, 1)
+}
+
+func TestControllerApplySameObservedRevisionIsNoOp(t *testing.T) {
+	ctrl, runner, repo, _ := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
+	ctx := context.Background()
+	desired := DesiredApplication{Name: "same-app", Source: ApplicationSource{Kind: SourceInline}, ComposeContent: safeCompose, Parameters: map[string]string{"PORT": "8080"}}
+	first, err := ctrl.Apply(ctx, desired, ApplyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, repo.UpdateTask(ctx, first.ID, func(task *Task) { task.Status = TaskSucceeded }))
+	require.NoError(t, repo.SetObservedRevision(ctx, "same-app", first.Revision))
+
+	second, err := ctrl.Apply(ctx, DesiredApplication{ID: "same-app", Name: desired.Name, Source: desired.Source, ComposeContent: desired.ComposeContent, Parameters: desired.Parameters, ExpectedRevision: 1}, ApplyOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, second.ID)
+	assert.Equal(t, first.Revision, second.Revision)
+	assert.Len(t, runner.queued, 1, "no-op must not enqueue another task")
+	revisions, err := repo.ListRevisions(ctx, "same-app")
+	require.NoError(t, err)
+	assert.Len(t, revisions, 1, "no-op must not create another revision")
+}
+
+func TestControllerApplySameDefinitionStillRunsForSecretsOrUnobservedRevision(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		observed bool
+		secrets  map[string]string
+	}{
+		{name: "secret rotation", observed: true, secrets: map[string]string{"PASSWORD": "rotated"}},
+		{name: "unobserved retry", observed: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl, runner, repo, _ := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
+			ctx := context.Background()
+			first, err := ctrl.Apply(ctx, DesiredApplication{Name: "retry-app", ComposeContent: safeCompose}, ApplyOptions{})
+			require.NoError(t, err)
+			if tc.observed {
+				require.NoError(t, repo.UpdateTask(ctx, first.ID, func(task *Task) { task.Status = TaskSucceeded }))
+				require.NoError(t, repo.SetObservedRevision(ctx, "retry-app", 1))
+			}
+			second, err := ctrl.Apply(ctx, DesiredApplication{ID: "retry-app", Name: "retry-app", ComposeContent: safeCompose, ExpectedRevision: 1, Secrets: tc.secrets}, ApplyOptions{})
+			require.NoError(t, err)
+			assert.NotEqual(t, first.ID, second.ID)
+			assert.Equal(t, int64(2), second.Revision)
+			assert.Len(t, runner.queued, 2)
+		})
+	}
+}
+
+func TestControllerReinstallAfterKeepDataPreservesSnapshotsAndClearsOldEnv(t *testing.T) {
+	ctrl, _, repo, paths := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
+	ctx := context.Background()
+	first, err := ctrl.Apply(ctx, DesiredApplication{
+		ID: "reinstall-app", Name: "reinstall-app", ComposeContent: safeCompose,
+		Secrets: map[string]string{"PASSWORD": "old-secret"},
+	}, ApplyOptions{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), first.Revision)
+	require.FileExists(t, paths.RevisionFile("reinstall-app", 1))
+	require.NoError(t, repo.PurgeApp(ctx, "reinstall-app")) // 模拟默认卸载：DB 清理，目录保留
+
+	second, err := ctrl.Apply(ctx, DesiredApplication{
+		ID: "reinstall-app", Name: "reinstall-app", ComposeContent: safeCompose + "\n# reinstalled",
+	}, ApplyOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), second.Revision)
+	assert.FileExists(t, paths.RevisionFile("reinstall-app", 1), "保留的旧快照不能被覆盖")
+	assert.FileExists(t, paths.RevisionFile("reinstall-app", 2))
+	env, err := os.ReadFile(paths.EnvFile("reinstall-app"))
+	require.NoError(t, err)
+	assert.Empty(t, env, "未请求 RetainEnvironment 时不得继承卸载前的 secret")
+}
+
 func TestControllerValidate(t *testing.T) {
 	ctrl, _, _, _ := newTestController(t, nil)
 	// 合法。
@@ -276,10 +418,29 @@ func TestControllerValidate(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, res.OK)
 	assert.Len(t, res.Services, 1)
+	assert.Equal(t, []string{"default"}, res.Networks)
 	// 阻断。
 	res, _ = ctrl.Validate(context.Background(), ValidateRequest{ComposeContent: "services:\n  a:\n    image: nginx:1.27\n    privileged: true"})
 	assert.False(t, res.OK)
 	assert.True(t, len(res.Risks) > 0)
+}
+
+func TestControllerValidateAndApplyDeploymentSettings(t *testing.T) {
+	ctrl, _, _, paths := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
+	ctx := context.Background()
+	settings := &DeploymentSettings{DataPath: "/srv/settings-app", DataTarget: "/data", CPULimit: "2", MemoryLimit: "1G", AutoStart: true}
+	res, err := ctrl.Validate(ctx, ValidateRequest{ComposeContent: safeCompose, Settings: settings})
+	require.NoError(t, err)
+	assert.True(t, NeedsConfirmation(res.Risks, false), "absolute data bind must remain visible to the risk policy")
+
+	_, err = ctrl.Apply(ctx, DesiredApplication{Name: "settings-app", ComposeContent: safeCompose, Settings: settings}, ApplyOptions{AllowRiskyConfirmation: true})
+	require.NoError(t, err)
+	content, err := os.ReadFile(paths.ComposeFile("settings-app"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "restart: unless-stopped")
+	assert.Contains(t, string(content), "/srv/settings-app:/data")
+	assert.Contains(t, string(content), `cpus: "2"`)
+	assert.Contains(t, string(content), "memory: 1G")
 }
 
 func TestControllerValidateExistingPortConflicts(t *testing.T) {
@@ -310,6 +471,30 @@ func TestControllerValidateObserveFailureDoesNotBlock(t *testing.T) {
 	res, err := ctrl.Validate(context.Background(), ValidateRequest{ComposeContent: safeCompose})
 	require.NoError(t, err)
 	assert.True(t, res.OK)
+}
+
+func TestControllerValidateExistingAbsoluteBindConflicts(t *testing.T) {
+	ctrl, _, repo, paths := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
+	ctx := context.Background()
+	now := time.Now()
+	require.NoError(t, repo.UpsertAppMeta(ctx, AppRecord{ID: "existing-app", Name: "Existing", Runtime: RuntimeCompose, Revision: 1, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, paths.EnsureAppDir("existing-app"))
+	existing := "services:\n  web:\n    image: nginx:1.27\n    volumes: [/srv/shared:/data]\n"
+	require.NoError(t, os.WriteFile(paths.ComposeFile("existing-app"), []byte(existing), 0o644))
+
+	compose := "services:\n  worker:\n    image: busybox:1.36\n    volumes: [/srv/shared:/work]\n"
+	res, err := ctrl.Validate(ctx, ValidateRequest{ComposeContent: compose})
+	require.NoError(t, err)
+	assert.Contains(t, strings.Join(res.Warnings, " "), "/srv/shared（Existing）")
+
+	res, err = ctrl.Validate(ctx, ValidateRequest{AppID: "existing-app", ComposeContent: compose})
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(res.Warnings, " "), "/srv/shared（Existing）")
+
+	relative := "services:\n  worker:\n    image: busybox:1.36\n    volumes: [./shared:/work]\n"
+	res, err = ctrl.Validate(ctx, ValidateRequest{ComposeContent: relative})
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(res.Warnings, " "), "宿主路径已被其他应用挂载")
 }
 
 func TestControllerRetainEnvironmentWithoutSecretRoundTrip(t *testing.T) {
@@ -402,6 +587,31 @@ func TestControllerListFilter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
 	assert.Equal(t, RuntimeKubernetes, list[0].Runtime)
+}
+
+func TestControllerListDecoratesLastTaskAndControlPlanePhase(t *testing.T) {
+	ctrl, _, repo, _ := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
+	ctx := context.Background()
+	now := time.Now()
+	require.NoError(t, repo.UpsertAppMeta(ctx, AppRecord{ID: "remove-app", Name: "remove-app", Runtime: RuntimeCompose, Revision: 1, ObservedRevision: 1, CreatedAt: now, UpdatedAt: now}))
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "remove-task", AppID: "remove-app", Type: TaskRemove, Status: TaskRunning, Phase: PhaseTaskCleaningUp, CreatedAt: now.Add(time.Second)}))
+
+	list, err := ctrl.List(ctx, Filter{Runtime: RuntimeCompose})
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, PhaseRemoving, list[0].Observed.Phase)
+	require.NotNil(t, list[0].LastTask)
+	assert.Equal(t, "remove-task", list[0].LastTask.ID)
+
+	require.NoError(t, repo.UpdateTask(ctx, "remove-task", func(task *Task) { task.Status = TaskSucceeded }))
+	require.NoError(t, repo.CreateTask(ctx, Task{
+		ID: "failed-apply", AppID: "remove-app", Type: TaskApply, Status: TaskFailed, Revision: 2,
+		Message: "deploy failed", CreatedAt: now.Add(2 * time.Second),
+	}))
+	app, err := ctrl.Get(ctx, "remove-app")
+	require.NoError(t, err)
+	assert.Equal(t, PhaseFailed, app.Observed.Phase)
+	assert.Equal(t, "deploy failed", app.Observed.Message)
 }
 
 func TestControllerOperateRemoveSubmit(t *testing.T) {
@@ -511,4 +721,30 @@ func TestControllerRestoreRevisionAppNotFound(t *testing.T) {
 		assert.NotEqual(t, "", m.ID, "不应存在空 ID 元数据行")
 		assert.NotEqual(t, "ghost-app", m.ID)
 	}
+}
+
+func TestControllerRestoreRevisionRestoresParametersAndKeepsCurrentSecrets(t *testing.T) {
+	ctrl, _, _, paths := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
+	ctx := context.Background()
+	_, err := ctrl.Apply(ctx, DesiredApplication{
+		ID: "restore-env", Name: "restore-env", ComposeContent: safeCompose,
+		Parameters: map[string]string{"PORT": "8080"}, Secrets: map[string]string{"DB_PASSWORD": "original"},
+	}, ApplyOptions{})
+	require.NoError(t, err)
+	_, err = ctrl.Apply(ctx, DesiredApplication{
+		ID: "restore-env", Name: "restore-env", ComposeContent: safeCompose + "\n# revision-2",
+		ExpectedRevision: 1, RetainEnvironment: true,
+		Parameters: map[string]string{"PORT": "9090", "NEW_FLAG": "on"},
+		Secrets:    map[string]string{"DB_PASSWORD": "rotated"},
+	}, ApplyOptions{})
+	require.NoError(t, err)
+
+	task, err := ctrl.RestoreRevision(ctx, "restore-env", 1, ApplyOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), task.Revision)
+	env, err := os.ReadFile(paths.EnvFile("restore-env"))
+	require.NoError(t, err)
+	assert.Contains(t, string(env), "PORT=8080")
+	assert.Contains(t, string(env), "DB_PASSWORD=rotated", "definition restore must preserve current secret")
+	assert.NotContains(t, string(env), "NEW_FLAG")
 }

@@ -19,10 +19,40 @@ import (
 
 // composeCLI 封装 docker compose 子命令。
 type composeCLI struct {
-	binary string // 默认 "docker"（compose 作为子命令）
+	binary     string // 默认 "docker"（compose 作为子命令）
+	dockerHost string // 显式目标，禁止继承宿主 DOCKER_HOST/DOCKER_CONTEXT
 }
 
-func newComposeCLI() *composeCLI { return &composeCLI{binary: "docker"} }
+func newComposeCLI(endpoint ...string) *composeCLI {
+	host := "unix://" + defaultDockerSocket
+	if len(endpoint) > 0 && strings.TrimSpace(endpoint[0]) != "" {
+		host = endpoint[0]
+		if !strings.Contains(host, "://") {
+			host = "unix://" + host
+		}
+	}
+	return &composeCLI{binary: "docker", dockerHost: host}
+}
+
+func (c *composeCLI) command(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, c.binary, args...)
+	// Compose/Docker 环境变量不能覆盖 Controller 选择的 daemon/project/file。保留
+	// PATH、代理和 registry 凭证等正常环境，其余控制变量明确隔离。
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, item := range os.Environ() {
+		key := item
+		if i := strings.IndexByte(key, '='); i >= 0 {
+			key = key[:i]
+		}
+		if key == "DOCKER_HOST" || key == "DOCKER_CONTEXT" || key == "DOCKER_TLS_VERIFY" ||
+			key == "DOCKER_CERT_PATH" || strings.HasPrefix(key, "COMPOSE_") {
+			continue
+		}
+		env = append(env, item)
+	}
+	cmd.Env = append(env, "DOCKER_HOST="+c.dockerHost)
+	return cmd
+}
 
 // argsFor 构造 compose 公共前缀参数。
 func (c *composeCLI) argsFor(dir, project string, sub ...string) []string {
@@ -39,7 +69,7 @@ func (c *composeCLI) argsFor(dir, project string, sub ...string) []string {
 // run 执行 compose 子命令，返回合并的 stdout+stderr（上限 1MB）。
 // exit 非 0 返回 error（含输出摘要）。
 func (c *composeCLI) run(ctx context.Context, dir, project string, sub ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, c.binary, c.argsFor(dir, project, sub...)...)
+	cmd := c.command(ctx, c.argsFor(dir, project, sub...)...)
 	cmd.Dir = dir
 	var buf bytes.Buffer
 	cmd.Stdout = &limitedWriter{w: &buf, max: 1 << 20}
@@ -91,7 +121,7 @@ func (c *composeCLI) RenderConfig(ctx context.Context, content, env string) (str
 
 	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, c.binary, c.argsFor(dir, precheckProject, "config")...)
+	cmd := c.command(runCtx, c.argsFor(dir, precheckProject, "config")...)
 	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &limitedWriter{w: &stdout, max: 1 << 20}

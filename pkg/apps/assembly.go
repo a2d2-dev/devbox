@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"go.uber.org/zap"
 )
@@ -35,6 +37,10 @@ func AssembleController(ctx context.Context, cfg ControllerConfig, logger *zap.L
 
 	adapters := map[RuntimeKind]runtimeAdapter{}
 	if cfg.ComposeEnabled {
+		if err := validateManagedDockerSocket(cfg.DockerSocket); err != nil {
+			_ = repo.Close()
+			return nil, nil, err
+		}
 		adapters[RuntimeCompose] = NewComposeRuntime(cfg.DockerSocket, paths, logger)
 		logger.Info("Compose runtime enabled",
 			zap.String("data_dir", cfg.DataDir), zap.String("docker_socket", cfg.DockerSocket))
@@ -61,4 +67,15 @@ func AssembleController(ctx context.Context, cfg ControllerConfig, logger *zap.L
 	controller := NewController(repo, paths, adapters, worker, logger, WithPrechecker(prechecker))
 	cleanup := func() { _ = repo.Close() }
 	return controller, cleanup, nil
+}
+
+func validateManagedDockerSocket(endpoint string) error {
+	if endpoint == "" {
+		return nil // NewComposeRuntime 使用默认 /var/run/docker.sock
+	}
+	endpoint = strings.TrimPrefix(endpoint, "unix://")
+	if !filepath.IsAbs(endpoint) {
+		return ValidationErr("compose.docker_socket 仅允许本机 Unix socket；MVP 不管理远程 Docker daemon")
+	}
+	return nil
 }

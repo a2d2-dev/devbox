@@ -29,6 +29,118 @@ type invService struct {
 	Environment yaml.Node   `yaml:"environment"`
 }
 
+// composeNetworkInventory 返回预检可展示的网络名。显式顶层定义和 service 引用
+// 都会保留；完全未声明网络时 Compose 使用隐式 default 网络。
+func composeNetworkInventory(composeYAML string) ([]string, error) {
+	var root struct {
+		Services map[string]struct {
+			Networks    yaml.Node `yaml:"networks"`
+			NetworkMode string    `yaml:"network_mode"`
+		} `yaml:"services"`
+		Networks map[string]yaml.Node `yaml:"networks"`
+	}
+	if err := yaml.Unmarshal([]byte(composeYAML), &root); err != nil {
+		return nil, fmt.Errorf("invalid compose yaml: %w", err)
+	}
+	seen := map[string]bool{}
+	for name := range root.Networks {
+		if strings.TrimSpace(name) != "" {
+			seen[name] = true
+		}
+	}
+	for _, service := range root.Services {
+		if mode := strings.TrimSpace(service.NetworkMode); mode != "" {
+			seen["mode:"+mode] = true
+		}
+		collectNetworkNames(service.Networks, seen)
+	}
+	if len(seen) == 0 {
+		return []string{"default"}, nil
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func collectNetworkNames(node yaml.Node, seen map[string]bool) {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		if name := strings.TrimSpace(node.Value); name != "" {
+			seen[name] = true
+		}
+	case yaml.SequenceNode:
+		for _, child := range node.Content {
+			collectNetworkNames(*child, seen)
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if name := strings.TrimSpace(node.Content[i].Value); name != "" {
+				seen[name] = true
+			}
+		}
+	}
+}
+
+func preflightSecretKeys(composeYAML, envFile string, submitted map[string]string) []string {
+	seen := map[string]bool{}
+	var root struct {
+		Secrets  map[string]yaml.Node `yaml:"secrets"`
+		Services map[string]struct {
+			Secrets yaml.Node `yaml:"secrets"`
+		} `yaml:"services"`
+	}
+	if yaml.Unmarshal([]byte(composeYAML), &root) == nil {
+		for key := range root.Secrets {
+			if strings.TrimSpace(key) != "" {
+				seen[key] = true
+			}
+		}
+		for _, service := range root.Services {
+			collectSecretNames(service.Secrets, seen)
+		}
+	}
+	for key := range submitted {
+		if strings.TrimSpace(key) != "" {
+			seen[key] = true
+		}
+	}
+	if _, vars, err := analyzeStorage(composeYAML, envFile); err == nil {
+		for _, variable := range vars {
+			if variable.Type == "password" {
+				seen[variable.Key] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for key := range seen {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func collectSecretNames(node yaml.Node, seen map[string]bool) {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		if key := strings.TrimSpace(node.Value); key != "" {
+			seen[key] = true
+		}
+	case yaml.SequenceNode:
+		for _, child := range node.Content {
+			if child.Kind == yaml.MappingNode {
+				if source := mappingValue(child, "source"); source != nil && strings.TrimSpace(source.Value) != "" {
+					seen[strings.TrimSpace(source.Value)] = true
+				}
+			} else {
+				collectSecretNames(*child, seen)
+			}
+		}
+	}
+}
+
 type invTopVolume struct {
 	External bool   `yaml:"external"`
 	Name     string `yaml:"name"`

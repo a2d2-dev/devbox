@@ -132,6 +132,7 @@ func (r *sqliteRepo) migrate(ctx context.Context) error {
 			runtime       TEXT NOT NULL,
 			source_kind   TEXT NOT NULL DEFAULT 'inline',
 			source_store_id TEXT NOT NULL DEFAULT '',
+			source_catalog_id TEXT NOT NULL DEFAULT '',
 			source_version TEXT NOT NULL DEFAULT '',
 			revision      INTEGER NOT NULL DEFAULT 0,
 			observed_revision INTEGER NOT NULL DEFAULT 0,
@@ -144,6 +145,8 @@ func (r *sqliteRepo) migrate(ctx context.Context) error {
 			number      INTEGER NOT NULL,
 			compose_hash TEXT NOT NULL,
 			source_kind TEXT NOT NULL DEFAULT 'inline',
+			source_store_id TEXT NOT NULL DEFAULT '',
+			source_catalog_id TEXT NOT NULL DEFAULT '',
 			source_version TEXT NOT NULL DEFAULT '',
 			parameters  TEXT NOT NULL DEFAULT '{}',
 			created_at  TEXT NOT NULL,
@@ -190,6 +193,53 @@ func (r *sqliteRepo) migrate(ctx context.Context) error {
 			return fmt.Errorf("migrate (%s): %w", firstLine(s), err)
 		}
 	}
+	// 旧版 Issue #2 数据库已经存在 apps/revisions 表时，CREATE TABLE IF NOT
+	// EXISTS 不会补列。来源是升级/restore 的可信路由，必须随 migration 保留。
+	for _, column := range []struct {
+		table, name string
+	}{
+		{"apps", "source_catalog_id"},
+		{"revisions", "source_store_id"},
+		{"revisions", "source_catalog_id"},
+	} {
+		if err := r.ensureTextColumn(ctx, column.table, column.name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *sqliteRepo) ensureTextColumn(ctx context.Context, table, column string) error {
+	rows, err := r.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return fmt.Errorf("inspect schema %s: %w", table, err)
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return fmt.Errorf("inspect schema %s: %w", table, err)
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("inspect schema %s: %w", table, err)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if _, err := r.db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("add schema column %s.%s: %w", table, column, err)
+	}
 	return nil
 }
 
@@ -216,16 +266,16 @@ func (r *sqliteRepo) UpsertAppMeta(ctx context.Context, a AppRecord) error {
 func upsertAppMetaExec(e dbExecer, ctx context.Context, a AppRecord) error {
 	params, _ := json.Marshal(a.Parameters)
 	_, err := e.ExecContext(ctx, `INSERT INTO apps
-		(id,name,runtime,source_kind,source_store_id,source_version,revision,observed_revision,parameters,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		(id,name,runtime,source_kind,source_store_id,source_catalog_id,source_version,revision,observed_revision,parameters,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 		  name=excluded.name, runtime=excluded.runtime,
 		  source_kind=excluded.source_kind, source_store_id=excluded.source_store_id,
-		  source_version=excluded.source_version, revision=excluded.revision,
+		  source_catalog_id=excluded.source_catalog_id, source_version=excluded.source_version, revision=excluded.revision,
 		  observed_revision=excluded.observed_revision,
 		  parameters=excluded.parameters, updated_at=excluded.updated_at`,
 		a.ID, a.Name, string(a.Runtime),
-		string(a.Source.Kind), a.Source.StoreID, a.Source.Version,
+		string(a.Source.Kind), a.Source.StoreID, a.Source.CatalogID, a.Source.Version,
 		a.Revision, a.ObservedRevision, string(params), a.CreatedAt.Format(time.RFC3339Nano), a.UpdatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("upsert app meta: %w", err)
@@ -234,7 +284,7 @@ func upsertAppMetaExec(e dbExecer, ctx context.Context, a AppRecord) error {
 }
 
 func (r *sqliteRepo) GetAppMeta(ctx context.Context, id string) (AppRecord, bool, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id,name,runtime,source_kind,source_store_id,source_version,revision,observed_revision,parameters,created_at,updated_at FROM apps WHERE id=?`, id)
+	row := r.db.QueryRowContext(ctx, `SELECT id,name,runtime,source_kind,source_store_id,source_catalog_id,source_version,revision,observed_revision,parameters,created_at,updated_at FROM apps WHERE id=?`, id)
 	a, err := scanApp(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -246,7 +296,7 @@ func (r *sqliteRepo) GetAppMeta(ctx context.Context, id string) (AppRecord, bool
 }
 
 func (r *sqliteRepo) ListAppMetas(ctx context.Context) ([]AppRecord, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,runtime,source_kind,source_store_id,source_version,revision,observed_revision,parameters,created_at,updated_at FROM apps ORDER BY name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,runtime,source_kind,source_store_id,source_catalog_id,source_version,revision,observed_revision,parameters,created_at,updated_at FROM apps ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -338,12 +388,12 @@ type scanner func(dest ...any) error
 func scanApp(scan scanner) (AppRecord, error) {
 	var a AppRecord
 	var runtime, sourceKind, params, created, updated string
-	var storeID, sourceVer sql.NullString
-	if err := scan(&a.ID, &a.Name, &runtime, &sourceKind, &storeID, &sourceVer, &a.Revision, &a.ObservedRevision, &params, &created, &updated); err != nil {
+	var storeID, catalogID, sourceVer sql.NullString
+	if err := scan(&a.ID, &a.Name, &runtime, &sourceKind, &storeID, &catalogID, &sourceVer, &a.Revision, &a.ObservedRevision, &params, &created, &updated); err != nil {
 		return AppRecord{}, err
 	}
 	a.Runtime = RuntimeKind(runtime)
-	a.Source = ApplicationSource{Kind: SourceKind(sourceKind), StoreID: storeID.String, Version: sourceVer.String}
+	a.Source = ApplicationSource{Kind: SourceKind(sourceKind), StoreID: storeID.String, CatalogID: catalogID.String, Version: sourceVer.String}
 	_ = json.Unmarshal([]byte(params), &a.Parameters)
 	if a.Parameters == nil {
 		a.Parameters = map[string]string{}
@@ -371,10 +421,10 @@ func (r *sqliteRepo) InsertRevision(ctx context.Context, rev Revision) error {
 func insertRevisionExec(e dbExecer, ctx context.Context, rev Revision) error {
 	params, _ := json.Marshal(rev.Parameters)
 	_, err := e.ExecContext(ctx, `INSERT INTO revisions
-		(app_id,number,compose_hash,source_kind,source_version,parameters,created_at,created_by,note)
-		VALUES (?,?,?,?,?,?,?,?,?)`,
+		(app_id,number,compose_hash,source_kind,source_store_id,source_catalog_id,source_version,parameters,created_at,created_by,note)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		rev.AppID, rev.Number, rev.ComposeHash,
-		string(rev.Source.Kind), rev.Source.Version, string(params),
+		string(rev.Source.Kind), rev.Source.StoreID, rev.Source.CatalogID, rev.Source.Version, string(params),
 		rev.CreatedAt.Format(time.RFC3339Nano), rev.CreatedBy, rev.Note)
 	if err != nil {
 		return fmt.Errorf("insert revision: %w", err)
@@ -383,7 +433,7 @@ func insertRevisionExec(e dbExecer, ctx context.Context, rev Revision) error {
 }
 
 func (r *sqliteRepo) ListRevisions(ctx context.Context, appID string) ([]Revision, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT app_id,number,compose_hash,source_kind,source_version,parameters,created_at,created_by,note FROM revisions WHERE app_id=? ORDER BY number DESC`, appID)
+	rows, err := r.db.QueryContext(ctx, `SELECT app_id,number,compose_hash,source_kind,source_store_id,source_catalog_id,source_version,parameters,created_at,created_by,note FROM revisions WHERE app_id=? ORDER BY number DESC`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +450,7 @@ func (r *sqliteRepo) ListRevisions(ctx context.Context, appID string) ([]Revisio
 }
 
 func (r *sqliteRepo) GetRevision(ctx context.Context, appID string, num int64) (Revision, bool, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT app_id,number,compose_hash,source_kind,source_version,parameters,created_at,created_by,note FROM revisions WHERE app_id=? AND number=?`, appID, num)
+	row := r.db.QueryRowContext(ctx, `SELECT app_id,number,compose_hash,source_kind,source_store_id,source_catalog_id,source_version,parameters,created_at,created_by,note FROM revisions WHERE app_id=? AND number=?`, appID, num)
 	rev, err := scanRevision(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -414,11 +464,11 @@ func (r *sqliteRepo) GetRevision(ctx context.Context, appID string, num int64) (
 func scanRevision(scan scanner) (Revision, error) {
 	var rev Revision
 	var sourceKind, params, created string
-	var createdBy, note sql.NullString
-	if err := scan(&rev.AppID, &rev.Number, &rev.ComposeHash, &sourceKind, &rev.Source.Version, &params, &created, &createdBy, &note); err != nil {
+	var storeID, catalogID, sourceVersion, createdBy, note sql.NullString
+	if err := scan(&rev.AppID, &rev.Number, &rev.ComposeHash, &sourceKind, &storeID, &catalogID, &sourceVersion, &params, &created, &createdBy, &note); err != nil {
 		return Revision{}, err
 	}
-	rev.Source.Kind = SourceKind(sourceKind)
+	rev.Source = ApplicationSource{Kind: SourceKind(sourceKind), StoreID: storeID.String, CatalogID: catalogID.String, Version: sourceVersion.String}
 	_ = json.Unmarshal([]byte(params), &rev.Parameters)
 	rev.CreatedAt = parseTime(created)
 	rev.CreatedBy = createdBy.String

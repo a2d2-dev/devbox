@@ -33,6 +33,7 @@ func prepApp(t *testing.T, repo Repository, paths *Paths, id string) {
 	}))
 	require.NoError(t, paths.EnsureAppDir(id))
 	require.NoError(t, os.WriteFile(paths.ComposeFile(id), []byte(safeCompose), 0o644))
+	require.NoError(t, os.WriteFile(paths.RevisionFile(id, 1), []byte(safeCompose), 0o644))
 }
 
 func TestWorkerExecuteApply(t *testing.T) {
@@ -50,6 +51,7 @@ func TestWorkerExecuteApply(t *testing.T) {
 	assert.NotNil(t, got.StartedAt)
 	assert.NotNil(t, got.FinishedAt)
 	assert.Equal(t, []string{"a"}, compose.applied)
+	assert.Equal(t, []TaskPhase{PhaseTaskResolving, PhaseTaskPulling, PhaseTaskApplying}, compose.progressed)
 
 	// observed revision 已更新。
 	meta, _, _ := repo.GetAppMeta(ctx, "a")
@@ -72,6 +74,26 @@ func TestWorkerExecuteRemovePurgesMetaAndDir(t *testing.T) {
 	assert.False(t, ok, "meta 应已清理")
 	_, statErr := os.Stat(paths.AppDir("a"))
 	assert.True(t, os.IsNotExist(statErr), "目录应已删除")
+}
+
+func TestWorkerExecuteRemoveKeepsDataDirByDefault(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	prepApp(t, repo, paths, "keep-app")
+	require.NoError(t, os.WriteFile(paths.EnvFile("keep-app"), []byte("PASSWORD=secret\n"), 0o600))
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "keep-task", AppID: "keep-app", Type: TaskRemove, Purge: false, Status: TaskQueued, CreatedAt: time.Now()}))
+
+	w.execute(ctx, "keep-task")
+
+	task, err := repo.GetTask(ctx, "keep-task")
+	require.NoError(t, err)
+	assert.Equal(t, TaskSucceeded, task.Status)
+	assert.FileExists(t, paths.ComposeFile("keep-app"))
+	assert.FileExists(t, paths.EnvFile("keep-app"))
+	_, exists, err := repo.GetAppMeta(ctx, "keep-app")
+	require.NoError(t, err)
+	assert.False(t, exists, "卸载后控制面元数据应移除，但磁盘事实源保留")
 }
 
 func TestWorkerExecuteFailureSanitized(t *testing.T) {
@@ -103,6 +125,24 @@ func TestWorkerStartRecovers(t *testing.T) {
 		return tt.Status == TaskSucceeded
 	}, time.Second, 20*time.Millisecond)
 	assert.Equal(t, []string{"a"}, compose.applied)
+}
+
+func TestWorkerRecoversComposeRemoveAfterMetaWasPurged(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose}
+	k8s := &fakeAdapter{kind: RuntimeKubernetes}
+	w, repo, _ := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose, RuntimeKubernetes: k8s})
+	ctx := context.Background()
+	require.NoError(t, repo.CreateTask(ctx, Task{
+		ID: "recover-remove", AppID: "removed-app", Type: TaskRemove, Purge: true, Status: TaskRunning, CreatedAt: time.Now(),
+	}))
+
+	w.Start(ctx)
+	require.Eventually(t, func() bool {
+		task, _ := repo.GetTask(ctx, "recover-remove")
+		return task.Status == TaskSucceeded
+	}, time.Second, 10*time.Millisecond)
+	assert.Equal(t, []string{"removed-app"}, compose.removed)
+	assert.Empty(t, k8s.removed, "recovery must not delete a same-named Kubernetes application by default")
 }
 
 func TestWorkerPerAppSerial(t *testing.T) {
@@ -307,28 +347,46 @@ func TestWorkerHealthTimeoutAndUnhealthyFailure(t *testing.T) {
 	}
 }
 
-// MED#11：remove 成功后回收 app 的串行队列（不再永久驻留）。
-func TestWorkerStopQueueOnRemove(t *testing.T) {
+func TestWorkerQueuedTaskAfterRemoveReachesTerminalState(t *testing.T) {
 	compose := &fakeAdapter{kind: RuntimeCompose}
 	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
 	ctx := context.Background()
 	prepApp(t, repo, paths, "a")
-	// 触发 ensureQueue 创建队列。
-	q := w.ensureQueue("a")
-	require.NotNil(t, q)
-	require.Contains(t, w.queues, "a")
-
 	require.NoError(t, repo.CreateTask(ctx, Task{ID: "t1", AppID: "a", Type: TaskRemove, Purge: true, Status: TaskQueued, CreatedAt: time.Now()}))
-	w.execute(ctx, "t1") // dispatch 中 TaskRemove 成功后调用 stopQueue
-
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "t2", AppID: "a", Type: TaskOperate, Action: ActionStart, Status: TaskQueued, CreatedAt: time.Now().Add(time.Millisecond)}))
+	w.Enqueue("t1")
+	w.Enqueue("t2")
 	require.Eventually(t, func() bool {
-		w.mu.Lock()
-		defer w.mu.Unlock()
-		_, ok := w.queues["a"]
-		return !ok
-	}, time.Second, 10*time.Millisecond, "remove 后队列应被回收")
+		removed, _ := repo.GetTask(ctx, "t1")
+		after, _ := repo.GetTask(ctx, "t2")
+		return removed.Status == TaskSucceeded && after.Status == TaskFailed
+	}, time.Second, 10*time.Millisecond, "remove 后排队任务必须明确终结，不能永远 queued")
+}
 
-	// 二次 stopQueue 不应 panic（幂等）。
-	require.NotPanics(t, func() { w.stopQueue("a") })
-	_ = paths
+func TestWorkerRecoversPreparedRevisionFiles(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	prepApp(t, repo, paths, "recover-files")
+	newCompose := safeCompose + "\n# revision-2"
+	require.NoError(t, os.WriteFile(paths.RevisionFile("recover-files", 2), []byte(newCompose), 0o644))
+	require.NoError(t, os.WriteFile(paths.PendingEnvFile("recover-files", 2), []byte("PASSWORD=new-secret\n"), 0o600))
+	meta, _, err := repo.GetAppMeta(ctx, "recover-files")
+	require.NoError(t, err)
+	meta.Revision = 2
+	require.NoError(t, repo.UpsertAppMeta(ctx, meta))
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "recover-task", AppID: "recover-files", Type: TaskApply, Revision: 2, Status: TaskRunning, CreatedAt: time.Now()}))
+
+	w.Start(ctx)
+	require.Eventually(t, func() bool {
+		task, _ := repo.GetTask(ctx, "recover-task")
+		return task.Status == TaskSucceeded
+	}, time.Second, 10*time.Millisecond)
+	actualCompose, err := os.ReadFile(paths.ComposeFile("recover-files"))
+	require.NoError(t, err)
+	assert.Equal(t, newCompose, string(actualCompose))
+	actualEnv, err := os.ReadFile(paths.EnvFile("recover-files"))
+	require.NoError(t, err)
+	assert.Equal(t, "PASSWORD=new-secret\n", string(actualEnv))
+	assert.NoFileExists(t, paths.PendingEnvFile("recover-files", 2))
 }

@@ -171,7 +171,18 @@ type DesiredApplication struct {
 	ConfirmRisky bool `json:"confirmRisky,omitempty"`
 	// RetainEnvironment 用于安全编辑：前端无法读取 secret，只能请求 Controller
 	// 在内部复用当前 .env 做预检和落盘。仅更新已有应用时有效。
-	RetainEnvironment bool `json:"retainEnvironment,omitempty"`
+	RetainEnvironment bool                `json:"retainEnvironment,omitempty"`
+	Settings          *DeploymentSettings `json:"settings,omitempty"` // 新建向导的受控 Compose 配置
+}
+
+// DeploymentSettings 是新建向导对第一个 Compose service 的受控配置。后端将其
+// 合并进 YAML 后再执行同一套 compose config / 风险 / revision 流程。
+type DeploymentSettings struct {
+	DataPath    string `json:"dataPath,omitempty"`
+	DataTarget  string `json:"dataTarget,omitempty"`
+	CPULimit    string `json:"cpuLimit,omitempty"`
+	MemoryLimit string `json:"memoryLimit,omitempty"`
+	AutoStart   bool   `json:"autoStart"`
 }
 
 // --- Task ---
@@ -272,8 +283,8 @@ type OperationOptions struct {
 // RemoveOptions Remove（卸载）的可选项。数据删除策略必须显式。
 type RemoveOptions struct {
 	IdempotencyKey string
-	// Purge=true 时删除受管（managed）volume 与受管 bind 目录；
-	// external volume 与非受管 bind 永远不删。
+	// Purge=true 时删除受管（managed）volume 与 devbox 受管数据目录；
+	// external volume 与 bind 永远不删。
 	Purge bool
 	Actor string
 }
@@ -385,19 +396,22 @@ type RuntimeCapability struct {
 
 // ValidateRequest 预检请求。
 type ValidateRequest struct {
-	ComposeContent    string            `json:"compose"`
-	Name              string            `json:"name,omitempty"`
-	Parameters        map[string]string `json:"parameters,omitempty"`
-	Secrets           map[string]string `json:"secrets,omitempty"` // 仅用于本次预检，不回显/不持久化
-	Source            ApplicationSource `json:"source,omitempty"`
-	AppID             string            `json:"appId,omitempty"`
-	RetainEnvironment bool              `json:"retainEnvironment,omitempty"`
+	ComposeContent    string              `json:"compose"`
+	Name              string              `json:"name,omitempty"`
+	Parameters        map[string]string   `json:"parameters,omitempty"`
+	Secrets           map[string]string   `json:"secrets,omitempty"` // 仅用于本次预检，不回显/不持久化
+	Source            ApplicationSource   `json:"source,omitempty"`
+	AppID             string              `json:"appId,omitempty"`
+	RetainEnvironment bool                `json:"retainEnvironment,omitempty"`
+	Settings          *DeploymentSettings `json:"settings,omitempty"`
 }
 
 // ValidateResult 预检结果。
 type ValidateResult struct {
 	OK       bool             `json:"ok"`
 	Services []ServicePreview `json:"services,omitempty"`
+	Networks []string         `json:"networks,omitempty"` // Compose 网络名；无显式声明时为 default
+	Secrets  []string         `json:"secrets,omitempty"`  // 仅 key，不含任何值
 	Risks    []RiskFinding    `json:"risks,omitempty"`
 	Warnings []string         `json:"warnings,omitempty"`
 	Errors   []string         `json:"errors,omitempty"` // 致命（如非法 YAML）
