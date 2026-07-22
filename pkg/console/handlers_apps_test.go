@@ -23,6 +23,7 @@ type stubController struct {
 	applyErr       error
 	lastApplyCt    int
 	lastValidateCt int
+	lastDesired    apps.DesiredApplication
 
 	operateTask apps.Task
 	operateErr  error
@@ -69,6 +70,7 @@ func (s *stubController) Validate(context.Context, apps.ValidateRequest) (apps.V
 }
 func (s *stubController) Apply(_ context.Context, d apps.DesiredApplication, _ apps.ApplyOptions) (apps.Task, error) {
 	s.lastApplyCt++
+	s.lastDesired = d
 	return s.applyTask, s.applyErr
 }
 func (s *stubController) Operate(context.Context, string, apps.Action, apps.OperationOptions) (apps.Task, error) {

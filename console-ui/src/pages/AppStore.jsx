@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { StatusDot, Chip, Ring, Sparkline, Card, useTicker } from '../components/ui'
-import { useDevice, useMetrics, useMetricsHistory, useApps, useAlerts, useNetwork, getAuthToken } from '../hooks/useApi'
+import { useDevice, useMetrics, useMetricsHistory, useApps, useAlerts, useNetwork, useTask, getAuthToken } from '../hooks/useApi'
 import { btnSecondary, btnPrimary, btnDanger } from '../components/AppWindow'
 import TabBar from '../components/TabBar'
 
@@ -110,7 +110,11 @@ function DeployDialog({ app, onClose, onSuccess }) {
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) { const msg = await res.text(); throw new Error(msg); }
+      if (!res.ok) {
+        let msg = `部署失败 (${res.status})`;
+        try { const e = await res.json(); msg = e.error || e.detail || e.reason || msg; } catch {}
+        throw new Error(msg);
+      }
       const result = await res.json();
       onSuccess(result);
     } catch (e) {
@@ -213,44 +217,22 @@ function DeployDialog({ app, onClose, onSuccess }) {
   );
 }
 
-function DeployStatus({ deploymentName, onDone }) {
-  const [phase, setPhase] = useState('Pending');
-  const [message, setMessage] = useState('');
-
-  useEffect(() => {
-    let timer;
-    let stopped = false;
-    const poll = async () => {
-      try {
-        const token = getAuthToken();
-        const headers = token ? { Authorization: 'Bearer ' + token } : {};
-        const res = await fetch('/api/v1/store/deployments', { headers });
-        if (res.ok) {
-          const data = await res.json();
-          const dep = data.find(d => d.name === deploymentName);
-          if (dep) {
-            setPhase(dep.phase || 'Pending');
-            setMessage(dep.message || '');
-            if (dep.phase === 'Running' || dep.phase === 'Failed') {
-              stopped = true;
-              return;
-            }
-          }
-        }
-      } catch {}
-      if (!stopped) timer = setTimeout(poll, 3000);
-    };
-    poll();
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [deploymentName]);
-
+// DeployStatus 经 useTask 轮询 /api/v1/tasks/{taskId}（后端 store install 返回 202+Task）。
+// task.status 映射：queued/running→部署中，succeeded→已部署，failed→部署失败。
+function DeployStatus({ taskId }) {
+  const { task } = useTask(taskId, 1500);
+  const phase = !task || !task.status ? 'Pending'
+    : task.status === 'succeeded' ? 'Running'
+    : task.status === 'failed' ? 'Failed' : 'Pending';
+  const label = { Pending: '部署中', Running: '已部署', Failed: '部署失败' }[phase];
+  const message = task?.message || '';
   const toneMap = { Pending: '#f59e0b', Running: '#10b981', Failed: '#ef4444' };
   const color = toneMap[phase] || T.ink3;
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: T.surfaceAlt, border: `1px solid ${T.borderSoft}` }}>
       <StatusDot tone={phase === 'Running' ? 'green' : phase === 'Failed' ? 'red' : 'yellow'} size={8}/>
-      <span style={{ fontSize: 12.5, fontWeight: 600, color }}>{phase}</span>
+      <span style={{ fontSize: 12.5, fontWeight: 600, color }}>{label}</span>
       {message && <span style={{ fontSize: 11, color: T.ink3 }}>— {message}</span>}
     </div>
   );
@@ -309,6 +291,7 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ ...T.type.title, fontWeight: 700, color: T.ink }}>{app.name}</div>
+              <Chip tone={app.runtime === 'compose' ? 'blue' : 'gray'}>{app.runtime === 'compose' ? 'Docker Compose' : 'Kubernetes'}</Chip>
               <Chip tone="gray"><span className="mono">{app.ver}</span></Chip>
               <Chip tone="blue">{app.cat}</Chip>
               {(app.installed || deployResult) && <Chip tone="green"><StatusDot tone="green" size={6}/>{deployResult ? '已部署' : '已安装'}</Chip>}
@@ -325,18 +308,24 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
           {/* LF 2026-06-22：商店详情页按钮 = 始终「部署」（即使已安装也允许重新部署
               覆盖配置 / 升级版本 / 部署第二实例）。「打开应用」是桌面图标的职责，
               不在商店职责内 —— 已安装状态由左侧绿 chip「已安装」标识就够 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-            <button onClick={() => setShowDeploy(true)} className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 36, padding: '0 18px' }}>
-              <Icon name="download" size={13} stroke={2}/>部署
-            </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, alignItems: 'flex-end' }}>
+            {app.installable ? (
+              <button onClick={() => setShowDeploy(true)} className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 36, padding: '0 18px' }}>
+                <Icon name="download" size={13} stroke={2}/>部署
+              </button>
+            ) : (
+              <div title={app.notInstallableReason || ''} style={{ fontSize: 11.5, color: T.ink3, padding: '8px 12px', borderRadius: 8, background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`, maxWidth: 180, textAlign: 'center' }}>
+                仅 Kubernetes 环境支持
+              </div>
+            )}
           </div>
         </div>
 
         {deployResult && (
           <Card title="部署状态" padding={16} style={{ marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <DeployStatus deploymentName={deployResult.name}/>
-              <span style={{ fontSize: 12, color: T.ink3 }} className="mono">{deployResult.name}</span>
+              <DeployStatus taskId={deployResult.taskId}/>
+              <span style={{ fontSize: 12, color: T.ink3 }} className="mono">{deployResult.appId || deployResult.name}</span>
             </div>
           </Card>
         )}
@@ -424,20 +413,28 @@ function StoreCard({ app, onOpen, onOpenApp }) {
           fontSize: 10.5, padding: '2px 6px', borderRadius: 3,
           background: T.surfaceAlt, color: T.ink3, border: `1px solid ${T.borderSoft}`,
         }}>{app.cat}</span>
+        <span style={{
+          fontSize: 9.5, padding: '1px 5px', borderRadius: 3, fontWeight: 600, flexShrink: 0,
+          background: app.runtime === 'compose' ? '#eff6ff' : T.surfaceAlt,
+          color: app.runtime === 'compose' ? '#1d4ed8' : T.ink3,
+          border: `1px solid ${app.runtime === 'compose' ? '#bfdbfe' : T.borderSoft}`,
+        }}>{app.runtime === 'compose' ? 'Compose' : 'K8s'}</span>
         <span style={{ fontSize: 10.5, color: T.ink4 }}>{app.dev}</span>
         <div style={{ flex: 1 }}/>
         <span style={{ fontSize: 10.5, color: T.ink4 }} className="mono">{app.date}</span>
-        {app.installed
-          ? <button onClick={(e) => { e.stopPropagation(); onOpenApp && onOpenApp({ id: app.id }); }}
-              className="edge-press edge-btn-secondary"
-              style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
-              <Icon name="play" size={11} stroke={2}/>打开
-            </button>
-          : <button onClick={(e) => { e.stopPropagation(); onOpen(); }}
-              className="edge-press edge-btn-primary"
-              style={{ ...btnPrimary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
-              <Icon name="download" size={11} stroke={2}/>部署
-            </button>
+        {!app.installable
+          ? <span title={app.notInstallableReason || ''} style={{ fontSize: 10.5, color: T.ink4, fontWeight: 600, flexShrink: 0 }}>仅 Kubernetes</span>
+          : app.installed
+            ? <button onClick={(e) => { e.stopPropagation(); onOpenApp && onOpenApp({ id: app.id }); }}
+                className="edge-press edge-btn-secondary"
+                style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
+                <Icon name="play" size={11} stroke={2}/>打开
+              </button>
+            : <button onClick={(e) => { e.stopPropagation(); onOpen(); }}
+                className="edge-press edge-btn-primary"
+                style={{ ...btnPrimary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
+                <Icon name="download" size={11} stroke={2}/>部署
+              </button>
         }
       </div>
     </div>
@@ -470,6 +467,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
   const [q, setQ] = useState('');
   const [detail, setDetail] = useState(null);
   const [platformApps, setPlatformApps] = useState(null);
+  const [storeStatus, setStoreStatus] = useState('loading'); // loading | ready | empty
 
   // 已部署应用清单（10s 轮询）—— 用于判断 store app 的 installed / upgradable 状态
   const { data: deployedApps } = useApps(10000);
@@ -493,8 +491,14 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
     const token = getAuthToken();
     const headers = token ? { Authorization: 'Bearer ' + token } : {};
     fetch('/api/v1/store/apps', { headers }).then(r => r.ok ? r.json() : null).then(data => {
-      if (data && Array.isArray(data) && data.length > 0) setPlatformApps(data);
-    }).catch(() => {});
+      if (data && Array.isArray(data) && data.length > 0) {
+        setPlatformApps(data);
+        setStoreStatus('ready');
+      } else {
+        setPlatformApps(Array.isArray(data) ? data : null);
+        setStoreStatus('empty');
+      }
+    }).catch(() => setStoreStatus('empty'));
   }, []);
 
   // 从平台数据计算分类（每次 render 重新计算，避免 state 时序问题）
@@ -525,6 +529,9 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
           installed: installedVersion != null,
           installedVersion,
           upgradable,
+          runtime: a.runtime || 'kubernetes',
+          installable: a.installable === true,
+          notInstallableReason: a.notInstallableReason || '',
         };
       })
     : [];
@@ -715,15 +722,32 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
           <div style={{
             textAlign: 'center', padding: '60px 20px', color: T.ink3, fontSize: 13,
           }}>
-            <Icon
-              name={tab === 'upgradable' ? 'check' : tab === 'installed' ? 'apps' : 'search'}
-              size={28} stroke={1.5} style={{ color: T.ink4, marginBottom: 8 }}
-            />
-            <div>{
-              tab === 'upgradable' ? '所有已安装应用都是最新版本' :
-              tab === 'installed'  ? '本节点尚未安装任何应用' :
-              '没有匹配的应用'
-            }</div>
+            {storeStatus === 'loading' ? (
+              <>
+                <Icon name="refresh" size={28} stroke={1.5} style={{ color: T.ink4, marginBottom: 8 }}/>
+                <div>正在加载应用商店…</div>
+              </>
+            ) : storeStatus === 'empty' && tab === 'all' && !q ? (
+              <>
+                <Icon name="cloud" size={28} stroke={1.5} style={{ color: T.ink4, marginBottom: 8 }}/>
+                <div>应用商店暂无可用应用</div>
+                <div style={{ fontSize: 11.5, color: T.ink4, marginTop: 6 }}>
+                  未配置应用市场 API，或当前网络无法访问应用市场
+                </div>
+              </>
+            ) : (
+              <>
+                <Icon
+                  name={tab === 'upgradable' ? 'check' : tab === 'installed' ? 'apps' : 'search'}
+                  size={28} stroke={1.5} style={{ color: T.ink4, marginBottom: 8 }}
+                />
+                <div>{
+                  tab === 'upgradable' ? '所有已安装应用都是最新版本' :
+                  tab === 'installed'  ? '本节点尚未安装任何应用' :
+                  '没有匹配的应用'
+                }</div>
+              </>
+            )}
           </div>
         )}
 

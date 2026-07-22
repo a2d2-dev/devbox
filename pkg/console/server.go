@@ -191,8 +191,10 @@ func (s *Server) registerRoutes() {
 	// 网络信息
 	s.mux.HandleFunc("/api/v1/network", s.handleNetwork)
 
-	// 应用商店路由
+	// 应用商店路由（阶段4 Compose 商店统一）
 	s.mux.HandleFunc("/api/v1/store/apps", s.handleStoreApps)
+	s.mux.HandleFunc("/api/v1/store/version", s.handleStoreVersion)
+	s.mux.HandleFunc("/api/v1/store/install", s.handleStoreInstall)
 	// 代理应用图标到 apiserver
 	s.mux.HandleFunc("/app-icons/", s.handleProxyAppIcons)
 
