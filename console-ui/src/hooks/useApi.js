@@ -83,7 +83,7 @@ function formatSize(bytes) {
 
 function usePoll(url, { interval = 0, fallback = null, transform } = {}) {
   const [data, setData] = useState(fallback);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !!url);
   const [error, setError] = useState(null);
   const [tick, setTick] = useState(0);
   const mountedRef = useRef(true);
@@ -97,7 +97,6 @@ function usePoll(url, { interval = 0, fallback = null, transform } = {}) {
     let timer = null;
 
     if (!url) {
-      setLoading(false);
       return () => { mountedRef.current = false; };
     }
 
@@ -330,6 +329,18 @@ export function useApps(interval = 10000) {
         cpuLimit: a.cpuLimit || '',
         memRequest: a.memRequest || '',
         memLimit: a.memLimit || '',
+        // 后端 phase / runtime 透传（权威值，前端不自行推断）。
+        //   - observed.phase        应用聚合状态（running/degraded/...）
+        //   - observed.services[]   服务级运行态（compose=container / k8s=replica）
+        //   - observed.endpoints[]  对外入口（url）
+        //   - observed.message      诊断/错误摘要
+        //   - source{kind,storeId,version,catalogId}  来源与版本（升级/来源筛选）
+        //   - revision              desired generation（乐观并发 / 版本 Tab）
+        //   - lastTask              最近一次操作（列表「最近 operation」提示）
+        observed: a.observed || null,
+        source: a.source || null,
+        revision: a.revision || 0,
+        lastTask: a.lastTask || null,
       }));
     },
   });
@@ -341,27 +352,8 @@ export function useApps(interval = 10000) {
 // null/'' 跳过 fetch。后端 GET /api/v1/apps/{id} 比 ListApps 多调 N+1 K8s
 // API（Secret/ConfigMap GET），故不进列表流程。
 export function useAppDetail(appID) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    if (!appID) { setData(null); return; }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    authFetch(`${API}/apps/${encodeURIComponent(appID)}`)
-      .then(async r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then(d => { if (!cancelled) setData(d); })
-      .catch(e => { if (!cancelled) setError(e.message || 'fetch failed'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [appID]);
-
-  return { data, loading, error };
+  const url = appID ? `/apps/${encodeURIComponent(appID)}` : null;
+  return usePoll(url, { interval: 0, fallback: null });
 }
 
 // ─── Alerts ──────────────────────────────────────────────────────
@@ -435,18 +427,20 @@ export function useNetwork() {
 
 // ─── App logs (polling) ─────────────────────────────────────────
 
-export function useAppLogs(appId, interval = 3000, tail = 200) {
+export function useAppLogs(appId, interval = 3000, tail = 200, service = '') {
   const [lines, setLines] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !!appId);
   const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
-    if (!appId) { setLines([]); setLoading(false); return; }
+    if (!appId) return () => { mountedRef.current = false; };
 
     async function doFetch() {
       try {
-        const r = await authFetch(`${API}/apps/${appId}/logs?tail=${tail}`);
+        const q = new URLSearchParams({ tail: String(tail) });
+        if (service) q.set('service', service);
+        const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}/logs?${q}`);
         if (!r.ok) return;
         const d = await r.json();
         if (!mountedRef.current) return;
@@ -459,7 +453,7 @@ export function useAppLogs(appId, interval = 3000, tail = 200) {
     doFetch();
     const timer = setInterval(doFetch, interval);
     return () => { mountedRef.current = false; clearInterval(timer); };
-  }, [appId, interval, tail]);
+  }, [appId, interval, tail, service]);
 
   return { lines, loading };
 }
@@ -621,6 +615,7 @@ export function useTask(taskId, interval = 1500) {
     if (!taskId) return () => { mountedRef.current = false; };
     let timer = null;
     async function poll() {
+      let terminal = false;
       try {
         const r = await authFetch(`${API}/tasks/${encodeURIComponent(taskId)}`);
         if (!r.ok) return;
@@ -628,15 +623,18 @@ export function useTask(taskId, interval = 1500) {
         if (!mountedRef.current) return;
         setTask(t);
         if (t.status && ['succeeded', 'failed', 'canceled', 'superseded'].includes(t.status)) {
+          terminal = true;
           if (timer) clearInterval(timer);
           setLoading(false);
           return;
         }
       } catch { /* keep */ }
       finally { if (mountedRef.current) setLoading(false); }
+      return terminal;
     }
-    poll();
-    timer = setInterval(poll, interval);
+    poll().then((terminal) => {
+      if (!terminal && mountedRef.current) timer = setInterval(poll, interval);
+    });
     return () => { mountedRef.current = false; if (timer) clearInterval(timer); };
   }, [taskId, interval]);
 
@@ -654,17 +652,34 @@ export function useAppRevisions(appId) {
   return usePoll(url, { interval: 0, fallback: [] });
 }
 
+// readErr 把后端统一错误信封 {"error","reason","findings"} 解析成带结构的 Error。
+// 返回的 Error 携带：
+//   .status   HTTP 状态码（409 冲突 / 422 风险阻断 / 502 catalog 不可达 / ...）
+//   .reason   机器可读原因码（revision_mismatch / idempotency_conflict /
+//             risk_blocked / catalog_unreachable / not_installable / validation_failed / ...）
+//   .findings 风险项数组（仅 risk_blocked；脱敏，无 secret/compose 正文）
+// 调用方 `throw await readErr(r)`；UI 据此分流（如 409 提示重新加载而非静默覆盖）。
 async function readErr(r) {
   const t = await r.text().catch(() => '');
+  const err = new Error(`HTTP ${r.status}`);
+  err.status = r.status;
+  err.reason = '';
+  err.findings = null;
   if (t) {
-    // 后端错误为统一 JSON 信封 {"error","reason","findings"}；优先取 error 字段。
     try {
       const j = JSON.parse(t);
-      if (j && typeof j.error === 'string') return j.error;
+      if (j && typeof j.error === 'string') {
+        err.message = j.error;
+        if (typeof j.reason === 'string') err.reason = j.reason;
+        if (j.detail) err.detail = j.detail;
+        if (Array.isArray(j.findings)) err.findings = j.findings;
+        return err;
+      }
     } catch { /* 非 JSON，按纯文本返回 */ }
-    return t;
+    err.message = t.length > 500 ? t.slice(0, 500) + '…' : t;
+    return err;
   }
-  return `HTTP ${r.status}`;
+  return err;
 }
 
 // 预检（不落盘）。
@@ -672,7 +687,7 @@ export async function validateCompose(req) {
   const r = await authFetch(`${API}/apps/validate`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
   });
-  if (!r.ok) throw new Error(await readErr(r));
+  if (!r.ok) throw await readErr(r);
   return r.json();
 }
 
@@ -684,27 +699,148 @@ export async function applyComposeApp(desired, idempotencyKey) {
   const r = await authFetch(`${API}/apps${isUpdate ? '/' + encodeURIComponent(desired.id) : ''}`, {
     method: isUpdate ? 'PUT' : 'POST', headers, body: JSON.stringify(desired),
   });
-  if (!r.ok) throw new Error(await readErr(r));
+  if (!r.ok) throw await readErr(r);
   return r.json();
 }
 
 // 异步生命周期（202 + Task）。
 export async function appActionAsync(appId, action) {
   const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}/actions/${action}`, { method: 'POST' });
-  if (!r.ok) throw new Error(await readErr(r));
+  if (!r.ok) throw await readErr(r);
   return r.json();
 }
 
 // 卸载（兼容同步；purge=true 删除受管数据，external 永不删）。
 export async function removeAppEx(appId, purge = false) {
   const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}${purge ? '?purge=true' : ''}`, { method: 'DELETE' });
-  if (!r.ok) throw new Error(await readErr(r));
+  if (!r.ok) throw await readErr(r);
   return r.json();
 }
 
 // 回滚到历史 revision（202 + Task）。
 export async function restoreAppRevision(appId, rev) {
   const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}/revisions/${rev}/restore`, { method: 'POST' });
-  if (!r.ok) throw new Error(await readErr(r));
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+// ─── Compose 详情：compose 正文 / env 元信息 / storage ─────────────
+//
+// 均为「事实源静态推导」读路径，单次拉取（drawer 打开时），不轮询。
+// usePoll 在 url 为 null 时跳过 fetch（id 未就绪 / drawer 关闭）。
+
+// useCompose：GET /apps/{id}/compose → {appId, source, compose, revision}。
+// compose 正文仅含非敏感渲染结果（secret 以 ${KEY} 引用），可安全展示/编辑。
+export function useCompose(appId) {
+  const url = appId ? `/apps/${encodeURIComponent(appId)}/compose` : null;
+  return usePoll(url, { interval: 0, fallback: null });
+}
+
+// useEnv：GET /apps/{id}/env → {appId, vars[{key,configured,type,required}]}。
+// 仅元信息，绝不回值（后端 EnvVarInfo 无 value 字段）。
+export function useEnv(appId) {
+  const url = appId ? `/apps/${encodeURIComponent(appId)}/env` : null;
+  return usePoll(url, { interval: 0, fallback: null });
+}
+
+// useStorage：GET /apps/{id}/storage → {appId, volumes[{kind,source,target,external,managed,deletable}], managedDataDir, note}。
+export function useStorage(appId) {
+  const url = appId ? `/apps/${encodeURIComponent(appId)}/storage` : null;
+  return usePoll(url, { interval: 0, fallback: null });
+}
+
+// updateComposeApp：PUT /apps/{id} 更新期望状态（乐观并发 via expectedRevision）。
+// 409 (revision_mismatch / idempotency_conflict) 由 readErr 带出 .status/.reason，
+// 调用方据此提示「重新加载」而非静默覆盖。
+// compose 正文 + parameters + secrets；secrets 仅写不入 revision/audit。
+export async function updateComposeApp(desired, idempotencyKey) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+  const r = await authFetch(`${API}/apps/${encodeURIComponent(desired.id)}`, {
+    method: 'PUT', headers, body: JSON.stringify(desired),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+// getRemovePreview：GET /apps/{id}/remove-preview?purge= 明确列出 willDelete/willKeep。
+// 卸载对话框打开时按需调用（非 hook，避免无谓轮询）。
+export async function getRemovePreview(appId, purge = false) {
+  const q = purge ? '?purge=true' : '?purge=false';
+  const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}/remove-preview${q}`);
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+// ─── 平台商店（edge-apiserver storeapps）──────────────────────────
+//
+// 走 /store/*。compose 模板由后端持有，前端永不接收/发送原文（CEO 裁决第5条）。
+
+// useStoreApps：GET /store/apps（含 runtime/installable/installed/pinned）。
+// 单次拉取 + 手动刷新（列表成本较高，依赖 deployed apps 轮询做 installed/upgradable）。
+export function useStoreApps() {
+  return usePoll('/store/apps', { interval: 0, fallback: null });
+}
+
+// getStoreVersion：GET /store/version?appId=&v= → StoreAppVersion（valuesSchema/defaultValues）。
+// compose 模板 json:"-" 裁剪，永不回前端。
+export async function getStoreVersion(appId, version = '') {
+  const q = `?appId=${encodeURIComponent(appId)}&v=${encodeURIComponent(version || '')}`;
+  const r = await authFetch(`${API}/store/version${q}`);
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+// installStoreApp：POST /store/install → 202 + {taskId, appId, name, revision}。
+// values 含 password 字段；compose 原文由后端从可信 catalog 重取渲染。
+export async function installStoreApp({ appId, version, values, idempotencyKey }) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+  const r = await authFetch(`${API}/store/install`, {
+    method: 'POST', headers, body: JSON.stringify({ appId, version, values, idempotencyKey }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+// ─── 第三方 catalog（HTTP/Git 文件原生 source）──────────────────────
+//
+// 走 /catalogs/*。多 source 聚合，单 source 不可用仅影响该 source（用上次缓存）。
+
+// useCatalogSources：GET /catalogs → []CatalogSnapshot（来源健康状态）。
+export function useCatalogSources(interval = 30000) {
+  return usePoll('/catalogs', { interval, fallback: [] });
+}
+
+// useCatalogApps：GET /catalogs/apps → []StoreApp（带 catalogId/catalogName/installable/installed）。
+export function useCatalogApps(interval = 30000) {
+  return usePoll('/catalogs/apps', { interval, fallback: [] });
+}
+
+// refreshCatalogs：POST /catalogs 显式刷新所有已配置 source（不接受 URL 入参）。
+export async function refreshCatalogs() {
+  const r = await authFetch(`${API}/catalogs`, { method: 'POST' });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+// getCatalogVersion：GET /catalogs/version?sourceId=&appId=&v= → StoreAppVersion。
+export async function getCatalogVersion(sourceId, appId, version = '') {
+  const q = `?sourceId=${encodeURIComponent(sourceId)}&appId=${encodeURIComponent(appId)}&v=${encodeURIComponent(version || '')}`;
+  const r = await authFetch(`${API}/catalogs/version${q}`);
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+// installCatalogApp：POST /catalogs/install → 202 + StoreInstallResult。
+// 后端按 sourceId+appId+version 从可信 source 重取渲染（前端不传 compose 原文）。
+export async function installCatalogApp({ sourceId, appId, version, values, idempotencyKey }) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+  const r = await authFetch(`${API}/catalogs/install`, {
+    method: 'POST', headers,
+    body: JSON.stringify({ sourceId, appId, version, values, idempotencyKey }),
+  });
+  if (!r.ok) throw await readErr(r);
   return r.json();
 }

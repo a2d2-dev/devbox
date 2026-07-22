@@ -145,6 +145,28 @@ func TestAnalyzeComposeSafe(t *testing.T) {
 	assert.False(t, NeedsConfirmation(f, false))
 }
 
+func TestAnalyzeLiteralSecretsBlocked(t *testing.T) {
+	for _, raw := range []string{
+		"services:\n  app:\n    image: nginx:1.27\n    environment:\n      PASSWORD: hunter2\n",
+		"services:\n  app:\n    image: nginx:1.27\n    environment: [TOKEN=plain-token]\n",
+	} {
+		findings, err := AnalyzeLiteralSecrets(raw)
+		require.NoError(t, err)
+		assert.True(t, HasBlocked(findings))
+	}
+}
+
+func TestAnalyzeLiteralSecretsReferencesAllowed(t *testing.T) {
+	for _, raw := range []string{
+		"services:\n  app:\n    image: nginx:1.27\n    environment:\n      PASSWORD: ${PASSWORD:?required}\n",
+		"services:\n  app:\n    image: nginx:1.27\n    environment: [\"TOKEN=${TOKEN}\"]\n",
+	} {
+		findings, err := AnalyzeLiteralSecrets(raw)
+		require.NoError(t, err)
+		assert.False(t, HasBlocked(findings))
+	}
+}
+
 // 长语法 volume 的 bind 检测。
 func TestAnalyzeComposeLongSyntaxBind(t *testing.T) {
 	yaml := `services:

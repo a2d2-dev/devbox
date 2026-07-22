@@ -163,6 +163,14 @@ type DesiredApplication struct {
 	Parameters       map[string]string `json:"parameters,omitempty"`       // 非敏感参数快照（进 revision）
 	Secrets          map[string]string `json:"secrets,omitempty"`          // 仅写，永不回传/入 revision/audit
 	ExpectedRevision int64             `json:"expectedRevision,omitempty"` // 乐观并发；更新时校验
+	// ConfirmRisky：调用方对 confirmation 级风险（ipc:host / 敏感 capability / 禁用
+	// seccomp 等）的显式确认。仅 inline 来源有效；blocked 级风险（privileged /
+	// docker.sock / host network / 系统目录 bind）永远不可 override。
+	// 后端 Apply 据此设 ApplyOptions.AllowRiskyConfirmation（审计留痕见 Task）。
+	ConfirmRisky bool `json:"confirmRisky,omitempty"`
+	// RetainEnvironment 用于安全编辑：前端无法读取 secret，只能请求 Controller
+	// 在内部复用当前 .env 做预检和落盘。仅更新已有应用时有效。
+	RetainEnvironment bool `json:"retainEnvironment,omitempty"`
 }
 
 // --- Task ---
@@ -271,9 +279,10 @@ type RemoveOptions struct {
 
 // LogOptions 日志查询。
 type LogOptions struct {
-	Tail   int64 // 行数；0 表示不限（实际有上限）
-	Since  time.Duration
-	Follow bool // 本 MVP 不实现 follow 流，保留字段
+	Tail    int64 // 行数；0 表示不限（实际有上限）
+	Since   time.Duration
+	Follow  bool   // 本 MVP 不实现 follow 流，保留字段
+	Service string // Compose service 名；空表示第一个可观察容器
 }
 
 // LogPage 日志结果。内容必须脱敏。
@@ -375,10 +384,13 @@ type RuntimeCapability struct {
 
 // ValidateRequest 预检请求。
 type ValidateRequest struct {
-	ComposeContent string            `json:"compose"`
-	Name           string            `json:"name,omitempty"`
-	Parameters     map[string]string `json:"parameters,omitempty"`
-	Source         ApplicationSource `json:"source,omitempty"`
+	ComposeContent    string            `json:"compose"`
+	Name              string            `json:"name,omitempty"`
+	Parameters        map[string]string `json:"parameters,omitempty"`
+	Secrets           map[string]string `json:"secrets,omitempty"` // 仅用于本次预检，不回显/不持久化
+	Source            ApplicationSource `json:"source,omitempty"`
+	AppID             string            `json:"appId,omitempty"`
+	RetainEnvironment bool              `json:"retainEnvironment,omitempty"`
 }
 
 // ValidateResult 预检结果。

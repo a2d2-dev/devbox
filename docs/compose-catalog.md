@@ -1,0 +1,67 @@
+# Docker Compose Catalog 接入规范
+
+devbox 可以聚合 edge-apiserver 应用市场以及多个第三方 HTTP/Git catalog。第三方包安装时，后端会按 `sourceId + appId + version` 从可信 source 重新读取定义，前端不能提交 Compose 模板原文。
+
+## Catalog 目录
+
+HTTP source 的 URL 指向一个目录；Git source 的 `path` 指向仓库内目录。该目录必须包含 `catalog.json`：
+
+```json
+{
+  "apiVersion": "devbox/v1",
+  "name": "community",
+  "apps": [
+    {
+      "id": "whoami",
+      "name": "Who Am I",
+      "description": "展示请求信息",
+      "category": "developer-tools",
+      "provider": "community",
+      "icon": "https://cdn.example.com/whoami.png",
+      "versions": [
+        {
+          "version": "1.10.3",
+          "compose": "apps/whoami/compose.yaml",
+          "valuesSchema": {
+            "version": "1",
+            "fields": [
+              { "key": "HTTP_PORT", "type": "number", "required": true, "label": { "zh": "HTTP 端口" } },
+              { "key": "APP_PASSWORD", "type": "password", "required": true, "label": { "zh": "访问密码" } }
+            ]
+          },
+          "defaultValues": { "HTTP_PORT": 8080 }
+        }
+      ]
+    }
+  ]
+}
+```
+
+`compose` 是相对于 catalog 目录的文件路径，也可改用 `composeTemplate` 内联模板。模板使用 Go `text/template` 的简单字段访问，例如 `{{ .HTTP_PORT }}`；devbox 不注册 shell、文件或自定义函数。password 字段不会传给模板，Compose 应通过 `${APP_PASSWORD}` 从受管 `.env` 读取。
+
+```yaml
+services:
+  app:
+    image: traefik/whoami:1.10.3
+    ports:
+      - "{{ .HTTP_PORT }}:80"
+    environment:
+      APP_PASSWORD: ${APP_PASSWORD}
+```
+
+## 安全和生命周期
+
+- 公网 HTTP source 必须使用 HTTPS；明文 HTTP 仅允许 localhost/测试环境的显式配置。
+- Git source 只接受 HTTP(S) 仓库，执行 shallow clone，并限制超时、输出、目录总大小和符号链接越界。
+- `privileged`、Docker socket、host network/PID、系统根目录 bind 等 blocked 风险会被拒绝。Catalog 包使用 `latest/main/master/edge/nightly` 等可变镜像标签也会被拒绝。
+- Secret 只写入应用 `.env`（0600），不进入 revision、Task、audit、日志或读取响应。
+- catalog 暂时不可用时继续展示上次可信缓存；已安装应用的生命周期不依赖 catalog 在线。
+- Git refresh 只更新 catalog 缓存，不会自动升级已安装应用；本功能不是 GitOps reconcile。
+
+## API
+
+- `GET /api/v1/catalogs`：来源状态及缓存时间。
+- `POST /api/v1/catalogs`：显式刷新已配置来源，不接受 URL。
+- `GET /api/v1/catalogs/apps`：聚合应用列表。
+- `GET /api/v1/catalogs/version?sourceId=&appId=&v=`：版本与参数 schema，不返回 Compose 模板。
+- `POST /api/v1/catalogs/install`：提交安装/升级，返回 `202 + Task`。

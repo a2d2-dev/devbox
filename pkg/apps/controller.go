@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -320,9 +321,32 @@ func (s *service) Validate(ctx context.Context, req ValidateRequest) (ValidateRe
 		res.Errors = append(res.Errors, "compose 内容为空")
 		return res, nil
 	}
-	// 真实预检：渲染（docker compose config，无 secret——Validate 仅 params 插值）。
+	literalSecretRisks, err := AnalyzeLiteralSecrets(req.ComposeContent)
+	if err != nil {
+		res.Errors = append(res.Errors, "解析失败: "+err.Error())
+		return res, nil
+	}
+	res.Risks = append(res.Risks, literalSecretRisks...)
+	// 真实预检：新建时仅 params 插值；编辑已有应用时可在 Controller 内部复用
+	// 当前 .env，secret 仍不经过 HTTP。
 	// compose CLI 不可用时回退静态分析并加 warning；配置非法 → res.Errors。
-	env := renderEnvFile(nil, req.Parameters)
+	env := renderEnvFile(req.Secrets, req.Parameters)
+	if req.RetainEnvironment {
+		if strings.TrimSpace(req.AppID) == "" {
+			res.Errors = append(res.Errors, "retainEnvironment 需要 appId")
+			return res, nil
+		}
+		if _, ok, err := s.repo.GetAppMeta(ctx, req.AppID); err != nil {
+			return res, err
+		} else if !ok {
+			return res, NotFoundErr(req.AppID)
+		}
+		b, err := os.ReadFile(s.paths.EnvFile(req.AppID))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return res, fmt.Errorf("读取现有环境配置: %w", err)
+		}
+		env = mergeEnvFile(string(b), req.Secrets, req.Parameters)
+	}
 	rendered, warn, rerr := s.renderForCheck(ctx, req.ComposeContent, env, false)
 	if rerr != nil {
 		res.Errors = append(res.Errors, rerr.Error())
@@ -394,12 +418,46 @@ func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts Ap
 		}
 	}
 
+	// 安全编辑可在不向前端回传 secret 的前提下复用当前 .env。
+	var retainedEnv string
+	if desired.RetainEnvironment {
+		appID := strings.TrimSpace(desired.ID)
+		if appID == "" {
+			return Task{}, ValidationErr("retainEnvironment 仅适用于更新已有应用")
+		}
+		meta, ok, err := s.repo.GetAppMeta(ctx, appID)
+		if err != nil {
+			return Task{}, err
+		}
+		if !ok {
+			return Task{}, NotFoundErr(appID)
+		}
+		if desired.Parameters == nil {
+			desired.Parameters = meta.Parameters
+		}
+		b, err := os.ReadFile(s.paths.EnvFile(appID))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Task{}, fmt.Errorf("读取现有环境配置: %w", err)
+		}
+		retainedEnv = string(b)
+	}
+
 	// 1. 真实预检：docker compose config 渲染（strict：CLI 不可用 → capability，
 	//    配置非法 → validation；均不落盘）。secret 仅用于本次渲染，不入任何持久层。
 	env := renderEnvFile(desired.Secrets, desired.Parameters)
+	if desired.RetainEnvironment {
+		env = mergeEnvFile(retainedEnv, desired.Secrets, desired.Parameters)
+	}
 	rendered, _, err := s.renderForCheck(ctx, desired.ComposeContent, env, true)
 	if err != nil {
 		return Task{}, err
+	}
+	literalSecretRisks, err := AnalyzeLiteralSecrets(desired.ComposeContent)
+	if err != nil {
+		return Task{}, ValidationErr("compose 解析失败: " + err.Error())
+	}
+	if HasBlocked(literalSecretRisks) {
+		return Task{}, RiskBlockedErr("敏感环境变量禁止写入 Compose 明文", literalSecretRisks)
 	}
 	// 2. 风险分析基于「渲染后」内容（${VAR} 已展开，无法绕过 privileged/socket/root bind）。
 	findings, ferr := AnalyzeCompose(rendered)
@@ -888,17 +946,23 @@ func (s *service) idExists(ctx context.Context, id string) (bool, error) {
 
 func hashApplyRequest(d DesiredApplication) string {
 	type bare struct {
-		ID     string            `json:"id,omitempty"`
-		Name   string            `json:"name"`
-		Source ApplicationSource `json:"source"`
-		Hash   string            `json:"hash"`
-		Params map[string]string `json:"params"`
-		Exp    int64             `json:"exp"`
+		ID      string            `json:"id,omitempty"`
+		Name    string            `json:"name"`
+		Source  ApplicationSource `json:"source"`
+		Hash    string            `json:"hash"`
+		Params  map[string]string `json:"params"`
+		Exp     int64             `json:"exp"`
+		Secrets string            `json:"secrets,omitempty"`
+		Retain  bool              `json:"retain,omitempty"`
+	}
+	secretDigest := ""
+	if len(d.Secrets) > 0 {
+		secretDigest = StoreInstallFingerprint(nil, d.Secrets)
 	}
 	b, _ := json.Marshal(bare{
 		ID: d.ID, Name: d.Name, Source: d.Source,
 		Hash: composeHash(d.ComposeContent, d.Parameters), Params: d.Parameters,
-		Exp: d.ExpectedRevision,
+		Exp: d.ExpectedRevision, Secrets: secretDigest, Retain: d.RetainEnvironment,
 	})
 	return sha256hex(b)
 }

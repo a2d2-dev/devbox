@@ -2,6 +2,7 @@ package apps
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -15,19 +16,19 @@ import (
 // fakeAdapter / fakeRunner 用于隔离测试 controller 协调逻辑（不触达真实 docker/k8s）。
 
 type fakeAdapter struct {
-	kind       RuntimeKind
-	observed   map[string]Application
-	applyErr   error
-	operateErr error
-	removeErr  error
-	delay      time.Duration // Apply/Operate 模拟耗时（串行测试用）
-	panicsRemaining int      // Apply 触发 panic 的次数（测试 recover）
-	applyNoObserve bool      // Apply 成功但不产生运行态（测试 verifyObserved 失败）
-	mu         sync.Mutex
-	applied    []string
-	applyTimes []time.Time
-	operated   []string
-	removed    []string
+	kind            RuntimeKind
+	observed        map[string]Application
+	applyErr        error
+	operateErr      error
+	removeErr       error
+	delay           time.Duration // Apply/Operate 模拟耗时（串行测试用）
+	panicsRemaining int           // Apply 触发 panic 的次数（测试 recover）
+	applyNoObserve  bool          // Apply 成功但不产生运行态（测试 verifyObserved 失败）
+	mu              sync.Mutex
+	applied         []string
+	applyTimes      []time.Time
+	operated        []string
+	removed         []string
 }
 
 func (f *fakeAdapter) Kind() RuntimeKind { return f.kind }
@@ -107,10 +108,12 @@ func (f *fakeRunner) Enqueue(id string) {
 // echoPrechecker 模拟「渲染成功」：直接透传 content（供单元测试跑通预检/风险路径，
 // 不依赖真实 docker compose 二进制）。
 type echoPrechecker struct {
-	err error // 非空时渲染返回该错误
+	err     error // 非空时渲染返回该错误
+	lastEnv string
 }
 
-func (e *echoPrechecker) RenderConfig(_ context.Context, content, _ string) (string, error) {
+func (e *echoPrechecker) RenderConfig(_ context.Context, content, env string) (string, error) {
+	e.lastEnv = env
 	if e.err != nil {
 		return "", e.err
 	}
@@ -246,6 +249,33 @@ func TestControllerValidate(t *testing.T) {
 	res, _ = ctrl.Validate(context.Background(), ValidateRequest{ComposeContent: "services:\n  a:\n    image: nginx:1.27\n    privileged: true"})
 	assert.False(t, res.OK)
 	assert.True(t, len(res.Risks) > 0)
+}
+
+func TestControllerRetainEnvironmentWithoutSecretRoundTrip(t *testing.T) {
+	checker := &echoPrechecker{}
+	ctrl, _, repo, paths := newTestControllerWithPrechecker(t,
+		map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}}, checker)
+	ctx := context.Background()
+	compose := "services:\n  web:\n    image: nginx:1.27\n    environment: [\"PASSWORD=${PASSWORD:?required}\"]"
+	_, err := ctrl.Apply(ctx, DesiredApplication{Name: "secure-app", ComposeContent: compose, Secrets: map[string]string{"PASSWORD": "top-secret"}}, ApplyOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, checker.lastEnv, "PASSWORD=top-secret")
+
+	res, err := ctrl.Validate(ctx, ValidateRequest{AppID: "secure-app", ComposeContent: compose + "\n# checked", RetainEnvironment: true})
+	require.NoError(t, err)
+	assert.True(t, res.OK)
+	assert.Contains(t, checker.lastEnv, "PASSWORD=top-secret")
+
+	task, err := ctrl.Apply(ctx, DesiredApplication{ID: "secure-app", Name: "secure-app", ComposeContent: compose + "\n# updated", ExpectedRevision: 1, RetainEnvironment: true}, ApplyOptions{})
+	require.NoError(t, err)
+	assert.NotContains(t, task.RequestSummary, "top-secret")
+	envBytes, err := os.ReadFile(paths.EnvFile("secure-app"))
+	require.NoError(t, err)
+	assert.Contains(t, string(envBytes), "PASSWORD=top-secret")
+	revs, err := repo.ListRevisions(ctx, "secure-app")
+	require.NoError(t, err)
+	require.Len(t, revs, 2)
+	assert.NotContains(t, revs[1].Parameters, "PASSWORD")
 }
 
 func TestControllerListMerge(t *testing.T) {

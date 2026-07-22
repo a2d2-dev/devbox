@@ -27,6 +27,29 @@ kubernetes:
   # 应用市场 API 地址；留空则禁用应用市场
   apiserver_url: ""
 
+# Docker Compose 应用管理；Docker 不可用时仅该运行时降级。
+compose:
+  enabled: true
+  data_dir: "/var/lib/devbox"
+  docker_socket: "/var/run/docker.sock"
+  # 第三方 catalog 刷新间隔（秒）；0 表示仅启动/手动刷新。
+  catalog_poll: 300
+  catalogs:
+    # HTTP 文件源：读取 <url>/catalog.json 及其相对 compose 文件。生产应使用 HTTPS。
+    # - id: "team-http"
+    #   name: "团队应用"
+    #   kind: "http"
+    #   url: "https://apps.example.com/devbox"
+    # Git 仓库源：HTTPS shallow clone；不接受 SSH、file:// 或本地路径。
+    # - id: "community"
+    #   name: "社区 Compose"
+    #   kind: "git"
+    #   url: "https://github.com/example/devbox-catalog.git"
+    #   ref: "v1"
+    #   path: "catalog"
+    # 私有源可配置只读 token；建议通过受控配置文件注入并限制文件权限。
+    #   token: ""
+
 logging:
   # debug / info / warn / error
   level: "info"

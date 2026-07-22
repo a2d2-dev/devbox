@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -112,6 +113,69 @@ func TestHTTPCatalog_OversizedManifestRejected(t *testing.T) {
 	require.NoError(t, err)
 	err = cat.Refresh(context.Background())
 	require.Error(t, err)
+}
+
+func TestHTTPCatalog_RelativeComposeCannotEscapeBase(t *testing.T) {
+	for _, rel := range []string{"../evil.yaml", "/evil.yaml", "..\\evil.yaml", "https://evil.test/x.yaml", "x.yaml?token=secret"} {
+		_, err := resolveHTTPRelative("https://catalog.test/apps", rel, false)
+		require.Errorf(t, err, "expected %q to be rejected", rel)
+	}
+	u, err := resolveHTTPRelative("https://catalog.test/apps", "ghost/compose.yaml", false)
+	require.NoError(t, err)
+	assert.Equal(t, "https://catalog.test/apps/ghost/compose.yaml", u)
+}
+
+func TestHTTPCatalog_StrictVersionAndVersionsOnlyLatest(t *testing.T) {
+	body := "{\"apiVersion\":\"devbox/v1\",\"apps\":[{\"id\":\"demo-app\",\"name\":\"Demo\",\"valuesSchema\":{\"version\":\"v1\"},\"versions\":[{\"version\":\"2.0.0\",\"composeTemplate\":\"services:\\n  web:\\n    image: nginx:1.27\\n\"},{\"version\":\"10.0.0\",\"composeTemplate\":\"services:\\n  web:\\n    image: nginx:1.28\\n\"}]}]}"
+	m, err := parseManifest([]byte(body))
+	require.NoError(t, err)
+	latest, ok := findEntryInManifest(m, "demo-app", "")
+	require.True(t, ok)
+	assert.Equal(t, "10.0.0", latest.Version)
+	assert.NotEmpty(t, latest.ValuesSchema, "version should inherit app-level schema")
+	_, ok = findEntryInManifest(m, "demo-app", "9.9.9")
+	assert.False(t, ok, "unknown requested version must not silently fall back")
+}
+
+func TestHTTPCatalog_RestartOfflineUsesPersistentCache(t *testing.T) {
+	cacheRoot := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/catalog.json" {
+			fmt.Fprint(w, manifestJSON)
+			return
+		}
+		if r.URL.Path == "/ghost/compose.yaml" {
+			fmt.Fprint(w, "services:\n  web:\n    image: ghost:5.90.0\n")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	src := CatalogSource{ID: "persist-http", Kind: "http", URL: srv.URL}
+	cat, err := newHTTPCatalog(src, cacheRoot)
+	require.NoError(t, err)
+	require.NoError(t, cat.Refresh(context.Background()))
+	_, err = cat.GetVersion(context.Background(), "file-app", "2.0.0")
+	require.NoError(t, err, "prime compose file cache")
+	srv.Close()
+
+	restarted, err := newHTTPCatalog(src, cacheRoot)
+	require.NoError(t, err)
+	require.Error(t, restarted.Refresh(context.Background()))
+	assert.Len(t, restarted.Snapshot().Apps, 2)
+	ver, err := restarted.GetVersion(context.Background(), "file-app", "2.0.0")
+	require.NoError(t, err)
+	assert.Contains(t, ver.ComposeTemplate, "ghost:5.90.0")
+}
+
+func TestCatalogFetcher_ErrorBodyScrubsToken(t *testing.T) {
+	token := "catalog-secret-token"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "denied "+token, http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	_, err := newCatalogFetcher(token).fetchText(context.Background(), srv.URL)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), token)
 }
 
 // --- CatalogSet：聚合 / 故障隔离 / 可信重取 / 离线缓存 ---
@@ -248,6 +312,7 @@ func TestValidateGitURL(t *testing.T) {
 		{"git@github.com:owner/name", false}, // 空 scheme
 		{"owner/name", false},                // 裸 owner/name 拒绝
 		{"", false},
+		{"https://token@github.com/owner/name", false},
 	}
 	for _, c := range cases {
 		err := validateGitURL(c.url)
@@ -357,5 +422,11 @@ func TestParseManifest_Dedup(t *testing.T) {
 
 func TestParseManifest_BadAPIVersion(t *testing.T) {
 	_, err := parseManifest([]byte(`{"apiVersion":"other/v2","apps":[]}`))
+	require.Error(t, err)
+}
+
+func TestParseManifest_FieldLimits(t *testing.T) {
+	body := fmt.Sprintf(`{"apiVersion":"devbox/v1","apps":[{"id":"demo-app","version":"1.0.0","icon":%q}]}`, strings.Repeat("x", maxCatalogIconBytes+1))
+	_, err := parseManifest([]byte(body))
 	require.Error(t, err)
 }

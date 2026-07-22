@@ -253,7 +253,7 @@ func (c *composeRuntime) Remove(ctx context.Context, app Application, purge bool
 	return nil
 }
 
-// Logs 取 app 第一个 service 容器日志。
+// Logs 取指定 Compose service 容器日志；service 为空时兼容取第一个容器。
 func (c *composeRuntime) Logs(ctx context.Context, app Application, opts LogOptions) (LogPage, error) {
 	containers, err := c.engine.listContainers(ctx, []string{"com.docker.compose.project=" + ProjectName(app.ID)})
 	if err != nil {
@@ -262,7 +262,21 @@ func (c *composeRuntime) Logs(ctx context.Context, app Application, opts LogOpti
 	if len(containers) == 0 {
 		return LogPage{AppID: app.ID, Logs: ""}, nil
 	}
-	logs, err := c.engine.containerLogs(ctx, containers[0].ID, opts.Tail)
+	container := containers[0]
+	if opts.Service != "" {
+		found := false
+		for _, candidate := range containers {
+			if candidate.Labels["com.docker.compose.service"] == opts.Service {
+				container = candidate
+				found = true
+				break
+			}
+		}
+		if !found {
+			return LogPage{}, NotFoundErr("service " + opts.Service)
+		}
+	}
+	logs, err := c.engine.containerLogs(ctx, container.ID, opts.Tail)
 	if err != nil {
 		return LogPage{}, err
 	}

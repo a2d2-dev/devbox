@@ -37,8 +37,9 @@ type stubController struct {
 	task    apps.Task
 	taskErr error
 
-	logs    apps.LogPage
-	logsErr error
+	logs           apps.LogPage
+	logsErr        error
+	lastLogOptions apps.LogOptions
 
 	compose    apps.ComposeContent
 	composeErr error
@@ -62,7 +63,8 @@ func (s *stubController) List(context.Context, apps.Filter) ([]apps.Application,
 func (s *stubController) Get(context.Context, string) (apps.Application, error) {
 	return apps.Application{}, nil
 }
-func (s *stubController) Logs(context.Context, string, apps.LogOptions) (apps.LogPage, error) {
+func (s *stubController) Logs(_ context.Context, _ string, opts apps.LogOptions) (apps.LogPage, error) {
+	s.lastLogOptions = opts
 	return s.logs, s.logsErr
 }
 func (s *stubController) Validate(context.Context, apps.ValidateRequest) (apps.ValidateResult, error) {
@@ -249,11 +251,13 @@ func TestHTTPDeleteCompat(t *testing.T) {
 func TestHTTPLogs(t *testing.T) {
 	stub := &stubController{logs: apps.LogPage{AppID: "a", Logs: "line1\nline2"}}
 	s := newTestServer(stub)
-	w := do(s, http.MethodGet, "/api/v1/apps/a/logs?tail=50", nil)
+	w := do(s, http.MethodGet, "/api/v1/apps/a/logs?tail=50&service=worker", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	var body map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, "line1\nline2", body["logs"])
+	assert.Equal(t, int64(50), stub.lastLogOptions.Tail)
+	assert.Equal(t, "worker", stub.lastLogOptions.Service)
 }
 
 func TestHTTPComposeRevisionsOperations(t *testing.T) {

@@ -3,6 +3,7 @@ package apps
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -105,6 +106,7 @@ type composeService struct {
 	Ports       []yaml.Node `yaml:"ports"`
 	Build       yaml.Node   `yaml:"build"`
 	SecurityOpt []string    `yaml:"security_opt"`
+	Environment yaml.Node   `yaml:"environment"`
 }
 
 // parseCompose 解析 Compose YAML 文本。返回精简根 + 解析错误。
@@ -218,6 +220,56 @@ func analyzeService(name string, svc composeService) []RiskFinding {
 	}
 
 	return f
+}
+
+// AnalyzeLiteralSecrets 必须对未插值的事实源调用；渲染后 ${KEY} 已变成值，无法区分。
+func AnalyzeLiteralSecrets(raw string) ([]RiskFinding, error) {
+	root, err := parseCompose(raw)
+	if err != nil {
+		return nil, err
+	}
+	var findings []RiskFinding
+	for service, svc := range root.Services {
+		for _, key := range literalSecretEnvKeys(svc.Environment) {
+			findings = append(findings, RiskFinding{
+				Level: RiskBlocked, Service: service, Field: "environment",
+				Message: fmt.Sprintf("敏感变量 %s 含明文值；请改用 ${%s} 引用并在 Secret 输入框配置", key, key),
+			})
+		}
+	}
+	return findings, nil
+}
+
+func literalSecretEnvKeys(node yaml.Node) []string {
+	var out []string
+	switch node.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key := strings.TrimSpace(node.Content[i].Value)
+			value := strings.TrimSpace(node.Content[i+1].Value)
+			if isSecretyKey(key) && value != "" && !safeSecretReference(value, key) {
+				out = append(out, key)
+			}
+		}
+	case yaml.SequenceNode:
+		for _, item := range node.Content {
+			line := strings.TrimSpace(item.Value)
+			idx := strings.IndexByte(line, '=')
+			if idx <= 0 {
+				continue
+			}
+			key, value := strings.TrimSpace(line[:idx]), strings.TrimSpace(line[idx+1:])
+			if isSecretyKey(key) && value != "" && !safeSecretReference(value, key) {
+				out = append(out, key)
+			}
+		}
+	}
+	return out
+}
+
+func safeSecretReference(value, key string) bool {
+	pattern := `^\$\{` + regexp.QuoteMeta(key) + `(?::\?[^}]*)?\}$`
+	return regexp.MustCompile(pattern).MatchString(strings.TrimSpace(value))
 }
 
 func analyzeVolumeNode(service string, node *yaml.Node, f *[]RiskFinding) {

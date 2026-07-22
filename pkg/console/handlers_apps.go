@@ -131,7 +131,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		desired.Source.Kind = apps.SourceInline
 	}
 	task, err := s.controller.Apply(r.Context(), desired, apps.ApplyOptions{
-		IdempotencyKey: idempotencyKey(r), Actor: defaultActor,
+		IdempotencyKey: idempotencyKey(r), Actor: defaultActor, AllowRiskyConfirmation: desired.ConfirmRisky,
 	})
 	if err != nil {
 		writeAppErr(w, err)
@@ -282,7 +282,7 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request, id string) {
 			tail = n
 		}
 	}
-	page, err := s.controller.Logs(r.Context(), id, apps.LogOptions{Tail: tail})
+	page, err := s.controller.Logs(r.Context(), id, apps.LogOptions{Tail: tail, Service: r.URL.Query().Get("service")})
 	if err != nil {
 		writeAppErr(w, err)
 		return
@@ -367,7 +367,7 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request, id string) {
 		desired.Source.Kind = apps.SourceInline
 	}
 	task, err := s.controller.Apply(r.Context(), desired, apps.ApplyOptions{
-		IdempotencyKey: idempotencyKey(r), Actor: defaultActor,
+		IdempotencyKey: idempotencyKey(r), Actor: defaultActor, AllowRiskyConfirmation: desired.ConfirmRisky,
 	})
 	if err != nil {
 		writeAppErr(w, err)

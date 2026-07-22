@@ -37,6 +37,41 @@ func renderEnvFile(secrets, params map[string]string) string {
 	return b.String()
 }
 
+// mergeEnvFile 在后端合并要轮换的键；浏览器无需也不能读取原有 secret。
+func mergeEnvFile(existing string, secrets, params map[string]string) string {
+	merged := parseEnvFile(existing)
+	for k, v := range params {
+		merged[k] = v
+	}
+	for k, v := range secrets {
+		merged[k] = v
+	}
+	return renderEnvFile(merged, nil)
+}
+
+func parseEnvFile(raw string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.IndexByte(line, '=')
+		if idx <= 0 {
+			continue
+		}
+		key, value := strings.TrimSpace(line[:idx]), strings.TrimSpace(line[idx+1:])
+		if key == "" {
+			continue
+		}
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			value = unquoted
+		}
+		out[key] = value
+	}
+	return out
+}
+
 func quoteEnvValue(v string) string {
 	if strings.ContainsAny(v, " \n\t\"'") {
 		return strconv.Quote(v)

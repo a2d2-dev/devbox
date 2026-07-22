@@ -424,7 +424,8 @@ export default function App() {
               >
                 {appId === 'dashboard' && <DashboardApp onOpenApp={launchApp}/>}
                 {appId === 'store'     && <AppStore onOpenApp={launchApp} authed={authed} onRequireAuth={requireAuth}/>}
-                {appId === 'compose-manager' && <ComposeManager authed={authed} onRequireAuth={requireAuth}/>}
+                {appId === 'compose-manager' && <ComposeManager authed={authed} onRequireAuth={requireAuth}
+                  onOpenStore={() => launchApp({ id: 'store' })} onOpenApp={launchApp}/>}
                 {appId === 'alerts'    && <AlertCenter authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'audit'     && <AuditLog/>}
                 {appId === 'supervisor'&& <Supervisor/>}

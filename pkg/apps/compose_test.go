@@ -1,10 +1,44 @@
 package apps
 
 import (
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestComposeLogsSelectsService(t *testing.T) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/containers/json":
+			_ = json.NewEncoder(w).Encode([]engineContainer{
+				{ID: "web-id", Labels: map[string]string{"com.docker.compose.service": "web"}},
+				{ID: "worker-id", Labels: map[string]string{"com.docker.compose.service": "worker"}},
+			})
+		case "/containers/worker-id/logs":
+			payload := []byte("worker line\n")
+			header := make([]byte, 8)
+			header[0] = 1
+			binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
+			_, _ = w.Write(append(header, payload...))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	runtime := &composeRuntime{engine: &dockerEngine{baseURL: server.URL, client: server.Client()}}
+	page, err := runtime.Logs(context.Background(), Application{ID: "demo"}, LogOptions{Tail: 20, Service: "worker"})
+	assert.NoError(t, err)
+	assert.Equal(t, "worker line\n", page.Logs)
+	_, err = runtime.Logs(context.Background(), Application{ID: "demo"}, LogOptions{Service: "missing"})
+	assert.Error(t, err)
+}
 
 func TestAggregatePhase(t *testing.T) {
 	cases := []struct {

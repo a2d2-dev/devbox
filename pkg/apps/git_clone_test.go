@@ -121,6 +121,25 @@ func TestGitCatalog_FailureKeepsLastGoodCache(t *testing.T) {
 	assert.Contains(t, v.ComposeTemplate, "nginx")
 }
 
+func TestGitCatalog_RestartOfflineLoadsLastGoodClone(t *testing.T) {
+	repo := makeTempRepo(t, map[string]string{
+		"catalog.json": "{\"apiVersion\":\"devbox/v1\",\"apps\":[{\"id\":\"demo-app\",\"version\":\"1.0.0\",\"compose\":\"compose.yaml\"}]}",
+		"compose.yaml": "services:\n  web:\n    image: nginx:1.27\n",
+	})
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, "cache")
+	first := &gitCatalog{id: "test-git", name: "Test", gitBin: "git", cacheDir: cacheDir, source: CatalogSource{URL: repo, Ref: "main"}}
+	require.NoError(t, first.Refresh(context.Background()))
+
+	restarted := &gitCatalog{id: "test-git", name: "Test", gitBin: "git", cacheDir: cacheDir, source: CatalogSource{URL: "/missing/repo", Ref: "main"}}
+	require.NoError(t, restarted.loadCachedManifest())
+	require.Error(t, restarted.Refresh(context.Background()))
+	assert.Len(t, restarted.Snapshot().Apps, 1)
+	ver, err := restarted.GetVersion(context.Background(), "demo-app", "1.0.0")
+	require.NoError(t, err)
+	assert.Contains(t, ver.ComposeTemplate, "nginx:1.27")
+}
+
 // token 抹除：clone 输出含 token 时被 scrub（这里验证 token 不出现在 lastErr）。
 func TestGitCatalog_TokenNotInError(t *testing.T) {
 	token := "supersecret-token-xyz"
