@@ -2,6 +2,8 @@ package apps
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"go.uber.org/zap"
 )
@@ -23,6 +25,9 @@ type ControllerConfig struct {
 // 返回 cleanup 用于关闭仓库（进程退出前调用）。
 func AssembleController(ctx context.Context, cfg ControllerConfig, logger *zap.Logger) (Controller, func(), error) {
 	paths := NewPaths(cfg.DataDir)
+	if err := os.MkdirAll(paths.DataDir, 0o750); err != nil {
+		return nil, nil, fmt.Errorf("create apps data directory %s: %w", paths.DataDir, err)
+	}
 	repo, err := OpenRepository(ctx, paths.DBPath())
 	if err != nil {
 		return nil, nil, err
