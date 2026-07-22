@@ -53,8 +53,13 @@ services:
 
 - 公网 HTTP source 必须使用 HTTPS；明文 HTTP 仅允许 localhost/测试环境的显式配置。
 - Git source 只接受 HTTP(S) 仓库，执行 shallow clone，并限制超时、输出、目录总大小和符号链接越界。
-- `privileged`、Docker socket、host network/PID、系统根目录 bind 等 blocked 风险会被拒绝。Catalog 包使用 `latest/main/master/edge/nightly` 等可变镜像标签也会被拒绝。
+- Catalog 包必须使用固定镜像。`latest/main/master/edge/nightly` 等可变标签会被拒绝。
+- MVP 在运行 `docker compose config` 前拒绝所有可读取额外宿主文件的入口：`build`、`include`、`env_file`、`extends.file`、`configs.file`、`secrets.file`，以及把受管 `.env`、`compose.yaml`、`revisions/`、`secrets/` 挂入容器。第三方包应只使用固定镜像、受管 `.env` 引用和 Compose named volume。
+- `privileged`、Docker socket、host network/PID/UTS/userns、全部 Linux capabilities，以及 `/proc`、`/sys`、`/dev`、`/var/lib/docker` 等系统关键路径 bind 属于 blocked 风险，不能绕过。
+- 设备直通、敏感 capability、关闭 seccomp/apparmor、IPC host 和普通绝对 bind 属于 confirmation 风险；首次安装返回风险清单，用户显式确认后才可再次提交。external volume、bind 和 socket 的生命周期始终不归应用所有。
+- Compose 中疑似 password/token/secret 的环境变量不得写明文，也不得使用带明文默认值的 `${PASSWORD:-literal}`；应使用 `${PASSWORD}` 或 `${PASSWORD:?required}`，并由 password 类型参数写入受管 `.env`。
 - Secret 只写入应用 `.env`（0600），不进入 revision、Task、audit、日志或读取响应。
+- 预检会提示同一 Compose 内的重复宿主端口以及与已登记应用的端口冲突；后者是部署前警告，实际占用仍由 Compose/Docker 在任务中最终校验。
 - catalog 暂时不可用时继续展示上次可信缓存；已安装应用的生命周期不依赖 catalog 在线。
 - Git refresh 只更新 catalog 缓存，不会自动升级已安装应用；本功能不是 GitOps reconcile。
 

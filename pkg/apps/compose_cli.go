@@ -104,7 +104,7 @@ func (c *composeCLI) RenderConfig(ctx context.Context, content, env string) (str
 			return "", CapabilityErr("compose 预检超时")
 		}
 		// 仅回显 stderr（结构化校验信息，脱敏截断）；丢弃 stdout（可能含渲染后的 secret）。
-		return "", ValidationErr("compose 配置无效: " + sanitizeLog(strings.TrimSpace(stderr.String())))
+		return "", ValidationErr("compose 配置无效: " + sanitizeWithEnvValues(strings.TrimSpace(stderr.String()), env))
 	}
 	return stdout.String(), nil
 }

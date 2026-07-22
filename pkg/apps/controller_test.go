@@ -2,8 +2,10 @@ package apps
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 type fakeAdapter struct {
 	kind            RuntimeKind
 	observed        map[string]Application
+	observeErr      error
 	applyErr        error
 	operateErr      error
 	removeErr       error
@@ -25,6 +28,8 @@ type fakeAdapter struct {
 	panicsRemaining int           // Apply 触发 panic 的次数（测试 recover）
 	applyNoObserve  bool          // Apply 成功但不产生运行态（测试 verifyObserved 失败）
 	mu              sync.Mutex
+	active          int
+	maxActive       int
 	applied         []string
 	applyTimes      []time.Time
 	operated        []string
@@ -40,9 +45,20 @@ func (f *fakeAdapter) Observe(context.Context) (map[string]Application, error) {
 	for k, v := range f.observed {
 		out[k] = v
 	}
-	return out, nil
+	return out, f.observeErr
 }
 func (f *fakeAdapter) Apply(_ context.Context, app Application, _ string) error {
+	f.mu.Lock()
+	f.active++
+	if f.active > f.maxActive {
+		f.maxActive = f.active
+	}
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.active--
+		f.mu.Unlock()
+	}()
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
@@ -202,6 +218,21 @@ func TestControllerApplyBlockedRisk(t *testing.T) {
 	assert.Equal(t, ErrKindRiskBlocked, ae.Kind)
 }
 
+func TestControllerBlocksHostFileReadBeforeComposeCLI(t *testing.T) {
+	checker := &echoPrechecker{}
+	ctrl, _, _, _ := newTestControllerWithPrechecker(t,
+		map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}}, checker)
+	_, err := ctrl.Apply(context.Background(), DesiredApplication{
+		Name:           "host-read",
+		ComposeContent: "services:\n  app:\n    image: nginx:1.27\n    env_file: /etc/passwd\n",
+	}, ApplyOptions{})
+	require.Error(t, err)
+	ae, ok := AsError(err)
+	require.True(t, ok)
+	assert.Equal(t, ErrKindRiskBlocked, ae.Kind)
+	assert.Empty(t, checker.lastEnv, "compose CLI must not run before file-access policy")
+}
+
 func TestControllerApplyConfirmationRequiresExplicit(t *testing.T) {
 	ctrl, _, _, _ := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
 	confirm := `services:
@@ -249,6 +280,36 @@ func TestControllerValidate(t *testing.T) {
 	res, _ = ctrl.Validate(context.Background(), ValidateRequest{ComposeContent: "services:\n  a:\n    image: nginx:1.27\n    privileged: true"})
 	assert.False(t, res.OK)
 	assert.True(t, len(res.Risks) > 0)
+}
+
+func TestControllerValidateExistingPortConflicts(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose, observed: map[string]Application{
+		"existing-app": {ID: "existing-app", Observed: ObservedState{
+			Phase: PhaseRunning, Services: []ServiceStatus{{Name: "web", Ports: []PortMapping{{HostPort: 8080, ContainerPort: 80}}}},
+		}},
+	}}
+	ctrl, _, repo, _ := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	now := time.Now()
+	require.NoError(t, repo.UpsertAppMeta(context.Background(), AppRecord{
+		ID: "existing-app", Name: "Existing", Runtime: RuntimeCompose, Revision: 1, ObservedRevision: 1, CreatedAt: now, UpdatedAt: now,
+	}))
+
+	res, err := ctrl.Validate(context.Background(), ValidateRequest{ComposeContent: safeCompose})
+	require.NoError(t, err)
+	assert.True(t, res.OK, "port conflict is a warning, not a hard failure")
+	assert.Contains(t, strings.Join(res.Warnings, " "), "8080（Existing）")
+
+	res, err = ctrl.Validate(context.Background(), ValidateRequest{AppID: "existing-app", ComposeContent: safeCompose})
+	require.NoError(t, err)
+	assert.NotContains(t, strings.Join(res.Warnings, " "), "8080（Existing）", "editing the same app must not conflict with itself")
+}
+
+func TestControllerValidateObserveFailureDoesNotBlock(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose, observeErr: errors.New("docker unavailable")}
+	ctrl, _, _, _ := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	res, err := ctrl.Validate(context.Background(), ValidateRequest{ComposeContent: safeCompose})
+	require.NoError(t, err)
+	assert.True(t, res.OK)
 }
 
 func TestControllerRetainEnvironmentWithoutSecretRoundTrip(t *testing.T) {

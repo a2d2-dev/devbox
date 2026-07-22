@@ -81,3 +81,10 @@ func TestSanitizeLogRedactsSecrets(t *testing.T) {
 	assert.NotContains(t, got, "hunter2")
 	assert.Contains(t, got, "plain line")
 }
+
+func TestSanitizeWithEnvValuesRedactsSecretAnywhere(t *testing.T) {
+	got := sanitizeWithEnvValues("interpolation failed near super-secret-value in service", "DB_PASSWORD=super-secret-value\nPORT=8080\n")
+	assert.NotContains(t, got, "super-secret-value")
+	assert.Contains(t, got, "***")
+	assert.Contains(t, sanitizeWithEnvValues("port 8080 failed", "PORT=8080\n"), "8080", "non-secret values are not redacted")
+}

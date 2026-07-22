@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useMemo, useLayoutEffect, useCallback } from 'react'
+import { useState, useEffect, useRef, useMemo, useLayoutEffect, useCallback, useId } from 'react'
 import { useAnimationControls, useDragControls, useMotionValue, useTransform } from 'motion/react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
-import { StatusDot, Chip, Sparkline } from '../components/ui'
+import { StatusDot, Chip } from '../components/ui'
 import { useAppLogs, useAppVersions, switchAppVersion, appOp, deleteApp, useAppDetail, appActionAsync, useTask } from '../hooks/useApi'
 import { motion, project, springs, useMotionPref } from '../motion'
 import { btnSecondary, btnPrimary, btnDanger } from './AppWindow'
@@ -15,7 +15,7 @@ import {
 // Story 4.7：「容器 Shell」tab + 渲染分支在 merge commit 693efd5 中被吞，2026-06-22 恢复
 import ContainerShellFace from './ContainerShellFace'
 
-function KpiCell({ label, value, unit, tone, mono }) {
+function KpiCell({ label, value, tone, mono }) {
   return (
     <div style={{
       padding: '8px 10px', borderRadius: 7,
@@ -147,8 +147,7 @@ function MgmtOverview({ app, cpu, gpu }) {
 // ─── Reusable metric panel: collapsible line chart with axes ────
 function MetricPanel({ open, onToggle, icon, title, valueLabel, series, max,
                        timeLabels, color, avg, peak, emptyHint }) {
-  const gradId = useMemo(() =>
-    'mgrad-' + Math.random().toString(36).slice(2, 9), []);
+  const gradId = 'mgrad-' + useId().replaceAll(':', '');
   const chartH = 96;
   const padL = 32, padR = 6, padT = 8, padB = 18;
 
@@ -309,8 +308,8 @@ function MgmtMetrics({ app, metricsData, historyData }) {
     return rates;
   }, [historyData.netBytesRecv, historyData.timestamps]);
 
-  const timestamps = historyData.timestamps || [];
   const timeLabels = useMemo(() => {
+    const timestamps = historyData.timestamps || [];
     if (!timestamps.length) return ['', '', '', '', ''];
     const step = Math.max(1, Math.floor((timestamps.length - 1) / 5));
     const labels = [];
@@ -319,7 +318,7 @@ function MgmtMetrics({ app, metricsData, historyData }) {
       labels.push(`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`);
     }
     return labels;
-  }, [timestamps]);
+  }, [historyData.timestamps]);
 
   const safeArr = (s) => s && s.length > 0 ? s : [0];
   const last = (s) => { const a = safeArr(s); return a[a.length - 1]; };
@@ -516,7 +515,7 @@ resources: ${appSummary.resources}`;
         fontSize: 11, lineHeight: 1.65, whiteSpace: 'pre',
         overflow: 'auto', maxHeight: 360,
       }}>{configText.split('\n').map((line, i) => {
-        const m = line.match(/^(\s*)([\w\.\/-]+)(:.*)$/);
+        const m = line.match(/^(\s*)([\w./-]+)(:.*)$/);
         if (m) return <div key={i}>
           <span>{m[1]}</span>
           <span style={{ color: '#7dd3fc' }}>{m[2]}</span>
@@ -1016,7 +1015,7 @@ function UninstallProgress({ app }) {
   );
 }
 
-export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAuth, onUninstall, metricsData, historyData }) {
+export default function AppMgmtDrawer({ app, open, onClose, onUninstall, metricsData, historyData }) {
   const [tab, setTab] = useState('overview');
   const [uninstall, setUninstall] = useState(null); // null | 'confirm' | 'running' | 'done'
   const [operationTaskId, setOperationTaskId] = useState(null);
@@ -1294,7 +1293,12 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
               <Icon name="trash" size={12} stroke={1.8}/>卸载
             </button>
           )}
-          {!isError ? (
+          {isCompose && phase === 'stopped' ? (
+            <button className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 30, padding: '0 12px', fontSize: 11.5 }}
+              onClick={() => appActionAsync(app.id, 'start').then(t => setOperationTaskId(t.id)).catch(e => console.error('Start failed:', e))}>
+              <Icon name="play" size={12} stroke={2}/>启动
+            </button>
+          ) : !isError ? (
             <>
               <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px', fontSize: 11.5 }}
                 onClick={() => appActionAsync(app.id, 'restart').then(t => setOperationTaskId(t.id)).catch(e => console.error('Restart failed:', e))}>

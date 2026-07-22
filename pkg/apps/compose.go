@@ -2,6 +2,7 @@ package apps
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -211,7 +212,7 @@ func (c *composeRuntime) Apply(ctx context.Context, app Application, composeFile
 func (c *composeRuntime) pullUp(ctx context.Context, dir, project, appID string) error {
 	if _, perr := c.cli.pull(ctx, dir, project); perr != nil {
 		c.logger.Warn("compose pull failed; continuing to up",
-			zap.String("app", appID), zap.Error(perr))
+			zap.String("app", appID), zap.String("error", sanitizeWithEnvValues(perr.Error(), c.envFile(appID))))
 	}
 	return c.cli.up(ctx, dir, project)
 }
@@ -280,7 +281,15 @@ func (c *composeRuntime) Logs(ctx context.Context, app Application, opts LogOpti
 	if err != nil {
 		return LogPage{}, err
 	}
-	return LogPage{AppID: app.ID, Logs: sanitizeLog(logs)}, nil
+	return LogPage{AppID: app.ID, Logs: sanitizeWithEnvValues(logs, c.envFile(app.ID))}, nil
+}
+
+func (c *composeRuntime) envFile(appID string) string {
+	if c.paths == nil {
+		return ""
+	}
+	b, _ := os.ReadFile(c.paths.EnvFile(appID))
+	return string(b)
 }
 
 func (c *composeRuntime) dirProject(appID string) (string, string) {

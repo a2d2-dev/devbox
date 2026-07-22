@@ -72,6 +72,18 @@ func parseEnvFile(raw string) map[string]string {
 	return out
 }
 
+// sanitizeWithEnvValues 对可能包含插值值的 Compose CLI 输出做值级脱敏。只替换
+// 敏感键的非空值，避免普通参数值被过度裁剪。
+func sanitizeWithEnvValues(message, envFile string) string {
+	out := message
+	for key, value := range parseEnvFile(envFile) {
+		if isSecretyKey(key) && value != "" {
+			out = strings.ReplaceAll(out, value, "***")
+		}
+	}
+	return sanitizeLog(out)
+}
+
 func quoteEnvValue(v string) string {
 	if strings.ContainsAny(v, " \n\t\"'") {
 		return strconv.Quote(v)

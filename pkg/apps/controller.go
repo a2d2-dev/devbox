@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -327,6 +328,16 @@ func (s *service) Validate(ctx context.Context, req ValidateRequest) (ValidateRe
 		return res, nil
 	}
 	res.Risks = append(res.Risks, literalSecretRisks...)
+	fileAccessRisks, err := AnalyzeComposeFileAccess(req.ComposeContent)
+	if err != nil {
+		res.Errors = append(res.Errors, "解析失败: "+err.Error())
+		return res, nil
+	}
+	res.Risks = append(res.Risks, fileAccessRisks...)
+	if HasBlocked(res.Risks) {
+		res.OK = false
+		return res, nil
+	}
 	// 真实预检：新建时仅 params 插值；编辑已有应用时可在 Controller 内部复用
 	// 当前 .env，secret 仍不经过 HTTP。
 	// compose CLI 不可用时回退静态分析并加 warning；配置非法 → res.Errors。
@@ -379,8 +390,43 @@ func (s *service) Validate(ctx context.Context, req ValidateRequest) (ValidateRe
 	if dup := detectDuplicateHostPorts(previews); len(dup) > 0 {
 		res.Warnings = append(res.Warnings, "宿主端口重复声明: "+strings.Join(dup, ", "))
 	}
+	if conflicts := s.detectExistingPortConflicts(ctx, req.AppID, previews); len(conflicts) > 0 {
+		res.Warnings = append(res.Warnings, "宿主端口可能已被应用占用: "+strings.Join(conflicts, ", "))
+	}
 	res.OK = len(res.Errors) == 0 && !HasBlocked(res.Risks)
 	return res, nil
+}
+
+func (s *service) detectExistingPortConflicts(ctx context.Context, excludeAppID string, previews []ServicePreview) []string {
+	wanted := map[int32]bool{}
+	for _, preview := range previews {
+		for _, spec := range preview.Ports {
+			if raw := extractHostPort(spec); raw != "" {
+				if port, err := strconv.ParseInt(raw, 10, 32); err == nil {
+					wanted[int32(port)] = true
+				}
+			}
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+	list, err := s.List(ctx, Filter{})
+	if err != nil {
+		return nil // capability/observe failure must not turn preflight into a hard failure
+	}
+	var conflicts []string
+	for _, app := range list {
+		if app.ID == excludeAppID {
+			continue
+		}
+		for _, port := range app.Ports {
+			if port.HostPort > 0 && wanted[port.HostPort] {
+				conflicts = appendIfMissing(conflicts, fmt.Sprintf("%d（%s）", port.HostPort, app.Name))
+			}
+		}
+	}
+	return conflicts
 }
 
 // renderForCheck 用 prechecker 渲染 compose 用于预检/风险分析。
@@ -442,15 +488,10 @@ func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts Ap
 		retainedEnv = string(b)
 	}
 
-	// 1. 真实预检：docker compose config 渲染（strict：CLI 不可用 → capability，
-	//    配置非法 → validation；均不落盘）。secret 仅用于本次渲染，不入任何持久层。
+	// 1. 在调用 Compose CLI 前先检查原始事实源，阻断额外宿主文件读取与 secret 明文。
 	env := renderEnvFile(desired.Secrets, desired.Parameters)
 	if desired.RetainEnvironment {
 		env = mergeEnvFile(retainedEnv, desired.Secrets, desired.Parameters)
-	}
-	rendered, _, err := s.renderForCheck(ctx, desired.ComposeContent, env, true)
-	if err != nil {
-		return Task{}, err
 	}
 	literalSecretRisks, err := AnalyzeLiteralSecrets(desired.ComposeContent)
 	if err != nil {
@@ -459,7 +500,20 @@ func (s *service) Apply(ctx context.Context, desired DesiredApplication, opts Ap
 	if HasBlocked(literalSecretRisks) {
 		return Task{}, RiskBlockedErr("敏感环境变量禁止写入 Compose 明文", literalSecretRisks)
 	}
-	// 2. 风险分析基于「渲染后」内容（${VAR} 已展开，无法绕过 privileged/socket/root bind）。
+	fileAccessRisks, err := AnalyzeComposeFileAccess(desired.ComposeContent)
+	if err != nil {
+		return Task{}, ValidationErr("compose 解析失败: " + err.Error())
+	}
+	if HasBlocked(fileAccessRisks) {
+		return Task{}, RiskBlockedErr("Compose 包含未受管的宿主文件读取", fileAccessRisks)
+	}
+	// 2. 真实预检：docker compose config 渲染（strict：CLI 不可用 → capability，
+	//    配置非法 → validation；均不落盘）。secret 仅用于本次渲染，不入任何持久层。
+	rendered, _, err := s.renderForCheck(ctx, desired.ComposeContent, env, true)
+	if err != nil {
+		return Task{}, err
+	}
+	// 3. 风险分析基于「渲染后」内容（${VAR} 已展开，无法绕过 privileged/socket/root bind）。
 	findings, ferr := AnalyzeCompose(rendered)
 	if ferr != nil {
 		return Task{}, ValidationErr("渲染后风险分析失败: " + ferr.Error())

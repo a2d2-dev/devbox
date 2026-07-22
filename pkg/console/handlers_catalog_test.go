@@ -131,6 +131,21 @@ func TestHandleCatalogInstall_TrustedRefetch(t *testing.T) {
 	assert.Contains(t, ctrl.lastDesired.ComposeContent, "ghost:5.90")
 }
 
+func TestHandleCatalogInstall_PassesRiskConfirmation(t *testing.T) {
+	cat := &fakeCatalog{id: "src1", kind: "http",
+		snap: apps.CatalogSnapshot{SourceID: "src1", Status: apps.CatalogStatus{State: apps.CatalogStateOK}},
+		version: apps.StoreAppVersion{AppID: "ghost", Version: "1.0.0", Runtime: apps.RuntimeCompose,
+			Installable: true, ComposeTemplate: "services:\n  web:\n    image: ghost:5.90\n"},
+	}
+	ctrl := &stubController{applyTask: apps.Task{ID: "t-risk"}}
+	s := newCatalogTestServer(t, ctrl, catalogSetWith(t, cat))
+	w := do(s, http.MethodPost, "/api/v1/catalogs/install", map[string]any{
+		"sourceId": "src1", "appId": "ghost", "version": "1.0.0", "confirmRisky": true,
+	})
+	require.Equal(t, http.StatusAccepted, w.Code)
+	assert.True(t, ctrl.lastApplyOpts.AllowRiskyConfirmation)
+}
+
 // catalog install：版本不可安装（kubernetes 包）→ 422。
 func TestHandleCatalogInstall_NotInstallable(t *testing.T) {
 	cat := &fakeCatalog{id: "src1", kind: "http",

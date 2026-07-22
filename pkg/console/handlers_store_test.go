@@ -106,6 +106,19 @@ func TestHandleStoreInstall_Success(t *testing.T) {
 	assert.Equal(t, int64(7), res.Revision)
 }
 
+func TestHandleStoreInstall_PassesRiskConfirmation(t *testing.T) {
+	ctrl := &stubController{applyTask: apps.Task{ID: "task-risk"}}
+	s := newStoreTestServer(t, ctrl, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, composeCatalogJSON)
+	})
+	w := do(s, http.MethodPost, "/api/v1/store/install", map[string]any{
+		"appId": "ghost", "version": "1.0.0", "confirmRisky": true,
+		"values": map[string]any{"tag": "1.25", "pw": "secret"},
+	})
+	require.Equal(t, http.StatusAccepted, w.Code)
+	assert.True(t, ctrl.lastApplyOpts.AllowRiskyConfirmation)
+}
+
 func TestHandleStoreInstall_KubernetesRejected(t *testing.T) {
 	ctrl := &stubController{}
 	s := newStoreTestServer(t, ctrl, func(w http.ResponseWriter, r *http.Request) {

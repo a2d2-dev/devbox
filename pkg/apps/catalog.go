@@ -1404,6 +1404,8 @@ type CatalogInstallRequest struct {
 	AppID    string         `json:"appId"`
 	Version  string         `json:"version"`
 	Values   map[string]any `json:"values,omitempty"`
+	// ConfirmRisky 表示用户已显式确认 confirmation 级运行权限；blocked 风险仍不可绕过。
+	ConfirmRisky bool `json:"confirmRisky,omitempty"`
 	// IdempotencyKey 可选；为空时后端按 source+app+version+指纹生成稳定键。
 	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }

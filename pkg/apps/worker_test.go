@@ -137,6 +137,32 @@ func TestWorkerPerAppSerial(t *testing.T) {
 	assert.True(t, o2.StartedAt.After(o1.FinishedAt.Add(-10*time.Millisecond)), "第二个任务应在第一个完成后才开始")
 }
 
+func TestWorkerLimitsConcurrencyAcrossApps(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose, delay: 60 * time.Millisecond}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	w.WithWorkerConcurrency(2)
+	ctx := context.Background()
+	for i, appID := range []string{"app-a", "app-b", "app-c", "app-d"} {
+		prepApp(t, repo, paths, appID)
+		taskID := "limit-" + itoa(int64(i))
+		require.NoError(t, repo.CreateTask(ctx, Task{ID: taskID, AppID: appID, Type: TaskApply, Revision: 1, Status: TaskQueued, CreatedAt: time.Now()}))
+		w.Enqueue(taskID)
+	}
+	require.Eventually(t, func() bool {
+		for i := range 4 {
+			task, _ := repo.GetTask(ctx, "limit-"+itoa(int64(i)))
+			if !task.Status.IsTerminal() {
+				return false
+			}
+		}
+		return true
+	}, 2*time.Second, 10*time.Millisecond)
+	compose.mu.Lock()
+	maxActive := compose.maxActive
+	compose.mu.Unlock()
+	assert.Equal(t, 2, maxActive, "different apps should run concurrently but never exceed the configured limit")
+}
+
 func TestWorkerSkipsTerminalRequeue(t *testing.T) {
 	compose := &fakeAdapter{kind: RuntimeCompose}
 	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
@@ -223,6 +249,62 @@ func TestWorkerStartVerifiesRunning(t *testing.T) {
 	w.execute(ctx, "t1")
 	got, _ := repo.GetTask(ctx, "t1")
 	assert.Equal(t, TaskSucceeded, got.Status)
+}
+
+func TestWorkerWaitsForHealthBeforeSuccess(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose, applyNoObserve: true, observed: map[string]Application{
+		"a": {ID: "a", Observed: ObservedState{Phase: PhaseRunning, Services: []ServiceStatus{{Name: "web", State: "running", Health: "starting"}}}},
+	}}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	w.WithWorkerHealthTiming(time.Second, 50*time.Millisecond, 10*time.Millisecond)
+	ctx := context.Background()
+	prepApp(t, repo, paths, "a")
+	require.NoError(t, repo.CreateTask(ctx, Task{ID: "t1", AppID: "a", Type: TaskApply, Revision: 1, Status: TaskQueued, CreatedAt: time.Now()}))
+
+	done := make(chan struct{})
+	go func() { w.execute(ctx, "t1"); close(done) }()
+	require.Eventually(t, func() bool {
+		task, _ := repo.GetTask(ctx, "t1")
+		return task.Phase == PhaseTaskWaitingHealth
+	}, time.Second, 5*time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("task succeeded before service became healthy")
+	default:
+	}
+
+	compose.mu.Lock()
+	compose.observed["a"] = Application{ID: "a", Observed: ObservedState{Phase: PhaseRunning, Services: []ServiceStatus{{Name: "web", State: "running", Health: "healthy"}}}}
+	compose.mu.Unlock()
+	require.Eventually(t, func() bool {
+		task, _ := repo.GetTask(ctx, "t1")
+		return task.Status == TaskSucceeded
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestWorkerHealthTimeoutAndUnhealthyFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, health, wantMessage string
+		timeout                   time.Duration
+	}{
+		{name: "timeout", health: "starting", timeout: 30 * time.Millisecond, wantMessage: "健康超时"},
+		{name: "unhealthy", health: "unhealthy", timeout: time.Second, wantMessage: "失败或降级"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compose := &fakeAdapter{kind: RuntimeCompose, applyNoObserve: true, observed: map[string]Application{
+				"a": {ID: "a", Observed: ObservedState{Phase: map[bool]Phase{true: PhaseDegraded, false: PhaseRunning}[tc.health == "unhealthy"], Services: []ServiceStatus{{Name: "web", State: "running", Health: tc.health}}}},
+			}}
+			w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+			w.WithWorkerHealthTiming(tc.timeout, 5*time.Millisecond, 5*time.Millisecond)
+			ctx := context.Background()
+			prepApp(t, repo, paths, "a")
+			require.NoError(t, repo.CreateTask(ctx, Task{ID: "t1", AppID: "a", Type: TaskApply, Revision: 1, Status: TaskQueued, CreatedAt: time.Now()}))
+			w.execute(ctx, "t1")
+			task, _ := repo.GetTask(ctx, "t1")
+			assert.Equal(t, TaskFailed, task.Status)
+			assert.Contains(t, task.Message, tc.wantMessage)
+		})
+	}
 }
 
 // MED#11：remove 成功后回收 app 的串行队列（不再永久驻留）。

@@ -109,7 +109,7 @@ func applyDetailApp(t *testing.T) Controller {
 		Source:         ApplicationSource{Kind: SourceStore, StoreID: "ghost", Version: "1.0"},
 		ComposeContent: detailCompose,
 		Secrets:        map[string]string{"DB_PASSWORD": "hunter2"},
-	}, ApplyOptions{Actor: "t"})
+	}, ApplyOptions{Actor: "t", AllowRiskyConfirmation: true})
 	require.NoError(t, err)
 	return ctrl
 }

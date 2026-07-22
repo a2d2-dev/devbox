@@ -149,6 +149,7 @@ func TestAnalyzeLiteralSecretsBlocked(t *testing.T) {
 	for _, raw := range []string{
 		"services:\n  app:\n    image: nginx:1.27\n    environment:\n      PASSWORD: hunter2\n",
 		"services:\n  app:\n    image: nginx:1.27\n    environment: [TOKEN=plain-token]\n",
+		"services:\n  app:\n    image: nginx:1.27\n    environment: [\"TOKEN=\x24{TOKEN:-plain-token}\"]\n",
 	} {
 		findings, err := AnalyzeLiteralSecrets(raw)
 		require.NoError(t, err)
@@ -167,6 +168,29 @@ func TestAnalyzeLiteralSecretsReferencesAllowed(t *testing.T) {
 	}
 }
 
+func TestAnalyzeComposeFileAccessBlocked(t *testing.T) {
+	cases := []string{
+		"include: /etc/compose.yaml\nservices:\n  app:\n    image: nginx:1.27\n",
+		"services:\n  app:\n    image: nginx:1.27\n    env_file: /etc/passwd\n",
+		"services:\n  app:\n    image: nginx:1.27\n    build: /\n",
+		"services:\n  app:\n    image: nginx:1.27\n    volumes: [\".env:/run/secret\"]\n",
+		"services:\n  app:\n    image: nginx:1.27\nconfigs:\n  host:\n    file: /etc/passwd\n",
+		"services:\n  app:\n    image: nginx:1.27\nsecrets:\n  host:\n    file: /etc/shadow\n",
+	}
+	for _, raw := range cases {
+		findings, err := AnalyzeComposeFileAccess(raw)
+		require.NoError(t, err)
+		assert.True(t, HasBlocked(findings), raw)
+	}
+}
+
+func TestAnalyzeComposeFileAccessAllowsManagedDataAndNamedVolumes(t *testing.T) {
+	raw := "services:\n  app:\n    image: nginx:1.27\n    volumes: [\"./data:/data\", \"app-data:/state\"]\nvolumes:\n  app-data: {}\n"
+	findings, err := AnalyzeComposeFileAccess(raw)
+	require.NoError(t, err)
+	assert.False(t, HasBlocked(findings))
+}
+
 // 长语法 volume 的 bind 检测。
 func TestAnalyzeComposeLongSyntaxBind(t *testing.T) {
 	yaml := `services:
@@ -181,6 +205,14 @@ func TestAnalyzeComposeLongSyntaxBind(t *testing.T) {
 	assert.True(t, HasBlocked(f))
 }
 
+func TestAnalyzeComposeNamespaceAndDeviceRisks(t *testing.T) {
+	raw := "services:\n  app:\n    image: nginx:1.27\n    cap_add: [ALL]\n    uts: host\n    userns_mode: host\n    devices: [/dev/dri:/dev/dri]\n"
+	findings, err := AnalyzeCompose(raw)
+	require.NoError(t, err)
+	assert.True(t, HasBlocked(findings), "ALL/host namespace risks must be blocked")
+	assert.True(t, NeedsConfirmation(findings, false), "device access must require explicit confirmation")
+}
+
 // MED#7：相对 bind 含 ".." 路径穿越不应被 filepath.Clean 折叠后漏检 → 需确认。
 func TestAnalyzeComposeRelativeTraversalBind(t *testing.T) {
 	for _, spec := range []string{"../../etc:/host", "../../../:/host"} {
@@ -189,10 +221,11 @@ func TestAnalyzeComposeRelativeTraversalBind(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, NeedsConfirmation(f, false), "相对 .. 穿越 bind 应需确认: %s", spec)
 	}
-	// 子目录（非系统关键目录本身，无 ..）不应误判。
+	// 绝对 bind 非 blocked，但必须显式确认宿主数据边界。
 	yaml := "services:\n  a:\n    image: nginx:1.27\n    volumes:\n      - /etc/devbox:/host"
 	f, err := AnalyzeCompose(yaml)
 	require.NoError(t, err)
 	assert.False(t, HasBlocked(f), "/etc 子目录不应阻断")
-	assert.False(t, NeedsConfirmation(f, false), "/etc 子目录不应需确认")
+	assert.True(t, NeedsConfirmation(f, false), "绝对 bind 应提示并需确认")
+	assert.False(t, NeedsConfirmation(f, true), "确认后允许非关键子路径 bind")
 }

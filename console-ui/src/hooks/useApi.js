@@ -638,7 +638,8 @@ export function useTask(taskId, interval = 1500) {
     return () => { mountedRef.current = false; if (timer) clearInterval(timer); };
   }, [taskId, interval]);
 
-  return { task: taskId ? task : null, loading: taskId ? loading : false };
+  const currentTask = taskId && task?.id === taskId ? task : null;
+  return { task: currentTask, loading: taskId ? loading : false };
 }
 
 // useAppOperations 轮询某应用的最近操作历史。
@@ -793,11 +794,11 @@ export async function getStoreVersion(appId, version = '') {
 
 // installStoreApp：POST /store/install → 202 + {taskId, appId, name, revision}。
 // values 含 password 字段；compose 原文由后端从可信 catalog 重取渲染。
-export async function installStoreApp({ appId, version, values, idempotencyKey }) {
+export async function installStoreApp({ appId, version, values, idempotencyKey, confirmRisky = false }) {
   const headers = { 'Content-Type': 'application/json' };
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   const r = await authFetch(`${API}/store/install`, {
-    method: 'POST', headers, body: JSON.stringify({ appId, version, values, idempotencyKey }),
+    method: 'POST', headers, body: JSON.stringify({ appId, version, values, idempotencyKey, confirmRisky }),
   });
   if (!r.ok) throw await readErr(r);
   return r.json();
@@ -834,12 +835,12 @@ export async function getCatalogVersion(sourceId, appId, version = '') {
 
 // installCatalogApp：POST /catalogs/install → 202 + StoreInstallResult。
 // 后端按 sourceId+appId+version 从可信 source 重取渲染（前端不传 compose 原文）。
-export async function installCatalogApp({ sourceId, appId, version, values, idempotencyKey }) {
+export async function installCatalogApp({ sourceId, appId, version, values, idempotencyKey, confirmRisky = false }) {
   const headers = { 'Content-Type': 'application/json' };
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   const r = await authFetch(`${API}/catalogs/install`, {
     method: 'POST', headers,
-    body: JSON.stringify({ sourceId, appId, version, values, idempotencyKey }),
+    body: JSON.stringify({ sourceId, appId, version, values, idempotencyKey, confirmRisky }),
   });
   if (!r.ok) throw await readErr(r);
   return r.json();

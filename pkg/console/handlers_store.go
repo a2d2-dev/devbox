@@ -93,7 +93,7 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source := apps.ApplicationSource{Kind: apps.SourceStore, StoreID: req.AppID, Version: ver.Version}
-	s.installResolvedVersion(w, r, req.AppID, ver, req.Values, req.IdempotencyKey, source)
+	s.installResolvedVersion(w, r, req.AppID, ver, req.Values, req.IdempotencyKey, req.ConfirmRisky, source)
 }
 
 // installResolvedVersion store/catalog 安装的共享流程（要求 3/5）：
@@ -103,7 +103,7 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 //   - 幂等键：前端可传；为空则按 source+app+version+params+secrets 指纹生成稳定键
 //     （指纹纳入 secrets：换密码不被旧 task 短路，改 params 不被 idempotency_conflict 阻断）。
 func (s *Server) installResolvedVersion(w http.ResponseWriter, r *http.Request, appID string,
-	ver apps.StoreAppVersion, values map[string]any, idemKey string, source apps.ApplicationSource) {
+	ver apps.StoreAppVersion, values map[string]any, idemKey string, confirmRisky bool, source apps.ApplicationSource) {
 	if !ver.Installable || ver.Runtime != apps.RuntimeCompose {
 		writeJSONErrStatus(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":  "该应用不可在本机安装",
@@ -137,7 +137,7 @@ func (s *Server) installResolvedVersion(w http.ResponseWriter, r *http.Request, 
 		idemKey = string(source.Kind) + ":" + appID + ":" + ver.Version + ":" + apps.StoreInstallFingerprint(params, secrets)
 	}
 	task, err := s.controller.Apply(r.Context(), desired, apps.ApplyOptions{
-		IdempotencyKey: idemKey, Actor: defaultActor,
+		IdempotencyKey: idemKey, Actor: defaultActor, AllowRiskyConfirmation: confirmRisky,
 	})
 	if err != nil {
 		writeAppErr(w, err)

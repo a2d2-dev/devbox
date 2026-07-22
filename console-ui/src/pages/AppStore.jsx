@@ -68,6 +68,8 @@ function DeployDialog({ app, onClose, onSuccess }) {
   const [values, setValues] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [riskFindings, setRiskFindings] = useState([]);
+  const [confirmRisky, setConfirmRisky] = useState(false);
   const [showPwd, setShowPwd] = useState({});
 
   const isCatalog = app.origin === 'catalog';
@@ -107,11 +109,15 @@ function DeployDialog({ app, onClose, onSuccess }) {
       const converted = {};
       fields.forEach((f) => { converted[f.key] = coerceValueForSubmit(f, values[f.key]); });
       const payload = isCatalog
-        ? { sourceId: app.sourceId, appId: app.id, version: app.ver || '', values: converted }
-        : { appId: app.id, version: app.ver || '', values: converted };
+        ? { sourceId: app.sourceId, appId: app.id, version: app.ver || '', values: converted, confirmRisky }
+        : { appId: app.id, version: app.ver || '', values: converted, confirmRisky };
       const result = isCatalog ? await installCatalogApp(payload) : await installStoreApp(payload);
       onSuccess(result);
     } catch (e) {
+      if (e.reason === 'risk_blocked' && Array.isArray(e.findings)) {
+        setRiskFindings(e.findings);
+        setConfirmRisky(false);
+      }
       setError(e.message || '部署失败');
     } finally {
       setSubmitting(false);
@@ -119,6 +125,8 @@ function DeployDialog({ app, onClose, onSuccess }) {
   }
 
   const fields = schema?.fields || [];
+  const hasBlockedRisk = riskFindings.some((f) => f.level === 'blocked');
+  const hasConfirmableRisk = riskFindings.some((f) => f.level === 'confirmation');
   const notInstallable = error && /不可|installable|Kubernetes/i.test(error) && !fields.length;
   const inputStyle = {
     width: '100%', height: 34, padding: '0 10px', borderRadius: 7, border: `1px solid ${T.border}`,
@@ -205,14 +213,30 @@ function DeployDialog({ app, onClose, onSuccess }) {
           {error && !notInstallable && (
             <div style={{ fontSize: 12, color: '#ef4444', marginTop: 10, padding: '8px 10px', background: '#fef2f2', borderRadius: 6 }}>{error}</div>
           )}
+          {riskFindings.length > 0 && (
+            <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 7, background: '#fffbeb', border: '1px solid #fde68a' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 6 }}>运行权限风险</div>
+              {riskFindings.map((f, i) => (
+                <div key={`${f.field || 'risk'}-${i}`} style={{ fontSize: 11.5, color: f.level === 'blocked' ? '#b91c1c' : '#92400e', marginTop: 3 }}>
+                  {f.level === 'blocked' ? '已阻断' : f.level === 'confirmation' ? '需确认' : '警告'}：{f.message}
+                </div>
+              ))}
+              {hasConfirmableRisk && !hasBlockedRisk && (
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 7, marginTop: 9, cursor: 'pointer', fontSize: 11.5, color: '#78350f' }}>
+                  <input type="checkbox" checked={confirmRisky} onChange={(e) => setConfirmRisky(e.target.checked)}/>
+                  <span>我了解该应用将获得列出的宿主权限，并确认继续部署</span>
+                </label>
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ padding: '12px 20px', borderTop: `1px solid ${T.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button onClick={onClose} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 34, padding: '0 16px' }}>取消</button>
-          <button onClick={handleSubmit} disabled={submitting || loading || notInstallable}
+          <button onClick={handleSubmit} disabled={submitting || loading || notInstallable || hasBlockedRisk || (hasConfirmableRisk && !confirmRisky)}
             className="edge-press edge-btn-primary"
-            style={{ ...btnPrimary, height: 34, padding: '0 20px', opacity: (submitting || loading || notInstallable) ? 0.6 : 1 }}>
-            <Icon name="download" size={13} stroke={2}/>{submitting ? '部署中...' : '确认部署'}
+            style={{ ...btnPrimary, height: 34, padding: '0 20px', opacity: (submitting || loading || notInstallable || hasBlockedRisk || (hasConfirmableRisk && !confirmRisky)) ? 0.6 : 1 }}>
+            <Icon name="download" size={13} stroke={2}/>{submitting ? '部署中...' : confirmRisky ? '确认风险并部署' : '确认部署'}
           </button>
         </div>
       </div>
@@ -285,7 +309,7 @@ function AppStoreDetail({ app, onBack, onOpenApp }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, alignItems: 'flex-end' }}>
             {app.installable ? (
               <button onClick={() => setShowDeploy(true)} className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 36, padding: '0 18px' }}>
-                <Icon name="download" size={13} stroke={2}/>{app.installed ? '重新部署' : '部署'}
+                <Icon name="download" size={13} stroke={2}/>{app.upgradable ? `升级到 ${app.ver}` : app.installed ? '重新部署' : '部署'}
               </button>
             ) : (
               <div title={app.notInstallableReason || ''} style={{ fontSize: 11.5, color: T.ink3, padding: '8px 12px', borderRadius: 8, background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`, maxWidth: 180, textAlign: 'center' }}>

@@ -142,7 +142,7 @@ func (s *Server) handleCatalogInstall(w http.ResponseWriter, r *http.Request) {
 	source := apps.ApplicationSource{
 		Kind: apps.SourceCatalog, StoreID: req.AppID, Version: ver.Version, CatalogID: req.SourceID,
 	}
-	s.installResolvedVersion(w, r, req.AppID, ver, req.Values, req.IdempotencyKey, source)
+	s.installResolvedVersion(w, r, req.AppID, ver, req.Values, req.IdempotencyKey, req.ConfirmRisky, source)
 }
 
 // --- catalog 辅助 ---

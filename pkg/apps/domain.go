@@ -166,7 +166,8 @@ type DesiredApplication struct {
 	// ConfirmRisky：调用方对 confirmation 级风险（ipc:host / 敏感 capability / 禁用
 	// seccomp 等）的显式确认。仅 inline 来源有效；blocked 级风险（privileged /
 	// docker.sock / host network / 系统目录 bind）永远不可 override。
-	// 后端 Apply 据此设 ApplyOptions.AllowRiskyConfirmation（审计留痕见 Task）。
+	// inline、store、catalog 安装入口都必须把该确认传给 ApplyOptions；blocked 风险
+	// 永远不可 override，confirmation 会在 Task 请求摘要中留下审计标记。
 	ConfirmRisky bool `json:"confirmRisky,omitempty"`
 	// RetainEnvironment 用于安全编辑：前端无法读取 secret，只能请求 Controller
 	// 在内部复用当前 .env 做预检和落盘。仅更新已有应用时有效。

@@ -92,21 +92,37 @@ type composeRoot struct {
 	Services map[string]composeService `yaml:"services"`
 	Networks map[string]yaml.Node      `yaml:"networks"`
 	Volumes  map[string]yaml.Node      `yaml:"volumes"`
+	Configs  map[string]composeFileRef `yaml:"configs"`
+	Secrets  map[string]composeFileRef `yaml:"secrets"`
+	Include  yaml.Node                 `yaml:"include"`
+}
+
+type composeFileRef struct {
+	File string `yaml:"file"`
+}
+
+type composeExtends struct {
+	File string `yaml:"file"`
 }
 
 type composeService struct {
-	Image       string      `yaml:"image"`
-	Privileged  *bool       `yaml:"privileged"`
-	NetworkMode string      `yaml:"network_mode"`
-	PID         string      `yaml:"pid"`
-	IPC         string      `yaml:"ipc"`
-	User        string      `yaml:"user"`
-	CapAdd      []string    `yaml:"cap_add"`
-	Volumes     []yaml.Node `yaml:"volumes"`
-	Ports       []yaml.Node `yaml:"ports"`
-	Build       yaml.Node   `yaml:"build"`
-	SecurityOpt []string    `yaml:"security_opt"`
-	Environment yaml.Node   `yaml:"environment"`
+	Image       string         `yaml:"image"`
+	Privileged  *bool          `yaml:"privileged"`
+	NetworkMode string         `yaml:"network_mode"`
+	PID         string         `yaml:"pid"`
+	IPC         string         `yaml:"ipc"`
+	UTS         string         `yaml:"uts"`
+	UserNS      string         `yaml:"userns_mode"`
+	User        string         `yaml:"user"`
+	CapAdd      []string       `yaml:"cap_add"`
+	Devices     []yaml.Node    `yaml:"devices"`
+	Volumes     []yaml.Node    `yaml:"volumes"`
+	Ports       []yaml.Node    `yaml:"ports"`
+	Build       yaml.Node      `yaml:"build"`
+	SecurityOpt []string       `yaml:"security_opt"`
+	Environment yaml.Node      `yaml:"environment"`
+	EnvFile     yaml.Node      `yaml:"env_file"`
+	Extends     composeExtends `yaml:"extends"`
 }
 
 // parseCompose 解析 Compose YAML 文本。返回精简根 + 解析错误。
@@ -197,9 +213,20 @@ func analyzeService(name string, svc composeService) []RiskFinding {
 
 	// 危险 capability：confirmation。
 	for _, c := range svc.CapAdd {
-		if dangerousCaps[strings.ToUpper(c)] {
+		if strings.EqualFold(c, "ALL") {
+			add(RiskBlocked, "cap_add", "cap_add: ALL 授予全部 Linux capabilities，已阻断")
+		} else if dangerousCaps[strings.ToUpper(c)] {
 			add(RiskConfirmation, "cap_add", fmt.Sprintf("授予敏感 capability %s，需确认", c))
 		}
+	}
+	if strings.EqualFold(svc.UTS, "host") {
+		add(RiskBlocked, "uts", "uts:host 共享宿主 UTS namespace，已阻断")
+	}
+	if strings.EqualFold(svc.UserNS, "host") {
+		add(RiskBlocked, "userns_mode", "userns_mode:host 禁用用户命名空间隔离，已阻断")
+	}
+	if len(svc.Devices) > 0 {
+		add(RiskConfirmation, "devices", "服务直接访问宿主设备，需确认设备权限边界")
 	}
 
 	// security_opt: apparmor=unconfined / seccomp:unconfined → confirmation。
@@ -238,6 +265,75 @@ func AnalyzeLiteralSecrets(raw string) ([]RiskFinding, error) {
 		}
 	}
 	return findings, nil
+}
+
+// AnalyzeComposeFileAccess 在调用 Compose CLI 前检查会读取宿主文件的字段。MVP 只
+// 托管 compose.yaml/.env，不接受额外文件；否则第三方包可借后端权限读取宿主内容。
+func AnalyzeComposeFileAccess(raw string) ([]RiskFinding, error) {
+	root, err := parseCompose(raw)
+	if err != nil {
+		return nil, err
+	}
+	var findings []RiskFinding
+	add := func(service, field, message string) {
+		findings = append(findings, RiskFinding{Level: RiskBlocked, Service: service, Field: field, Message: message})
+	}
+	if !root.Include.IsZero() {
+		add("", "include", "include 会读取额外 Compose 文件，当前安全策略不支持")
+	}
+	for name, ref := range root.Configs {
+		if strings.TrimSpace(ref.File) != "" {
+			add("", "configs."+name+".file", "configs.file 会读取宿主文件，已阻断")
+		}
+	}
+	for name, ref := range root.Secrets {
+		if strings.TrimSpace(ref.File) != "" {
+			add("", "secrets."+name+".file", "secrets.file 会读取宿主文件，已阻断；请使用受管 .env Secret")
+		}
+	}
+	for name, svc := range root.Services {
+		if !svc.EnvFile.IsZero() {
+			add(name, "env_file", "env_file 会读取额外宿主文件，已阻断；请使用受管 .env")
+		}
+		if strings.TrimSpace(svc.Extends.File) != "" {
+			add(name, "extends.file", "extends.file 会读取额外 Compose 文件，已阻断")
+		}
+		if !svc.Build.IsZero() {
+			add(name, "build", "build context 可读取并发送宿主文件，当前安全策略只允许固定镜像")
+		}
+		for i := range svc.Volumes {
+			if source := volumeSource(&svc.Volumes[i]); isManagedControlPath(source) {
+				add(name, "volumes", fmt.Sprintf("禁止把受管控制文件 %q 挂载进容器", source))
+			}
+		}
+	}
+	return findings, nil
+}
+
+func volumeSource(node *yaml.Node) string {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		parts := strings.SplitN(node.Value, ":", 2)
+		if len(parts) == 2 {
+			return strings.TrimSpace(parts[0])
+		}
+	case yaml.MappingNode:
+		var vol struct {
+			Source string `yaml:"source"`
+		}
+		_ = node.Decode(&vol)
+		return strings.TrimSpace(vol.Source)
+	}
+	return ""
+}
+
+func isManagedControlPath(source string) bool {
+	if source == "" || filepath.IsAbs(source) {
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(source))
+	return clean == "." || clean == ".env" || clean == "compose.yaml" || clean == "compose.yml" ||
+		strings.HasPrefix(clean, "revisions/") || strings.HasPrefix(clean, "secrets/")
 }
 
 func literalSecretEnvKeys(node yaml.Node) []string {
@@ -335,7 +431,15 @@ func analyzeBindSource(service, src string, f *[]RiskFinding) {
 			add(RiskBlocked, "volumes", fmt.Sprintf("bind 挂载系统关键目录 %s，已阻断", p))
 			return
 		}
-		// 子目录允许（如 /etc/devbox），仅根/关键目录本身阻断。
+	}
+	for _, p := range []string{"/proc", "/sys", "/dev", "/var/lib/docker"} {
+		if strings.HasPrefix(clean, p+string(filepath.Separator)) {
+			add(RiskBlocked, "volumes", fmt.Sprintf("bind 挂载系统关键目录子路径 %s，已阻断", clean))
+			return
+		}
+	}
+	if filepath.IsAbs(clean) {
+		add(RiskConfirmation, "volumes", fmt.Sprintf("bind 挂载宿主绝对路径 %s，数据生命周期不归应用管理，需确认", clean))
 	}
 }
 
