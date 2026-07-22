@@ -69,6 +69,8 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// 限制请求体大小（values map 由用户填写，防御性上限）。
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req apps.StoreInstallRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
@@ -123,10 +125,12 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 		desired.ID = req.AppID
 	}
 
-	// 5. 幂等键：前端可传；为空则按 app+version 生成稳定键（同包同版本重装幂等）。
+	// 5. 幂等键：前端可传；为空则按 app+version+params+secrets 指纹生成稳定键。
+	// 指纹纳入 secrets 是关键——否则同 app+version 换密码会被旧 task 短路（secret 静默
+	// 不更新），改 params 会被判 idempotency_conflict（reconfigure 被阻断）。
 	idemKey := req.IdempotencyKey
 	if idemKey == "" {
-		idemKey = "store:" + req.AppID + ":" + ver.Version
+		idemKey = "store:" + req.AppID + ":" + ver.Version + ":" + apps.StoreInstallFingerprint(params, secrets)
 	}
 
 	task, err := s.controller.Apply(r.Context(), desired, apps.ApplyOptions{

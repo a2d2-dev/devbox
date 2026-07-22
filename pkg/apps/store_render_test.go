@@ -142,3 +142,21 @@ func TestRenderStoreCompose_EmptyTemplate(t *testing.T) {
 		t.Fatal("want error for empty compose template")
 	}
 }
+
+func TestParseValuesSchema_InvalidKey(t *testing.T) {
+	bad := json.RawMessage(`{"fields":[{"key":"bad key","type":"text"}]}`)
+	if _, err := parseValuesSchema(bad); err == nil {
+		t.Fatal("want error for illegal field key (env/template safety)")
+	}
+}
+
+func TestParseValuesSchema_SelectRequiresOptions(t *testing.T) {
+	bad := json.RawMessage(`{"fields":[{"key":"mode","type":"select"}]}`)
+	if _, err := parseValuesSchema(bad); err == nil {
+		t.Fatal("want error for select without options")
+	}
+	good := json.RawMessage(`{"fields":[{"key":"mode","type":"select","options":[{"label":"A","value":"a"}]}]}`)
+	if _, err := parseValuesSchema(good); err != nil {
+		t.Fatalf("valid select should parse: %v", err)
+	}
+}

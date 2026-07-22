@@ -66,6 +66,9 @@ func RenderStoreCompose(ver StoreAppVersion, input map[string]any) (compose stri
 }
 
 // parseValuesSchema 解析透传的 valuesSchema RawMessage；空返回零值（无字段）。
+// 同时做防御性校验：
+//   - 每个 field.Key 须形如 ^[A-Za-z_][A-Za-z0-9_]*$（防止 .env key 注入 / 模板逃逸）；
+//   - select 字段必须声明 options（否则退化为自由文本，失去约束）。
 func parseValuesSchema(raw json.RawMessage) (storeValuesSchema, error) {
 	var s storeValuesSchema
 	if len(bytes.TrimSpace(raw)) == 0 {
@@ -74,7 +77,36 @@ func parseValuesSchema(raw json.RawMessage) (storeValuesSchema, error) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return s, fmt.Errorf("invalid valuesSchema: %w", err)
 	}
+	for _, f := range s.Fields {
+		if !validValueKey(f.Key) {
+			return s, fmt.Errorf("valuesSchema 字段 key %q 非法（须 ^[A-Za-z_][A-Za-z0-9_]*$）", f.Key)
+		}
+		if f.Type == "select" && len(f.Options) == 0 {
+			return s, fmt.Errorf("valuesSchema select 字段 %q 缺少 options", f.Key)
+		}
+	}
 	return s, nil
+}
+
+// validValueKey 校验参数 key 形如 ^[A-Za-z_][A-Za-z0-9_]*$（与 edge-apiserver ValuesField 一致）。
+func validValueKey(k string) bool {
+	if k == "" {
+		return false
+	}
+	for i, r := range k {
+		isAlpha := (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+		isDigit := r >= '0' && r <= '9'
+		if i == 0 {
+			if !(isAlpha || r == '_') {
+				return false
+			}
+			continue
+		}
+		if !(isAlpha || isDigit || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // splitValues 校验用户输入并按字段类型分离：password→secrets，其余→params。

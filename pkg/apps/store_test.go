@@ -232,3 +232,41 @@ func TestStoreAppVersion_ComposeTemplateNotSerialized(t *testing.T) {
 		t.Errorf("compose template leaked to JSON: %s", b)
 	}
 }
+
+func TestCompareVersionStrings(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"10.0.0", "9.0.0", 1},   // 数值段：10 > 9（字典序会误判 -1）
+		{"1.10.0", "1.9.0", 1},   // 1.10 > 1.9
+		{"2.0.0", "2.0.0", 0},
+		{"1.0.0", "2.0.0", -1},
+		{"1.0.0", "1.0.0-rc1", -1}, // 非数值段字符串回退
+	}
+	for _, c := range cases {
+		if got := compareVersionStrings(c.a, c.b); got != c.want {
+			t.Errorf("compareVersionStrings(%q,%q) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestStoreInstallFingerprint(t *testing.T) {
+	params := map[string]string{"tag": "1.25"}
+	secrets := map[string]string{"pw": "x"}
+	base := StoreInstallFingerprint(params, secrets)
+
+	// 完全相同输入 → 相同指纹（幂等）。
+	same := StoreInstallFingerprint(map[string]string{"tag": "1.25"}, map[string]string{"pw": "x"})
+	if base != same {
+		t.Error("identical input should yield identical fingerprint")
+	}
+	// 轮换 secret → 不同指纹（不被旧 task 短路）。
+	if base == StoreInstallFingerprint(params, map[string]string{"pw": "y"}) {
+		t.Error("changed secret should change fingerprint")
+	}
+	// 改 params → 不同指纹（reconfigure 不被阻断）。
+	if base == StoreInstallFingerprint(map[string]string{"tag": "1.26"}, secrets) {
+		t.Error("changed params should change fingerprint")
+	}
+}

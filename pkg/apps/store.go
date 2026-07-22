@@ -2,12 +2,16 @@ package apps
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,9 +109,14 @@ type storeAppItem struct {
 	} `json:"status"`
 }
 
-// provisionerLabel → 本机运行时推断（列表层面粗判；权威值以 /store/version 为准）。
+// provisionerLabel → 本机运行时推断（列表层面粗判）。
 // workload/helm/model 均为 Kubernetes 原生包，本机不可 Compose 安装。
-// 仅当 catalog 未来以 provisioner=compose 发布时才视为 Compose 包。
+// 仅当 catalog 以 provisioner=compose 发布时才乐观视为 Compose 包。
+//
+// 注意（口径差异）：列表按 provisioner label 粗判，权威值以 GET /store/version
+// （版本是否真的带 composeTemplate）为准。若 catalog 标 provisioner=compose 但版本
+// 实际无模板，列表会乐观显示「可安装」，但 install 会经 GetStoreAppVersion 重新核对
+// 并返回 422——不会发生错误安装，仅一次性 UX 不一致。
 func runtimeFromProvisioner(labels map[string]string) (RuntimeKind, []string, bool, string) {
 	switch labels["app.theriseunion.io/provisioner"] {
 	case "compose":
@@ -294,7 +303,8 @@ func maxVersionItem(items []*storeVersionItem) *storeVersionItem {
 	return best
 }
 
-// compareVersionStrings 简单语义版本比较，返 -1/0/1（与前端 compareVersions 对齐）。
+// compareVersionStrings 语义版本比较，返 -1/0/1。数值段按数值比较、非数值段按字符串
+// 回退，与前端 compareVersions（parseInt 优先）对齐：10.0.0 > 9.0.0，1.10.0 > 1.9.0。
 func compareVersionStrings(a, b string) int {
 	na := splitVersion(a)
 	nb := splitVersion(b)
@@ -305,6 +315,17 @@ func compareVersionStrings(a, b string) int {
 		}
 		if i < len(nb) {
 			y = nb[i]
+		}
+		xn, xerr := strconv.Atoi(x)
+		yn, yerr := strconv.Atoi(y)
+		if xerr == nil && yerr == nil {
+			if xn != yn {
+				if xn < yn {
+					return -1
+				}
+				return 1
+			}
+			continue
 		}
 		if c := strings.Compare(x, y); c != 0 {
 			return c
@@ -393,4 +414,34 @@ type StoreInstallResult struct {
 	AppID    string `json:"appId"`
 	Name     string `json:"name"`
 	Revision int64  `json:"revision,omitempty"`
+}
+
+// StoreInstallFingerprint 生成 store install 请求的稳定指纹（用于默认幂等键）。
+// 纳入 params + secrets 的内容，确保：
+//   - 完全相同的重装请求 → 相同 key → 幂等返回原 task；
+//   - 改 params 或轮换 secret → 不同 key → 真实落盘（新 revision），不被旧 task 短路。
+// 指纹本身是单向摘要，不泄露 secret 明文，可安全出现在 idempotency 记录里。
+func StoreInstallFingerprint(params, secrets map[string]string) string {
+	keys := make([]string, 0, len(params)+len(secrets))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	for k := range secrets {
+		if _, dup := params[k]; !dup {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{'='})
+		if v, ok := secrets[k]; ok {
+			h.Write([]byte(v))
+		} else {
+			h.Write([]byte(params[k]))
+		}
+		h.Write([]byte{'\n'})
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }
