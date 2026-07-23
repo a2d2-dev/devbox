@@ -128,10 +128,15 @@ func (s *Server) installResolvedVersion(w http.ResponseWriter, r *http.Request, 
 	desired := apps.DesiredApplication{
 		Name: appID, ComposeContent: compose, Parameters: params, Secrets: secrets, Source: source,
 	}
-	// 同源已装 → 复用 ID + ExpectedRevision；否则用 catalog appID 作 devbox app ID。
+	// 同源已装 → 复用 ID + ExpectedRevision；否则全新安装用来源隔离稳定 ID。
+	// catalog 来源（含 1Panel）一律 namespaced：CatalogLocalAppID(appID, catalogID)，
+	// 避免 upstream key 含下划线（act_runner）/超长/多来源同 key 撞 ID 或 fail ValidateAppID。
+	// StoreApp.ID 与可信路由仍保留原始 upstreamKey；edge store（SourceStore）保留原 appID。
 	if id, rev, found := s.findInstalledVersion(r.Context(), source, appID); found {
 		desired.ID = id
 		desired.ExpectedRevision = rev
+	} else if source.Kind == apps.SourceCatalog {
+		desired.ID = apps.CatalogLocalAppID(appID, source.CatalogID)
 	} else {
 		desired.ID = appID
 	}

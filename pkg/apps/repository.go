@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -49,6 +50,34 @@ type idemRecord struct {
 	CreatedAt   time.Time
 }
 
+// CatalogSourceRecord 持久化的动态 catalog source（同 apps.db）。
+// Token 为只读 Git token（secret）：入库，但绝不回前端（由 CatalogSourceManager 产出 SafeView）。
+type CatalogSourceRecord struct {
+	ID        string
+	Name      string
+	Kind      string // http|git|1panel
+	URL       string
+	Ref       string
+	Path      string
+	Token     string
+	Enabled   bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// CatalogSourceChange 一次来源变更 + 审计（同事务提交）。
+//   - Record != nil → upsert（create/update）；Record == nil → 删除 DeleteID。
+//   - PreserveEmptyToken：upsert 时若 Record.Token 为空，保留库中既有 token（避免误擦除）。
+//     本 PR 不支持显式清空 token（无 clear 语义），避免误删只读凭证。
+//   - Audit.Detail 由调用方脱敏：仅 source id/kind/action/changed-fields/managedBy，
+//     绝不含 token、tokenSet 值、完整敏感 URL/query（query 已被 validateDynamicCatalogURL 拒绝）。
+type CatalogSourceChange struct {
+	Record             *CatalogSourceRecord
+	DeleteID           string
+	PreserveEmptyToken bool
+	Audit              AuditRecord
+}
+
 // Repository 持久化仓库接口（controller 依赖它，便于测试）。
 type Repository interface {
 	Close() error
@@ -87,6 +116,12 @@ type Repository interface {
 
 	// audit
 	InsertAudit(ctx context.Context, a AuditRecord) error
+
+	// catalog sources（动态来源持久化，同 apps.db；token 为 secret，调用方负责不回显）
+	// 变更与审计同事务（CommitCatalogSourceChange），避免崩溃留下未审计变更。
+	ListCatalogSources(ctx context.Context) ([]CatalogSourceRecord, error)
+	GetCatalogSource(ctx context.Context, id string) (CatalogSourceRecord, bool, error)
+	CommitCatalogSourceChange(ctx context.Context, change CatalogSourceChange) error
 }
 
 // sqliteRepo Repository 的 SQLite 实现。
@@ -112,6 +147,11 @@ func OpenRepository(ctx context.Context, dbPath string) (Repository, error) {
 	if err := r.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
+	}
+	// catalog_sources.token 等敏感数据入库，收紧数据库及当前 WAL/SHM 文件权限。
+	// 不修改调用方提供的父目录权限，避免影响共享数据目录。
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		_ = os.Chmod(dbPath+suffix, 0o600)
 	}
 	return r, nil
 }
@@ -187,6 +227,18 @@ func (r *sqliteRepo) migrate(ctx context.Context) error {
 			detail TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_app ON audit(app_id, at DESC)`,
+		`CREATE TABLE IF NOT EXISTS catalog_sources (
+			id         TEXT PRIMARY KEY,
+			name       TEXT NOT NULL DEFAULT '',
+			kind       TEXT NOT NULL,
+			url        TEXT NOT NULL,
+			ref        TEXT NOT NULL DEFAULT '',
+			path       TEXT NOT NULL DEFAULT '',
+			token      TEXT NOT NULL DEFAULT '',
+			enabled    INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := r.db.ExecContext(ctx, s); err != nil {
@@ -643,4 +695,145 @@ func parseTimePtr(s string) *time.Time {
 		return nil
 	}
 	return &t
+}
+
+// --- catalog_sources CRUD ---
+
+func (r *sqliteRepo) ListCatalogSources(ctx context.Context) ([]CatalogSourceRecord, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,kind,url,ref,path,token,enabled,created_at,updated_at FROM catalog_sources ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("list catalog sources: %w", err)
+	}
+	defer rows.Close()
+	var out []CatalogSourceRecord
+	for rows.Next() {
+		var rec CatalogSourceRecord
+		var enabled int
+		var createdAt, updatedAt string
+		if err := rows.Scan(&rec.ID, &rec.Name, &rec.Kind, &rec.URL, &rec.Ref, &rec.Path, &rec.Token, &enabled, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan catalog source: %w", err)
+		}
+		rec.Enabled = enabled != 0
+		rec.CreatedAt = parseTime(createdAt)
+		rec.UpdatedAt = parseTime(updatedAt)
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// GetCatalogSource 按 id 取单条（含 token；调用方负责脱敏）。
+func (r *sqliteRepo) GetCatalogSource(ctx context.Context, id string) (CatalogSourceRecord, bool, error) {
+	var rec CatalogSourceRecord
+	var enabled int
+	var createdAt, updatedAt string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id,name,kind,url,ref,path,token,enabled,created_at,updated_at FROM catalog_sources WHERE id=?`, id).
+		Scan(&rec.ID, &rec.Name, &rec.Kind, &rec.URL, &rec.Ref, &rec.Path, &rec.Token, &enabled, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CatalogSourceRecord{}, false, nil
+	}
+	if err != nil {
+		return CatalogSourceRecord{}, false, fmt.Errorf("get catalog source: %w", err)
+	}
+	rec.Enabled = enabled != 0
+	rec.CreatedAt = parseTime(createdAt)
+	rec.UpdatedAt = parseTime(updatedAt)
+	return rec, true, nil
+}
+
+// CommitCatalogSourceChange 单事务提交来源变更 + 审计（任一步失败整体回滚）。
+// upsert 时 PreserveEmptyToken 且 Record.Token 为空 → 复用库中既有 token。
+func (r *sqliteRepo) CommitCatalogSourceChange(ctx context.Context, change CatalogSourceChange) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if change.Record != nil {
+		rec := *change.Record
+		if strings.TrimSpace(rec.ID) == "" {
+			return fmt.Errorf("catalog source id required")
+		}
+		if change.PreserveEmptyToken && strings.TrimSpace(rec.Token) == "" {
+			existing, ok, err := catalogSourceInTx(ctx, tx, rec.ID)
+			if err != nil {
+				return fmt.Errorf("read existing catalog source: %w", err)
+			}
+			if ok && existing.Token != "" {
+				rec.Token = existing.Token
+			}
+		}
+		now := r.now().UTC()
+		if rec.CreatedAt.IsZero() {
+			rec.CreatedAt = now
+		}
+		rec.UpdatedAt = now
+		enabled := 0
+		if rec.Enabled {
+			enabled = 1
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO catalog_sources(id,name,kind,url,ref,path,token,enabled,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, url=excluded.url, ref=excluded.ref, path=excluded.path, token=excluded.token, enabled=excluded.enabled, updated_at=excluded.updated_at`,
+			rec.ID, rec.Name, rec.Kind, rec.URL, rec.Ref, rec.Path, rec.Token, enabled,
+			rec.CreatedAt.Format(time.RFC3339Nano), rec.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("upsert catalog source: %w", err)
+		}
+	} else {
+		id := strings.TrimSpace(change.DeleteID)
+		if id == "" {
+			return fmt.Errorf("delete catalog source id required")
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM catalog_sources WHERE id=?`, id); err != nil {
+			return fmt.Errorf("delete catalog source: %w", err)
+		}
+	}
+
+	// 同事务写审计（detail 由调用方脱敏：仅 id/kind/action/changed-fields/managedBy，不含 token/URL 全文）。
+	if err := insertAuditTx(ctx, tx, change.Audit, r.now); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit catalog source change: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// catalogSourceInTx 事务内按 id 读单条（preserve-token 用）。
+func catalogSourceInTx(ctx context.Context, tx *sql.Tx, id string) (CatalogSourceRecord, bool, error) {
+	var rec CatalogSourceRecord
+	var enabled int
+	var createdAt, updatedAt string
+	err := tx.QueryRowContext(ctx,
+		`SELECT id,name,kind,url,ref,path,token,enabled,created_at,updated_at FROM catalog_sources WHERE id=?`, id).
+		Scan(&rec.ID, &rec.Name, &rec.Kind, &rec.URL, &rec.Ref, &rec.Path, &rec.Token, &enabled, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CatalogSourceRecord{}, false, nil
+	}
+	if err != nil {
+		return CatalogSourceRecord{}, false, err
+	}
+	rec.Enabled = enabled != 0
+	return rec, true, nil
+}
+
+// insertAuditTx 事务内写审计（与 insertAuditImpl 共享语句）。
+func insertAuditTx(ctx context.Context, tx *sql.Tx, a AuditRecord, now func() time.Time) error {
+	at := a.At
+	if at.IsZero() {
+		at = now().UTC()
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit(at,actor,app_id,action,task_id,detail) VALUES(?,?,?,?,?,?)`,
+		at.Format(time.RFC3339Nano), a.Actor, a.AppID, a.Action, a.TaskID, a.Detail); err != nil {
+		return fmt.Errorf("insert audit: %w", err)
+	}
+	return nil
 }

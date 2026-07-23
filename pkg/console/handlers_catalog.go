@@ -20,7 +20,7 @@ import (
 // 关键约束（要求 1/3/4）：
 //   - install 不接受前端 compose 原文，一律后端从可信 catalog 重取（禁止前端传模板）。
 //   - catalog 不可用时返回上次可信缓存；已装应用不受影响。
-//   - 无任意 URL 写入：source 仅来自配置；refresh 不接受 URL 入参。
+//   - 原生 1Panel 来源由 /catalogs/sources 管理；动态 URL 走 HTTPS/SSRF 校验，token 只写。
 
 // handleCatalogs GET=状态视图 / POST=显式 refresh。
 func (s *Server) handleCatalogs(w http.ResponseWriter, r *http.Request) {

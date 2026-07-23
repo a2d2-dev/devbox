@@ -49,6 +49,11 @@ compose:
     #   url: "https://github.com/example/devbox-catalog.git"
     #   ref: "v1"
     #   path: "catalog"
+    # 原生 1Panel 开源应用商店；ref 留空使用远端默认分支（官方源当前为 dev）。
+    # - id: "onepanel-official"
+    #   name: "1Panel 官方商店"
+    #   kind: "1panel"
+    #   url: "https://github.com/1Panel-dev/appstore"
     # 私有源可配置只读 token；建议通过受控配置文件注入并限制文件权限。
     #   token: ""
 

@@ -1,6 +1,28 @@
 # Docker Compose Catalog 接入规范
 
-devbox 可以聚合 edge-apiserver 应用市场以及多个第三方 HTTP/Git catalog。第三方包安装时，后端会按 `sourceId + appId + version` 从可信 source 重新读取定义，前端不能提交 Compose 模板原文。
+devbox 可以聚合 edge-apiserver 应用市场、`devbox/v1` HTTP/Git catalog，以及原生 1Panel 开源应用商店。第三方包安装时，后端会按 `sourceId + appId + version` 从可信 source 重新读取定义，前端不能提交 Compose 模板原文。
+
+## 添加 1Panel 应用市场
+
+推荐在「应用商店」左侧的「Catalog 数据源」点击 `+`：
+
+1. 填写 Git 仓库地址，例如官方源 `https://github.com/1Panel-dev/appstore`。
+2. 格式选择「自动识别」或「1Panel」；分支留空读取远端默认分支（官方源当前为 `dev`）。
+3. 私有兼容仓库可填写只读 Token。Token 只写入权限受限的 `apps.db`，API/UI 只返回 `tokenConfigured`。
+4. 先测试连接，再保存。来源可停用、启用、刷新或删除；删除来源不删除已安装应用。
+
+动态来源只允许解析到公网地址的 HTTPS Git URL，阻断 loopback、RFC1918、link-local/云元数据地址。内网自建源应由运维写入启动配置。配置来源在 UI 中只读，同 ID 的数据库来源不能覆盖它。
+
+```yaml
+compose:
+  catalogs:
+    - id: onepanel-official
+      name: 1Panel 官方商店
+      kind: 1panel
+      url: https://github.com/1Panel-dev/appstore
+```
+
+1Panel adapter 使用 `--filter=blob:none` + non-cone sparse checkout，只获取 `data.yaml`、应用/版本 `data.yml` 和 `docker-compose.yml`。devbox 不执行上游 `scripts/init.sh`；依赖宿主初始化脚本的版本会标记为不可安装。`1panel-network` 收敛为应用 project 内网络，不创建全局共享网络。
 
 ## Catalog 目录
 
@@ -81,3 +103,8 @@ services:
 - `GET /api/v1/catalogs/apps`：聚合应用列表。
 - `GET /api/v1/catalogs/version?sourceId=&appId=&v=`：版本与参数 schema，不返回 Compose 模板。
 - `POST /api/v1/catalogs/install`：提交安装/升级，返回 `202 + Task`。
+- `GET /api/v1/catalogs/sources`：来源管理视图（不含 token）。
+- `POST /api/v1/catalogs/sources/test`：测试并自动识别来源，不落库。
+- `POST /api/v1/catalogs/sources`：测试成功后保存动态来源。
+- `PUT/DELETE /api/v1/catalogs/sources/{id}`：编辑、启停或删除数据库来源。
+- `POST /api/v1/catalogs/sources/{id}/refresh`：刷新单个来源。

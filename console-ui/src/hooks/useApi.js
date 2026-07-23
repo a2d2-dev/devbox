@@ -813,6 +813,27 @@ export function useCatalogSources(interval = 30000) {
   return usePoll('/catalogs', { interval, fallback: [] });
 }
 
+// 动态市场来源管理（token 只写，响应仅含 tokenConfigured）。
+export function useCatalogSourceConfigs(interval = 30000) {
+  return usePoll('/catalogs/sources', { interval, fallback: [] });
+}
+
+async function catalogSourceMutation(path, method, body) {
+  const r = await authFetch(`${API}/catalogs/sources${path}`, {
+    method, headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw await readErr(r);
+  if (r.status === 204) return null;
+  return r.json();
+}
+
+export function testCatalogSource(input) { return catalogSourceMutation('/test', 'POST', input); }
+export function createCatalogSource(input) { return catalogSourceMutation('', 'POST', input); }
+export function updateCatalogSource(id, input) { return catalogSourceMutation(`/${encodeURIComponent(id)}`, 'PUT', input); }
+export function deleteCatalogSource(id) { return catalogSourceMutation(`/${encodeURIComponent(id)}`, 'DELETE'); }
+export function refreshCatalogSource(id) { return catalogSourceMutation(`/${encodeURIComponent(id)}/refresh`, 'POST'); }
+
 // useCatalogApps：GET /catalogs/apps → []StoreApp（带 catalogId/catalogName/installable/installed）。
 export function useCatalogApps(interval = 30000) {
   return usePoll('/catalogs/apps', { interval, fallback: [] });

@@ -55,9 +55,9 @@ type ComposeConfig struct {
 // CatalogSourceConfig 第三方 Docker Compose catalog source 配置。
 //
 // kind=http: url = manifest 所在 base URL（取 <base>/catalog.json 与 <base>/<compose 相对路径>）。
-// kind=git:  url = 完整 https 仓库地址（如 https://github.com/owner/name）；
+// kind=git: url = devbox/v1 Git 仓库；kind=1panel: 原生 1Panel AppStore 仓库。
 //
-//	ref=分支/tag（默认 main）；path=仓库内子目录（默认根）。clone 为 --depth 1 shallow
+//	ref=分支/tag（git 默认 main；1panel 留空使用远端 HEAD）；path=仓库内子目录（默认根）。
 //	clone，拒绝 file/ssh/local。
 //
 // 安全：URL 仅 https（http 仅 localhost/内网或 insecure=true）。token 为只读访问令牌，
@@ -65,7 +65,7 @@ type ComposeConfig struct {
 type CatalogSourceConfig struct {
 	ID       string `mapstructure:"id"`   // 稳定标识（来源筛选与 install 路由）；空则按 url 派生
 	Name     string `mapstructure:"name"` // 人读来源名；空用 ID
-	Kind     string `mapstructure:"kind"` // "http" | "git"
+	Kind     string `mapstructure:"kind"` // "http" | "git" | "1panel"
 	URL      string `mapstructure:"url"`
 	Platform string `mapstructure:"platform"` // git: github|gitlab
 	Host     string `mapstructure:"host"`     // gitlab host
@@ -171,8 +171,8 @@ func (c *Config) Validate() error {
 		}
 	}
 	for i, cat := range c.Compose.Catalogs {
-		if cat.Kind != "http" && cat.Kind != "git" {
-			return fmt.Errorf("compose.catalogs[%d]: kind must be http or git (got %q)", i, cat.Kind)
+		if cat.Kind != "http" && cat.Kind != "git" && cat.Kind != "1panel" {
+			return fmt.Errorf("compose.catalogs[%d]: kind must be http, git or 1panel (got %q)", i, cat.Kind)
 		}
 		if cat.URL == "" {
 			return fmt.Errorf("compose.catalogs[%d]: url is required", i)

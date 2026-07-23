@@ -17,6 +17,7 @@ import { Icon } from '../icons'
 import { StatusDot, Chip, Card } from '../components/ui'
 import {
   useApps, useStoreApps, useCatalogApps, useCatalogSources,
+  useCatalogSourceConfigs, testCatalogSource, createCatalogSource, updateCatalogSource, deleteCatalogSource, refreshCatalogSource,
   getStoreVersion, getCatalogVersion, installStoreApp, installCatalogApp, refreshCatalogs,
   useTask,
 } from '../hooks/useApi'
@@ -398,7 +399,7 @@ function StoreCard({ app, onOpen, onOpenApp }) {
         </span>
         <div style={{ flex: 1 }}/>
         {!app.installable
-          ? <span title={app.notInstallableReason || ''} style={{ fontSize: 10.5, color: T.ink4, fontWeight: 600, flexShrink: 0 }}>仅 Kubernetes</span>
+          ? <span title={app.notInstallableReason || ''} style={{ fontSize: 10.5, color: '#b45309', fontWeight: 600, flexShrink: 0 }}>{app.runtime === 'compose' ? '暂不可安装' : '仅 Kubernetes'}</span>
           : app.installed
             ? <button onClick={(e) => { e.stopPropagation(); onOpenApp && onOpenApp({ id: app.devboxId || app.id }); }} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
                 <Icon name="play" size={11} stroke={2}/>打开
@@ -412,8 +413,72 @@ function StoreCard({ app, onOpen, onOpenApp }) {
 }
 
 // ─── catalog 来源状态面板 ────────────────────────────────────────
-function CatalogSourcesPanel({ sources, onRefresh, refreshing }) {
-  if (!sources || sources.length === 0) return null;
+function CatalogSourceDialog({ source, onClose, onSaved }) {
+  const editing = !!source;
+  const [form, setForm] = useState({
+    id: source?.id || '', name: source?.name || '', kind: source?.kind || 'auto',
+    url: source?.url || 'https://github.com/1Panel-dev/appstore', ref: source?.ref || '', token: '',
+  });
+  const [busy, setBusy] = useState('');
+  const [probe, setProbe] = useState(null);
+  const [error, setError] = useState('');
+  const set = (key, value) => setForm((v) => ({ ...v, [key]: value }));
+  useEffect(() => {
+    const closeOnEscape = (event) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
+  async function runTest() {
+    setBusy('test'); setError(''); setProbe(null);
+    try { setProbe(await testCatalogSource(form)); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(''); }
+  }
+  async function save() {
+    setBusy('save'); setError('');
+    try {
+      const result = editing ? await updateCatalogSource(source.id, form) : await createCatalogSource(form);
+      onSaved(result);
+    } catch (e) { setError(e.message); }
+    finally { setBusy(''); }
+  }
+
+  const inputStyle = { width: '100%', boxSizing: 'border-box', height: 36, padding: '0 10px', borderRadius: 7, border: `1px solid ${T.border}`, background: T.surface, color: T.ink, fontSize: 12.5, outline: 'none' };
+  return (
+    <div role="dialog" aria-modal="true" aria-label={editing ? '编辑应用市场' : '添加应用市场'}
+      style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(15,23,42,0.42)', backdropFilter: 'blur(3px)' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ width: 520, maxWidth: '100%', borderRadius: 13, background: T.surface, boxShadow: '0 24px 70px rgba(15,23,42,0.24), 0 2px 10px rgba(15,23,42,0.08)', overflow: 'hidden' }}>
+        <div style={{ padding: '18px 20px 14px', borderBottom: `1px solid ${T.borderSoft}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', background: T.blueSoft, color: T.blueDeep }}><Icon name="store" size={17}/></div>
+          <div><div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>{editing ? '编辑应用市场' : '添加 1Panel 应用市场'}</div><div style={{ fontSize: 11.5, color: T.ink4, marginTop: 2 }}>直接填写官方或兼容的开源 Git 仓库地址</div></div>
+          <div style={{ flex: 1 }}/><button onClick={onClose} aria-label="关闭" className="edge-press" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: T.ink3, cursor: 'pointer' }}><Icon name="x" size={16}/></button>
+        </div>
+        <div style={{ padding: 20, display: 'grid', gap: 13 }}>
+          <label style={{ display: 'grid', gap: 6, fontSize: 11.5, color: T.ink2 }}>名称<input autoFocus value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="例如：1Panel 官方商店" style={inputStyle}/></label>
+          {!editing && <label style={{ display: 'grid', gap: 6, fontSize: 11.5, color: T.ink2 }}>来源 ID（可留空自动生成）<input value={form.id} onChange={(e) => set('id', e.target.value)} placeholder="onepanel-official" style={inputStyle}/></label>}
+          <label style={{ display: 'grid', gap: 6, fontSize: 11.5, color: T.ink2 }}>Git 仓库地址<input value={form.url} onChange={(e) => set('url', e.target.value)} spellCheck={false} style={{ ...inputStyle, fontFamily: T.type?.mono }}/></label>
+          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 10 }}>
+            <label style={{ display: 'grid', gap: 6, fontSize: 11.5, color: T.ink2 }}>格式<select value={form.kind} onChange={(e) => set('kind', e.target.value)} style={inputStyle}><option value="auto">自动识别</option><option value="1panel">1Panel</option></select></label>
+            <label style={{ display: 'grid', gap: 6, fontSize: 11.5, color: T.ink2 }}>分支 / Tag（留空使用远端默认）<input value={form.ref} onChange={(e) => set('ref', e.target.value)} placeholder="官方源默认 dev" style={inputStyle}/></label>
+          </div>
+          <label style={{ display: 'grid', gap: 6, fontSize: 11.5, color: T.ink2 }}>只读 Token（可选，仅写不回显）<input type="password" value={form.token} onChange={(e) => set('token', e.target.value)} placeholder={source?.tokenConfigured ? '已配置；留空保持不变' : '公开仓库无需填写'} autoComplete="new-password" style={inputStyle}/></label>
+          {probe && <div style={{ padding: '9px 11px', borderRadius: 7, background: '#ecfdf5', color: '#047857', fontSize: 11.5 }}><b>连接成功</b> · 已识别 {probe.kind}，发现 {probe.appCount} 个应用</div>}
+          {error && <div style={{ padding: '9px 11px', borderRadius: 7, background: '#fff7ed', color: '#c2410c', fontSize: 11.5 }}>{error}</div>}
+        </div>
+        <div style={{ padding: '13px 20px 17px', display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${T.borderSoft}` }}>
+          <button onClick={runTest} disabled={!!busy || !form.url} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, minHeight: 40 }}>{busy === 'test' ? '检测中…' : '测试连接'}</button>
+          <button onClick={save} disabled={!!busy || !form.url} className="edge-press edge-btn-primary" style={{ ...btnPrimary, minHeight: 40 }}>{busy === 'save' ? '保存中…' : '保存来源'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CatalogSourcesPanel({ configs, onRefresh, onConfigsChanged, refreshing }) {
+  const [dialog, setDialog] = useState(null);
+  const toast = useToast();
   const stateMap = { ok: { tone: 'green', label: '正常' }, error: { tone: 'red', label: '异常' }, syncing: { tone: 'amber', label: '同步中' }, unconfigured: { tone: 'gray', label: '未配置' } };
   return (
     <div style={{ padding: 10, borderRadius: 8, background: T.surface, border: `1px solid ${T.borderSoft}` }}>
@@ -421,26 +486,28 @@ function CatalogSourcesPanel({ sources, onRefresh, refreshing }) {
         <Icon name="layers" size={13} stroke={1.8} style={{ color: T.violet }}/>
         <span style={{ fontSize: 12, fontWeight: 700, color: T.ink }}>Catalog 数据源</span>
         <div style={{ flex: 1 }}/>
-        <button onClick={onRefresh} disabled={refreshing} className="edge-press edge-btn-secondary"
-          style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
-          <Icon name="refresh" size={11} stroke={2}/>{refreshing ? '刷新中' : '刷新'}
-        </button>
+        <button onClick={() => setDialog({})} title="添加来源" aria-label="添加应用市场来源" className="edge-press edge-btn-secondary" style={{ ...btnSecondary, minWidth: 40, height: 32, padding: '0 8px', fontSize: 11 }}><Icon name="plus" size={12}/></button>
+        <button onClick={onRefresh} disabled={refreshing} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 32, padding: '0 8px', fontSize: 11 }}><Icon name="refresh" size={11} stroke={2}/>{refreshing ? '刷新中' : '刷新'}</button>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {sources.map((s) => {
+        {(configs || []).map((s) => {
           const st = stateMap[s.status?.state] || stateMap.unconfigured;
           return (
-            <div key={s.sourceId} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5 }}>
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5 }}>
               <StatusDot tone={st.tone} size={7} pulse={s.status?.state === 'error'}/>
-              <span style={{ color: T.ink2, fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {s.sourceName || s.sourceId}
-              </span>
+              <span title={s.url} style={{ color: T.ink2, fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || s.id}</span>
               <span style={{ fontSize: 10, color: T.ink4 }}>{s.status?.appCount ?? 0} 个应用</span>
               <span style={{ fontSize: 10, color: st.tone === 'red' ? '#dc2626' : T.ink4 }}>{st.label}</span>
+              {!s.readOnly && <button title="刷新" aria-label={`刷新来源 ${s.name || s.id}`} disabled={!s.enabled} onClick={async () => { try { await refreshCatalogSource(s.id); onConfigsChanged(); toast.ok('来源已刷新'); } catch (e) { toast.err(e.message); } }} className="edge-press" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: T.ink3, cursor: s.enabled ? 'pointer' : 'default' }}><Icon name="refresh" size={12}/></button>}
+              {!s.readOnly && <button title="编辑" aria-label={`编辑来源 ${s.name || s.id}`} onClick={() => setDialog(s)} className="edge-press" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: T.ink3, cursor: 'pointer' }}><Icon name="edit" size={12}/></button>}
+              {!s.readOnly && <button title={s.enabled ? '停用' : '启用'} aria-label={`${s.enabled ? '停用' : '启用'}来源 ${s.name || s.id}`} onClick={async () => { try { await updateCatalogSource(s.id, { enabled: !s.enabled }); onConfigsChanged(); } catch (e) { toast.err(e.message); } }} className="edge-press" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: s.enabled ? '#16a34a' : T.ink4, cursor: 'pointer' }}><Icon name={s.enabled ? 'stop' : 'play'} size={12}/></button>}
+              {!s.readOnly && <button title="删除" aria-label={`删除来源 ${s.name || s.id}`} onClick={async () => { if (!window.confirm(`删除来源「${s.name || s.id}」？已安装应用不会被删除。`)) return; try { await deleteCatalogSource(s.id); onConfigsChanged(); } catch (e) { toast.err(e.message); } }} className="edge-press" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: '#dc2626', cursor: 'pointer' }}><Icon name="trash" size={12}/></button>}
             </div>
           );
         })}
+        {(!configs || configs.length === 0) && <div style={{ color: T.ink4, fontSize: 11, lineHeight: 1.5 }}>尚未添加市场来源。可直接添加 1Panel 官方或兼容仓库。</div>}
       </div>
+      {dialog && <CatalogSourceDialog source={dialog.id ? dialog : null} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); onConfigsChanged(); toast.ok('应用市场来源已保存'); }}/>}
     </div>
   );
 }
@@ -457,8 +524,9 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
 
   const { data: deployedApps } = useApps(10000);
   const { data: platformRaw, error: storeErr, refresh: refreshStore } = useStoreApps();
-  const { data: catalogRaw, error: catalogErr } = useCatalogApps();
+  const { data: catalogRaw, error: catalogErr, refresh: refreshCatalogApps } = useCatalogApps();
   const { data: catalogSources, refresh: refreshSources } = useCatalogSources();
+  const { data: catalogSourceConfigs, refresh: refreshSourceConfigs } = useCatalogSourceConfigs();
 
   const platformApps = Array.isArray(platformRaw) ? platformRaw : null;
   const catalogApps = Array.isArray(catalogRaw) ? catalogRaw : null;
@@ -545,6 +613,8 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
     try {
       await refreshCatalogs();
       refreshSources();
+      refreshSourceConfigs();
+      refreshCatalogApps();
       refreshStore();
       toast.ok('已刷新应用清单');
     } catch (e) {
@@ -586,7 +656,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
         </div>
 
         <div style={{ height: 1, background: T.borderSoft, margin: '16px 8px' }}/>
-        <CatalogSourcesPanel sources={sources} onRefresh={onRefresh} refreshing={refreshing}/>
+        <CatalogSourcesPanel configs={Array.isArray(catalogSourceConfigs) && catalogSourceConfigs.length > 0 ? catalogSourceConfigs : sources.map((s) => ({ id: s.sourceId, name: s.sourceName, kind: s.kind, url: '', enabled: true, managedBy: 'config', readOnly: true, status: s.status }))} onRefresh={onRefresh} onConfigsChanged={() => { refreshSourceConfigs(); refreshSources(); refreshCatalogApps(); }} refreshing={refreshing}/>
 
         {/* 单源错误但缓存可用提示 */}
         {sources.some((s) => s.status?.state === 'error') && (

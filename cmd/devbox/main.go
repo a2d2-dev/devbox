@@ -88,32 +88,40 @@ func main() {
 		}
 	}
 
-	// 第三方 catalog source 聚合（HTTP/Git 文件原生 catalog，Issue #2 阶段4）。
-	// source 仅来自配置（config.yaml/env）；启动时同步一次，按 catalog_poll 周期刷新；
-	// 单 source 失败被隔离，catalog 不可用时用上次可信缓存，不影响已安装应用。
-	var catalogs *apps.CatalogSet
-	if len(cfg.Compose.Catalogs) > 0 {
-		cacheRoot := filepath.Join(cfg.Compose.DataDir, "catalog-cache")
-		catalogs = apps.NewCatalogSetFromConfigs(toCatalogSources(cfg.Compose.Catalogs), cacheRoot, logger)
-		poll := time.Duration(cfg.Compose.CatalogPoll) * time.Second
-		catalogs.Start(ctx, poll)
-		logger.Info("Catalog sources started",
-			zap.Int("sources", len(cfg.Compose.Catalogs)),
-			zap.Duration("poll_interval", poll))
+	// Catalog source 聚合：启动 YAML 来源 + apps.db 动态 1Panel 来源。
+	// 两者共用同一 SQLite 事实源；YAML 来源只读且优先。
+	configuredSources := toCatalogSources(cfg.Compose.Catalogs)
+	cacheRoot := filepath.Join(cfg.Compose.DataDir, "catalog-cache")
+	catalogs := apps.NewCatalogSetFromConfigs(configuredSources, cacheRoot, logger)
+	var catalogSourceManager *apps.CatalogSourceManager
+	if err := os.MkdirAll(cfg.Compose.DataDir, 0o750); err != nil {
+		logger.Warn("Catalog source data directory unavailable", zap.Error(err))
+	} else if sourceRepo, err := apps.OpenRepository(ctx, apps.CatalogDBPath(cfg.Compose.DataDir)); err != nil {
+		logger.Warn("Dynamic catalog source storage unavailable", zap.Error(err))
+	} else {
+		defer sourceRepo.Close()
+		catalogSourceManager = apps.NewCatalogSourceManager(sourceRepo, configuredSources, catalogs, cacheRoot, logger)
+		if err := catalogSourceManager.Reload(ctx); err != nil {
+			logger.Warn("Dynamic catalog sources load failed", zap.Error(err))
+		}
 	}
+	poll := time.Duration(cfg.Compose.CatalogPoll) * time.Second
+	go catalogs.Start(ctx, poll)
+	logger.Info("Catalog sources started", zap.Int("configured_sources", len(cfg.Compose.Catalogs)), zap.Duration("poll_interval", poll))
 
 	consoleServer := console.NewServer(logger, console.Config{
-		Enabled:           cfg.Console.Enabled,
-		Port:              cfg.Console.Port,
-		StaticDir:         cfg.Console.StaticDir,
-		WorkDir:           cfg.Console.WorkDir,
-		SupervisorSocket:  cfg.Console.SupervisorSocket,
-		SupervisorConfDir: cfg.Console.SupervisorConfDir,
-		ConsoleURL:        cfg.Console.ConsoleURL,
-		AuthPassword:      cfg.Auth.Password,
-		AuthSessionTTL:    cfg.Auth.SessionTTL,
-		LinksPath:         cfg.Console.LinksPath,
-		Catalogs:          catalogs,
+		Enabled:              cfg.Console.Enabled,
+		Port:                 cfg.Console.Port,
+		StaticDir:            cfg.Console.StaticDir,
+		WorkDir:              cfg.Console.WorkDir,
+		SupervisorSocket:     cfg.Console.SupervisorSocket,
+		SupervisorConfDir:    cfg.Console.SupervisorConfDir,
+		ConsoleURL:           cfg.Console.ConsoleURL,
+		AuthPassword:         cfg.Auth.Password,
+		AuthSessionTTL:       cfg.Auth.SessionTTL,
+		LinksPath:            cfg.Console.LinksPath,
+		Catalogs:             catalogs,
+		CatalogSourceManager: catalogSourceManager,
 	}, col, appController, storeMgr)
 
 	go func() {

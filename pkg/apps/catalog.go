@@ -1228,6 +1228,37 @@ func shortHash(s string) string {
 	return hex.EncodeToString(h[:])[:12]
 }
 
+// CatalogLocalAppID 为 catalog 应用生成稳定、合法、来源隔离的 devbox app ID（desired.ID）。
+//
+// upstreamKey 是 catalog 内原始 app key（如 1Panel 的 act_runner，可含下划线/大写/超长）；
+// StoreApp.ID 与可信路由（GetVersion/install）仍保留原始 upstreamKey，本函数仅用于本地命名空间。
+//
+//   - base = Slugify(upstreamKey)（非法字符→-、折叠/裁剪首尾 -）。
+//   - 追加 -<shortHash(sourceID + \x00 + upstreamKey)>：保证 a_b/a-b、多来源同 upstreamKey
+//     不碰撞（hash 含原始 upstreamKey，slug 相同也区分）。
+//   - base 截断预留 "-"+hash（13 字符），最终过 ValidateAppID（3..63，[a-z0-9-]）。
+//
+// 兼容已装：installResolvedVersion 先 findInstalledVersion 命中则复用其 ID，仅全新安装用本 ID。
+func CatalogLocalAppID(upstreamKey, sourceID string) string {
+	base := Slugify(upstreamKey)
+	hash := shortHash(sourceID + "\x00" + upstreamKey)
+	maxBase := 63 - len("-"+hash) // = 50；预留 hash 后缀
+	if maxBase < 1 {
+		maxBase = 1
+	}
+	if len(base) > maxBase {
+		base = strings.Trim(base[:maxBase], "-")
+	}
+	if base == "" {
+		base = "app" // 全非法字符（如 ___）→ 兜底前缀
+	}
+	id := base + "-" + hash
+	if !isValidAppID(id) {
+		id = "app-" + hash // 兜底（理论上不会触发）
+	}
+	return id
+}
+
 // --- CatalogSet：多 source 聚合 ---
 
 // CatalogSet 聚合多个 catalog source，提供统一 list / 路由 install / 状态视图。
@@ -1236,9 +1267,28 @@ type CatalogSet struct {
 	sources []Catalog
 	logger  *zap.Logger
 
-	mu        sync.RWMutex
-	snapshots map[string]CatalogSnapshot // by source id
-	now       func() time.Time
+	mu         sync.RWMutex
+	snapshots  map[string]CatalogSnapshot // by source id
+	now        func() time.Time
+	generation uint64
+}
+
+// SetSources 原子替换当前来源集合。调用方可随后 RefreshAll；构造时已加载的
+// last-good snapshot 会立即可见。与周期 RefreshAll 并发安全。
+func (cs *CatalogSet) SetSources(sources []Catalog) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.sources = append([]Catalog(nil), sources...)
+	cs.generation++
+	next := make(map[string]CatalogSnapshot, len(sources))
+	for _, c := range sources {
+		snap := c.Snapshot()
+		if len(snap.Apps) == 0 && snap.Status.Message == "尚未同步" {
+			snap = CatalogSnapshot{SourceID: c.ID(), SourceName: c.ID(), Kind: c.Kind(), Status: CatalogStatus{State: CatalogStateSyncing, Message: "首次同步中"}}
+		}
+		next[c.ID()] = snap
+	}
+	cs.snapshots = next
 }
 
 // NewCatalogSet 构造聚合器。sources 可为空（返回可用但空集合，UI 显示无 catalog）。
@@ -1286,8 +1336,12 @@ func (cs *CatalogSet) Start(ctx context.Context, interval time.Duration) {
 
 // RefreshAll 逐个刷新 source，单 source 失败仅记录其状态，不影响其它。
 func (cs *CatalogSet) RefreshAll(ctx context.Context) {
+	cs.mu.RLock()
+	sources := append([]Catalog(nil), cs.sources...)
+	generation := cs.generation
+	cs.mu.RUnlock()
 	var wg sync.WaitGroup
-	for _, c := range cs.sources {
+	for _, c := range sources {
 		wg.Add(1)
 		go func(c Catalog) {
 			defer wg.Done()
@@ -1296,11 +1350,39 @@ func (cs *CatalogSet) RefreshAll(ctx context.Context) {
 					zap.String("source", c.ID()), zap.Error(err))
 			}
 			cs.mu.Lock()
-			cs.snapshots[c.ID()] = c.Snapshot()
+			if cs.generation == generation {
+				cs.snapshots[c.ID()] = c.Snapshot()
+			}
 			cs.mu.Unlock()
 		}(c)
 	}
 	wg.Wait()
+}
+
+// RefreshOne 只刷新指定来源并更新其聚合快照。来源集合在刷新期间被替换时，
+// 旧 generation 的结果会被丢弃。
+func (cs *CatalogSet) RefreshOne(ctx context.Context, id string) (CatalogSnapshot, error) {
+	cs.mu.RLock()
+	generation := cs.generation
+	var target Catalog
+	for _, c := range cs.sources {
+		if c.ID() == id {
+			target = c
+			break
+		}
+	}
+	cs.mu.RUnlock()
+	if target == nil {
+		return CatalogSnapshot{}, fmt.Errorf("catalog source %q 不存在", id)
+	}
+	err := target.Refresh(ctx)
+	snap := target.Snapshot()
+	cs.mu.Lock()
+	if cs.generation == generation {
+		cs.snapshots[id] = snap
+	}
+	cs.mu.Unlock()
+	return snap, err
 }
 
 // ListApps 合并所有 source 的 app（来源隔离：某 source 出错则其贡献 0 个 app）。
@@ -1346,6 +1428,8 @@ func (cs *CatalogSet) GetVersion(ctx context.Context, sourceID, appID, version s
 
 // Find 按 id 取 source；不存在返回 nil。
 func (cs *CatalogSet) Find(id string) Catalog {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
 	for _, c := range cs.sources {
 		if c.ID() == id {
 			return c
@@ -1355,7 +1439,11 @@ func (cs *CatalogSet) Find(id string) Catalog {
 }
 
 // Configured 是否配置了任何 source（UI 决定是否展示 catalog 区）。
-func (cs *CatalogSet) Configured() bool { return len(cs.sources) > 0 }
+func (cs *CatalogSet) Configured() bool {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return len(cs.sources) > 0
+}
 
 func (cs *CatalogSet) snapshotOf(id string) (CatalogSnapshot, bool) {
 	cs.mu.RLock()
@@ -1373,8 +1461,10 @@ func NewCatalog(src CatalogSource, cacheRoot string) (Catalog, error) {
 		return newHTTPCatalog(src, cacheRoot)
 	case "git":
 		return NewGitCatalog(src, cacheRoot)
+	case "1panel":
+		return newOnePanelCatalog(src, cacheRoot)
 	default:
-		return nil, fmt.Errorf("unknown catalog kind %q（仅 http/git）", src.Kind)
+		return nil, fmt.Errorf("unknown catalog kind %q（仅 http/git/1panel）", src.Kind)
 	}
 }
 
