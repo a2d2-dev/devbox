@@ -1,4 +1,4 @@
-import { createElement, useId } from 'react'
+import { createElement, useEffect, useId } from 'react'
 import { T } from '../tokens'
 import { motion, springs, useMotionPref } from '../motion'
 
@@ -13,6 +13,7 @@ const defaultItemStyle = {
   boxSizing: 'border-box',
   whiteSpace: 'nowrap',
   fontFamily: 'inherit',
+  flexShrink: 0,
 }
 
 function resolveStyle(style, tab, active) {
@@ -43,10 +44,33 @@ export default function TabBar({
 }) {
   const layoutId = `tabbar-${useId()}-indicator`
   const pref = useMotionPref()
+  const tablistId = `tabbar-${useId()}`
+
+  useEffect(() => {
+    document.getElementById(tablistId)
+      ?.querySelector('[role="tab"][aria-selected="true"]')
+      ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [active, tablistId])
+
+  const selectAt = (index) => {
+    const tab = tabs[index]
+    if (!tab) return
+    const id = getId(tab)
+    onChange(id, tab)
+    requestAnimationFrame(() => {
+      document.getElementById(tablistId)?.querySelectorAll('[role="tab"]')?.[index]?.focus?.()
+    })
+  }
 
   return (
-    <div style={{ display: 'flex', gap: 2, ...style }}>
-      {tabs.map((tab) => {
+    <div
+      id={tablistId}
+      className="edge-tabbar"
+      role="tablist"
+      aria-orientation="horizontal"
+      style={{ display: 'flex', gap: 2, ...style }}
+    >
+      {tabs.map((tab, index) => {
         const id = getId(tab)
         const selected = active === id
         const extraProps = getItemProps ? getItemProps(tab, selected) : null
@@ -60,12 +84,32 @@ export default function TabBar({
           pointerEvents: 'none',
           [indicatorPosition]: 0,
         }
+        const onKeyDown = (event) => {
+          extraProps?.onKeyDown?.(event)
+          if (event.defaultPrevented) return
+          let next = null
+          if (event.key === 'ArrowRight') next = (index + 1) % tabs.length
+          if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length
+          if (event.key === 'Home') next = 0
+          if (event.key === 'End') next = tabs.length - 1
+          if (next == null) return
+          event.preventDefault()
+          selectAt(next)
+        }
 
         return createElement(itemAs, {
-          key: id,
-          onClick: () => onChange(id, tab),
-          type: itemAs === 'button' ? 'button' : undefined,
           ...extraProps,
+          key: id,
+          ref: extraProps?.ref,
+          role: extraProps?.role || 'tab',
+          'aria-selected': selected,
+          tabIndex: selected ? 0 : -1,
+          onClick: (event) => {
+            extraProps?.onClick?.(event)
+            if (!event.defaultPrevented) onChange(id, tab)
+          },
+          onKeyDown,
+          type: itemAs === 'button' ? 'button' : undefined,
           style: {
             ...defaultItemStyle,
             ...(reserveIndicatorSpace ? { [indicatorPosition === 'top' ? 'borderTop' : 'borderBottom']: '2px solid transparent' } : null),

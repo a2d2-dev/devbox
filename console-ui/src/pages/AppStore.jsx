@@ -127,11 +127,11 @@ function DeployDialog({ app, onClose, onSuccess }) {
   };
 
   return (
-    <div style={{
+    <div className="edge-modal-backdrop" style={{
       position: 'fixed', inset: 0, zIndex: 999, display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(4px)',
     }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div className="edge-responsive-modal" onClick={e => e.stopPropagation()} style={{
         width: 480, maxHeight: '80vh', borderRadius: 14, background: T.surface,
         border: `1px solid ${T.border}`, boxShadow: '0 24px 48px -12px rgba(0,0,0,0.2)',
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -277,7 +277,7 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
   };
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'auto' }}>
+    <div className="edge-page edge-store-detail" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'auto' }}>
       <div style={{ padding: '12px 24px', borderBottom: `1px solid ${T.border}`, background: T.surface,
         display: 'flex', alignItems: 'center', gap: 10 }}>
         <button onClick={onBack} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px' }}>
@@ -290,7 +290,7 @@ function AppStoreDetail({ app, onBack, authed, onRequireAuth, onOpenApp, onInsta
       </div>
 
       <div style={{ padding: 24 }}>
-        <div style={{
+        <div className="edge-store-detail-hero" style={{
           background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
           padding: 24, marginBottom: 16,
           display: 'flex', alignItems: 'flex-start', gap: 18,
@@ -552,9 +552,9 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', background: T.surfaceAlt, overflow: 'hidden' }}>
+    <div className="edge-page edge-store-page" style={{ flex: 1, display: 'flex', background: T.surfaceAlt, overflow: 'hidden' }}>
       {/* Sidebar */}
-      <div style={{
+      <div className="edge-store-sidebar" style={{
         width: 200, flexShrink: 0, padding: '20px 12px',
         background: T.surface, borderRight: `1px solid ${T.border}`,
         overflow: 'auto',
@@ -608,7 +608,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
       </div>
 
       {/* Main */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
+      <div className="edge-store-main" style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
         {/* 顶部 3 tab —— 对齐 1Panel 应用商店「全部 / 已安装 / 可升级」交互。
             tab 是状态主轴，sidebar category 是二次过滤维度。tab 计数实时反映
             cross-reference 结果（store apps × 已部署 apps） */}
@@ -638,7 +638,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
             （之前是 slice(0,4) 粗暴拿前 4 个，没有"推荐"机制）
             tab=all 时显示推荐区；installed/upgradable tab 隐藏（避免推荐位干扰用户的「已安装」视图） */}
         {tab === 'all' && platformApps && platformApps.filter(a => a.pinned).length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
+        <div className="edge-store-featured" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
           {platformApps.filter(a => a.pinned).slice(0, 4).map((f, i) => {
             const { bg } = guessAppStyle(f.id, f.name, f.category);
             return (
@@ -678,7 +678,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
         )}
 
         {/* Toolbar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <div className="edge-store-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>
             {categories.find(c => c.id === cat)?.name}
           </div>

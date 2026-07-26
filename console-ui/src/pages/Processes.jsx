@@ -84,10 +84,10 @@ export default function Processes() {
   });
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+    <div className="edge-page edge-processes-page" style={{ flex: 1, display: 'flex', flexDirection: 'column',
       background: T.surfaceAlt, overflow: 'hidden', position: 'relative' }}>
       {/* Header */}
-      <div style={{
+      <div className="edge-page-header" style={{
         padding: '14px 24px', background: T.surface,
         borderBottom: `1px solid ${T.border}`, flexShrink: 0,
       }}>
@@ -111,7 +111,7 @@ export default function Processes() {
         </div>
 
         {/* 筛选器 */}
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <div className="edge-filter-row" style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <input style={{ ...filterInput, width: 110 }} placeholder="状态 (R/S/D/Z/T)"
             value={filters.state} onChange={e => setFilters({...filters, state: e.target.value})}/>
           <input style={{ ...filterInput, width: 100 }} placeholder="PID"
@@ -124,8 +124,8 @@ export default function Processes() {
       </div>
 
       {/* 列表 */}
-      <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
+      <div className="edge-page-content" style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+        <div className="edge-table-scroll" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
             <thead>
               <tr style={{ background: '#fafbfc' }}>
@@ -233,7 +233,7 @@ function ProcessDetailDrawer({ pid, onClose }) {
         position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.2)', zIndex: 5,
       }}/>
       {/* 抽屉本体 */}
-      <div style={{
+      <div className="edge-detail-drawer" style={{
         position: 'absolute', top: 0, right: 0, bottom: 0,
         width: 560, background: T.surface,
         borderLeft: `1px solid ${T.border}`, boxShadow: '-8px 0 24px rgba(15,23,42,0.06)',

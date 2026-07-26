@@ -107,7 +107,7 @@ function SectionCard({ section }) {
         )}
       </div>
       {section.items?.length > 0 ? (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div className="edge-table-scroll"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f8fafc' }}>
               <th style={hdrStyle}>名称</th>
@@ -121,7 +121,7 @@ function SectionCard({ section }) {
               <LinkRow key={i} item={it} isSupervisor={isSupervisor} />
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : (
         <div style={{ padding: 16, fontSize: 12, color: T.ink3 }}>（无条目）</div>
       )}
@@ -146,7 +146,7 @@ export default function Links() {
   const err = data?.error
 
   return (
-    <div style={{
+    <div className="edge-page edge-links-page" style={{
       display: 'flex', flexDirection: 'column', height: '100%',
       width: '100%', background: '#f8fafc', overflow: 'hidden',
     }}>

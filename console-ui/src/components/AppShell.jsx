@@ -13,6 +13,7 @@ import DiskManager from '../pages/DiskManager'
 import NetworkConnections from '../pages/NetworkConnections'
 import MonitoringApp from '../pages/Monitoring'
 import AIActivity from '../pages/AIActivity'
+import { useViewportEnvironment } from '../hooks/useViewportEnvironment'
 
 // Reusable face header
 function FaceHeader({ accent = T.blue, title, subtitle, version, kb, onMgmt, extra, errorMode }) {
@@ -46,8 +47,10 @@ function FaceHeader({ accent = T.blue, title, subtitle, version, kb, onMgmt, ext
 // IframeFace — generic iframe wrapper for installed apps
 // ═══════════════════════════════════════════════════════════════
 function IframeFace({ app, onMgmt }) {
-  // Resolve the first HostPort from the app's port mappings
-  const hostPort = app?.ports?.find(p => p.hostPort > 0)?.hostPort
+  const { compactWindow } = useViewportEnvironment();
+  // Browser-reachable mappings expose nodePort; containerPort is only a last-resort legacy fallback.
+  const hostPort = app?.ports?.find(p => p.nodePort > 0)?.nodePort
+    || app?.ports?.find(p => p.hostPort > 0)?.hostPort
     || app?.ports?.find(p => p.containerPort > 0)?.containerPort;
 
   if (!hostPort) {
@@ -66,10 +69,19 @@ function IframeFace({ app, onMgmt }) {
 
   const src = `http://${window.location.hostname}:${hostPort}`;
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+    <div className="edge-iframe-face" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <FaceHeader accent={T.blue} title={app?.name || 'App'} version={app?.version}
         subtitle={src} onMgmt={onMgmt}
-        errorMode={app?.state === 'error'}/>
+        errorMode={app?.state === 'error'}
+        extra={<a href={src} target="_blank" rel="noreferrer" className="edge-iframe-open" title="在新窗口打开">
+          <Icon name="external" size={13} stroke={1.9}/>新窗口
+        </a>}/>
+      {compactWindow && (
+        <div className="edge-iframe-notice">
+          <Icon name="info" size={14} stroke={1.8}/>
+          <span>移动设备上的嵌入体验取决于目标应用；如遇到空白、登录或触控问题，请使用始终可用的“新窗口”。</span>
+        </div>
+      )}
       <iframe
         src={src}
         style={{ flex: 1, width: '100%', border: 'none' }}

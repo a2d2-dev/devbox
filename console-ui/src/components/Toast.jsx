@@ -59,7 +59,7 @@ export function ToastProvider({ children }) {
 function ToastStack({ items }) {
   const pref = useMotionPref()
   return (
-    <div style={{
+    <div className="edge-toast-stack" style={{
       position: 'fixed', left: '50%', bottom: 28, zIndex: 2000,
       transform: 'translateX(-50%)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,

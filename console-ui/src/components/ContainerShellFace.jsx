@@ -135,6 +135,8 @@ export default function ContainerShellFace({ appId, app }) {
       try { fit.fit() } catch {}
     }
     window.addEventListener('resize', onWinResize)
+    window.visualViewport?.addEventListener('resize', onWinResize)
+    window.visualViewport?.addEventListener('scroll', onWinResize)
     // 监听抽屉尺寸变化（drawer 拖动）
     let ro = null
     if (typeof ResizeObserver !== 'undefined' && termContainerRef.current) {
@@ -148,6 +150,8 @@ export default function ContainerShellFace({ appId, app }) {
       try { dataHandler.dispose() } catch {}
       try { resizeHandler.dispose() } catch {}
       window.removeEventListener('resize', onWinResize)
+      window.visualViewport?.removeEventListener('resize', onWinResize)
+      window.visualViewport?.removeEventListener('scroll', onWinResize)
       if (ro) ro.disconnect()
       try { ws.close() } catch {}
       try { term.dispose() } catch {}
@@ -158,10 +162,10 @@ export default function ContainerShellFace({ appId, app }) {
   }, [appId, isRunning])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%',
+    <div className="edge-container-shell" style={{ display: 'flex', flexDirection: 'column', height: '100%',
       background: '#0b1220', overflow: 'hidden' }}>
       {/* 状态栏 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8,
+      <div className="edge-container-shell-status" style={{ display: 'flex', alignItems: 'center', gap: 8,
         padding: '8px 12px', borderBottom: `1px solid ${T.ink2}`,
         background: '#0f172a', flexShrink: 0 }}>
         <Icon name="terminal" size={14} stroke={1.8} style={{ color: '#60a5fa' }}/>

@@ -65,6 +65,17 @@ export const T = {
     hover: '0.15s',
     fade: '0.2s',
   },
+  viewport: {
+    phoneMax: 639,
+    tabletMin: 640,
+    desktopMin: 1024,
+    touchTarget: 44,
+  },
+};
+
+export const BREAKPOINTS = {
+  phone: 640,
+  tablet: 1024,
 };
 
 /** Semantic color for resource usage: green < 70%, amber >= 70% */

@@ -60,7 +60,7 @@ function NetFirewall() {
         </button>
       </div>
 
-      <div style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden' }}>
+      <div className="edge-settings-wide-grid" style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden' }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '50px 80px 70px 130px 200px 1fr 60px',
           padding: '8px 12px', background: T.surfaceAlt,
@@ -123,7 +123,7 @@ function NetConnections() {
   return (
     <div style={{ padding: 16 }}>
       {/* Summary chips */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <div className="edge-settings-summary" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         {[
           { label: '总连接',   val: 42, tone: T.ink },
           { label: 'ESTABLISHED', val: 28, tone: T.green },
@@ -153,7 +153,7 @@ function NetConnections() {
           ss -tlnp
         </span>
       </div>
-      <div style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
+      <div className="edge-settings-wide-grid" style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '60px 160px 90px 1fr 80px 80px',
           padding: '8px 12px', background: T.surfaceAlt,
@@ -193,7 +193,7 @@ function NetConnections() {
           ss -tnp state established
         </span>
       </div>
-      <div style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden' }}>
+      <div className="edge-settings-wide-grid" style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden' }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '180px 180px 110px 130px 80px 1fr',
           padding: '8px 12px', background: T.surfaceAlt,
@@ -238,7 +238,7 @@ function NetworkManagement() {
   const ifaces = netInfo ? netInfo.interfaces.filter(i => i.state === 'up') : [];
 
   return (
-    <div style={{
+    <div className="edge-settings-network" style={{
       background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
       boxShadow: '0 1px 2px rgba(15,23,42,0.04)', overflow: 'hidden', marginTop: 4,
     }}>
@@ -298,7 +298,7 @@ function NetworkManagement() {
         </button>
       </div>
 
-      <div style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden' }}>
+      <div className="edge-settings-wide-grid" style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden' }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '140px 80px 200px 130px 160px 90px 1fr 80px',
           padding: '8px 12px', background: T.surfaceAlt,
@@ -377,13 +377,13 @@ export default function Diagnostics() {
   ];
 
   return (
-    <div style={{ flex: 1, padding: 24, overflow: 'auto', background: T.surfaceAlt }}>
+    <div className="edge-page edge-settings-page" style={{ flex: 1, padding: 24, overflow: 'auto', background: T.surfaceAlt }}>
       <div style={{ marginBottom: 14 }}>
         <div style={{ ...T.type.heading, color: T.ink }}>系统设置</div>
         <div style={{ fontSize: 12, color: T.ink3, marginTop: 3 }}>诊断工具 · 网络管理 · 设备信息</div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+      <div className="edge-settings-tools" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
         {tools.map(t => (
           <div key={t.id} onClick={() => setRunning(t.id)} style={{
             background: T.surface, border: `1px solid ${T.border}`,
@@ -415,7 +415,7 @@ export default function Diagnostics() {
       <NetworkManagement/>
 
       <Card title="设备信息" padding={0} style={{ marginTop: 16 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+        <div className="edge-table-scroll"><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
           <tbody>
             {[
               ['设备名称', device.name],
@@ -431,7 +431,7 @@ export default function Diagnostics() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </Card>
     </div>
   );

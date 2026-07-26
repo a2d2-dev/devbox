@@ -29,11 +29,11 @@ export default function AlertCenter({ authed, onRequireAuth }) {
   };
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt }}>
+    <div className="edge-page edge-alerts-page" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt }}>
       {/* header */}
       <div style={{ padding: '18px 24px 0', background: T.surface,
         borderBottom: `1px solid ${T.border}` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        <div className="edge-page-header-row" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>告警中心</div>
             <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 4 }}>
@@ -105,7 +105,7 @@ export default function AlertCenter({ authed, onRequireAuth }) {
                 borderLeft: `3px solid ${s.color}`,
                 overflow: 'hidden',
               }}>
-                <div onClick={() => setExpanded(open ? null : a.id)} style={{
+                <div className="edge-alert-row" onClick={() => setExpanded(open ? null : a.id)} style={{
                   padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
                   cursor: 'pointer',
                 }}>

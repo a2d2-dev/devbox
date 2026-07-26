@@ -251,8 +251,8 @@ function RunningChip({ running, error }) {
 
 function Section({ label, meta, right, children }) {
   return (
-    <div>
-      <div style={{
+    <div className="edge-desktop-section">
+      <div className="edge-desktop-section-header" style={{
         display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14,
       }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: T.ink,
@@ -268,7 +268,7 @@ function Section({ label, meta, right, children }) {
 
 function AppGrid({ apps, onOpen, iconStyle, accent, iconPx = 76, tilePx = 104, labelSize = 12.5 }) {
   return (
-    <div style={{
+    <div className="edge-app-grid" style={{
       display: 'grid',
       gridTemplateColumns: `repeat(auto-fill, minmax(${tilePx + 8}px, ${tilePx + 8}px))`,
       gap: 8,
@@ -293,7 +293,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
   // ─── Launcher layout: single full-width column, larger icons, no right sidebar
   if (layout === 'launcher') {
     return (
-      <div style={{
+      <div className="edge-desktop edge-desktop-launcher" style={{
         flex: 1, padding: '40px 56px 110px',
         display: 'flex', flexDirection: 'column', gap: 32,
         overflow: 'auto', alignContent: 'start',
@@ -321,7 +321,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
   // ─── Compact: denser grid, smaller spacing, dual column with smaller widgets
   if (layout === 'compact') {
     return (
-      <div style={{
+      <div className="edge-desktop edge-desktop-split" style={{
         flex: 1, padding: '20px 36px 110px',
         display: 'grid', gridTemplateColumns: '1fr 280px', gap: 22,
         overflow: 'auto', alignContent: 'start',
@@ -344,7 +344,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
             </Section>
           )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="edge-desktop-widgets" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <ClockCalendarWidget/>
           <DeviceInfoCard DEVICE={DEVICE}/>
           <MemoWidget/>
@@ -355,7 +355,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
 
   // ─── Workstation (default): two-column with full widgets
   return (
-    <div style={{
+    <div className="edge-desktop edge-desktop-split" style={{
       flex: 1, position: 'relative',
       padding: '28px 48px 110px',
       display: 'grid', gridTemplateColumns: '1fr 340px', gap: 32,
@@ -382,7 +382,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
         )}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="edge-desktop-widgets" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <ClockCalendarWidget/>
         <DeviceInfoCard DEVICE={DEVICE}/>
         <MemoWidget/>

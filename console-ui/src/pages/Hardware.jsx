@@ -129,7 +129,7 @@ export default function Hardware() {
 
   return (
     // flex:1 + width:100% 确保占满 AppWindow 内容区，避免被父 flex 容器缩到内容宽度
-    <div style={{
+    <div className="edge-page edge-hardware-page" style={{
       flex: 1, width: '100%',
       display: 'flex', flexDirection: 'column', height: '100%',
       background: T.canvas || '#f8fafc',
@@ -144,7 +144,7 @@ export default function Hardware() {
 
 function Toolbar({ data }) {
   return (
-    <div style={{
+    <div className="edge-hardware-toolbar" style={{
       display: 'flex', alignItems: 'center', gap: 10,
       padding: '10px 20px', borderBottom: `1px solid ${T.border}`,
       background: 'white', flexShrink: 0,
@@ -174,14 +174,14 @@ function ReportView({ data }) {
   const [cur, setCur] = useState('overview')
 
   return (
-    <div style={{ display: 'flex', height: '100%', width: '100%' }}>
-      <aside style={{
+    <div className="edge-hardware-layout" style={{ display: 'flex', height: '100%', width: '100%' }}>
+      <aside className="edge-hardware-nav" style={{
         width: 180, flexShrink: 0,
         borderRight: `1px solid ${T.border}`, background: 'white',
         overflow: 'auto', padding: '10px 0',
       }}>
         {sections.map(s => (
-          <button key={s.id} onClick={() => setCur(s.id)} style={{
+          <button key={s.id} onClick={() => setCur(s.id)} aria-pressed={cur === s.id} style={{
             display: 'flex', alignItems: 'center', gap: 8,
             width: '100%', padding: '9px 16px', border: 'none',
             background: cur === s.id ? T.blueSoft : 'transparent',
@@ -195,7 +195,7 @@ function ReportView({ data }) {
           </button>
         ))}
       </aside>
-      <main style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 20 }}>
+      <main className="edge-hardware-content" style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 20 }}>
         {cur === 'overview' && <Overview data={data} />}
         {cur === 'sensors'  && <SensorsPane data={data} />}
         {cur === 'gpu'      && <GPUPane data={data} />}
@@ -212,7 +212,7 @@ function ReportView({ data }) {
 
 function Section({ title, cmd, children, action }) {
   return (
-    <div style={{
+    <div className="edge-hardware-section" style={{
       background: 'white', border: `1px solid ${T.border}`, borderRadius: 10,
       marginBottom: 16,
     }}>
@@ -629,7 +629,7 @@ function MemoryPane({ data }) {
                  action={<span style={{ fontSize: 11, color: T.ink3 }}>仅显示已插入槽位</span>}>
           {populated.length === 0 && <div style={{ color: T.ink3 }}>无已插入的 DIMM。</div>}
           {populated.length > 0 && (
-            <table style={{ width: '100%', fontSize: 12.5, ...MONO, borderCollapse: 'collapse' }}>
+            <table className="edge-hardware-table" style={{ width: '100%', fontSize: 12.5, ...MONO, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ color: T.ink3, textAlign: 'left', borderBottom: `1px solid ${T.border}` }}>
                   <th style={{ padding: '6px 4px' }}>槽位</th>
@@ -663,7 +663,7 @@ function MemoryPane({ data }) {
 function StoragePane({ data }) {
   return (
     <Section title="块设备" cmd="lsblk -O">
-      <table style={{ width: '100%', fontSize: 12.5, ...MONO, borderCollapse: 'collapse' }}>
+      <table className="edge-hardware-table" style={{ width: '100%', fontSize: 12.5, ...MONO, borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ color: T.ink3, textAlign: 'left', borderBottom: `1px solid ${T.border}` }}>
             <th style={{ padding: '6px 4px' }}>路径</th>
@@ -761,7 +761,7 @@ function PCIePane({ data }) {
                  ))}
                </div>
              }>
-      <table style={{ width: '100%', fontSize: 11.5, ...MONO, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+      <table className="edge-hardware-table" style={{ width: '100%', fontSize: 11.5, ...MONO, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
         <colgroup>
           <col style={{ width: 72 }} />
           <col style={{ width: 72 }} />
@@ -934,7 +934,7 @@ function SensorsPane({ data }) {
 
       {fans.length > 0 && (
         <Section title={`机箱风扇 · ${fans.length} 个`}>
-          <table style={{ width: '100%', fontSize: 12, ...MONO }}>
+          <table className="edge-hardware-table" style={{ width: '100%', fontSize: 12, ...MONO }}>
             <thead>
               <tr style={{ color: T.ink3, textAlign: 'left' }}>
                 <th style={{ padding: '4px 0' }}>来源</th>

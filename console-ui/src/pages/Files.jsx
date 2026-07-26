@@ -5,6 +5,7 @@ import { StatusDot, Chip, Sparkline } from '../components/ui'
 import { useMetrics, authFetch } from '../hooks/useApi'
 import { FileIcon } from '../components/AppShell'
 import { useToast } from '../components/toastContext'
+import { useViewportEnvironment } from '../hooks/useViewportEnvironment'
 
 const btnSecondary = {
   display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -105,6 +106,8 @@ export default function FilesFace() {
   const [preview, setPreview] = useState(null); // { name, url, status: 'loading'|'ok'|'err' }
   const [showDetails, setShowDetails] = useState(true); // 右侧详情面板开关，类似 Finder 的显示简介
   const [uploading, setUploading] = useState(false);
+  const { isPhone, coarsePointer } = useViewportEnvironment();
+  const touchNavigation = isPhone || coarsePointer;
   // 让 paste 事件稳定触发：容器可 focus + 挂载后自动拿焦点
   const rootRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -301,9 +304,10 @@ export default function FilesFace() {
     <div
       ref={rootRef}
       tabIndex={0}
+      className="edge-page edge-files-page"
       style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surface, overflow: 'hidden', outline: 'none' }}>
       {/* Toolbar */}
-      <div style={{
+      <div className="edge-files-toolbar" style={{
         padding: '10px 18px', borderBottom: `1px solid ${T.border}`,
         display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
       }}>
@@ -327,7 +331,7 @@ export default function FilesFace() {
           <Icon name="refresh" size={12} stroke={1.8}/>
         </button>
         {/* Breadcrumb: 工作区 > seg1 > seg2 ... 每段 clickable，根节点 = 「工作区」 */}
-        <div style={{
+        <div className="edge-files-breadcrumb" style={{
           flex: 1, display: 'flex', alignItems: 'center', gap: 4,
           padding: '0 12px', height: 30, borderRadius: 6,
           background: T.surfaceAlt, border: `1px solid ${T.border}`,
@@ -356,7 +360,7 @@ export default function FilesFace() {
             );
           })}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6,
+        <div className="edge-files-search" style={{ display: 'flex', alignItems: 'center', gap: 6,
           padding: '0 10px', height: 30, borderRadius: 6,
           background: T.surfaceAlt, border: `1px solid ${T.border}`,
           fontSize: 12, color: T.ink, width: 240 }}>
@@ -375,7 +379,7 @@ export default function FilesFace() {
         <button
           disabled={uploading}
           onClick={() => fileInputRef.current?.click()}
-          className="edge-press edge-btn-primary"
+          className="edge-files-upload edge-press edge-btn-primary"
           style={{ ...btnPrimary, height: 30, padding: '0 12px',
             opacity: uploading ? 0.65 : 1,
             cursor: uploading ? 'wait' : 'pointer' }}>
@@ -396,7 +400,7 @@ export default function FilesFace() {
       </div>
 
       {/* Disk usage strip */}
-      <div style={{
+      <div className="edge-files-usage" style={{
         padding: '10px 18px', background: T.surfaceAlt,
         borderBottom: `1px solid ${T.borderSoft}`, flexShrink: 0,
         display: 'flex', alignItems: 'center', gap: 14, fontSize: 11.5,
@@ -418,9 +422,9 @@ export default function FilesFace() {
         </button>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div className="edge-files-workspace" style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Sidebar shortcuts */}
-        <div style={{ width: 200, flexShrink: 0, borderRight: `1px solid ${T.borderSoft}`,
+        <div className="edge-files-sidebar" style={{ width: 200, flexShrink: 0, borderRight: `1px solid ${T.borderSoft}`,
           background: T.surfaceAlt, padding: '12px 8px' }}>
           <div style={{ fontSize: 10.5, color: T.ink3, fontWeight: 600,
             letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 10px 6px' }}>快速访问</div>
@@ -460,7 +464,7 @@ export default function FilesFace() {
           </div>
         )}
         {/* File list */}
-        <div style={{ flex: 1, overflow: 'auto' }}>
+        <div className="edge-files-list edge-table-scroll" style={{ flex: 1, overflow: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
             <thead>
               <tr style={{ background: T.surfaceAlt, borderBottom: `1px solid ${T.border}` }}>
@@ -472,11 +476,15 @@ export default function FilesFace() {
               </tr>
             </thead>
             <tbody>
-              {items.map((f, i) => {
+              {items.map((f) => {
                 const on = selected === f.name;
+                const openDirectory = () => setCurPath(curPath ? `${curPath}/${f.name}` : f.name);
                 return (
-                  <tr key={f.name} onClick={() => setSelected(f.name)}
-                    onDoubleClick={() => { if (f.type === 'dir') setCurPath(curPath ? `${curPath}/${f.name}` : f.name); }}
+                  <tr key={f.name} onClick={() => {
+                      if (touchNavigation && f.type === 'dir') openDirectory();
+                      else setSelected(f.name);
+                    }}
+                    onDoubleClick={() => { if (f.type === 'dir') openDirectory(); }}
                     style={{
                     background: on ? '#eff4ff' : 'transparent',
                     borderTop: `1px solid ${T.borderSoft}`, cursor: 'pointer',
@@ -492,22 +500,40 @@ export default function FilesFace() {
                     <td style={{ padding: '8px 14px', textAlign: 'right', color: T.ink3 }} className="mono">{f.size}</td>
                     <td style={{ padding: '8px 14px', textAlign: 'right', color: T.ink3 }} className="mono">{f.modified || ''}</td>
                     <td style={{ padding: '8px 14px', textAlign: 'right' }}>
-                      {f.absPath && (
-                        <button
-                          title={`复制路径: ${f.absPath}`}
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            const ok = await copyText(f.absPath);
-                            if (ok) toast.ok(`已复制路径 ${f.absPath}`);
-                            else toast.err('复制失败');
-                          }}
-                          style={{
-                            border: 'none', background: 'transparent', cursor: 'pointer',
-                            color: T.ink4, padding: 2, display: 'inline-flex',
-                          }}>
-                          <Icon name="copy" size={13} stroke={1.8}/>
-                        </button>
-                      )}
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                        {f.type === 'dir' && !touchNavigation && (
+                          <button
+                            type="button"
+                            title={`打开目录 ${f.name}`}
+                            aria-label={`打开目录 ${f.name}`}
+                            onClick={(e) => { e.stopPropagation(); openDirectory(); }}
+                            className="edge-file-open"
+                            style={{
+                              border: `1px solid ${T.border}`, background: T.surface, cursor: 'pointer',
+                              color: T.blueDeep, borderRadius: 6, padding: '0 8px', display: 'inline-flex',
+                              alignItems: 'center', gap: 4, height: 28, fontSize: 11.5, fontWeight: 600,
+                            }}>
+                            <Icon name="folder" size={12} stroke={1.8}/>打开
+                          </button>
+                        )}
+                        {f.absPath && (
+                          <button
+                            title={`复制路径: ${f.absPath}`}
+                            aria-label={`复制路径 ${f.name}`}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const ok = await copyText(f.absPath);
+                              if (ok) toast.ok(`已复制路径 ${f.absPath}`);
+                              else toast.err('复制失败');
+                            }}
+                            style={{
+                              border: 'none', background: 'transparent', cursor: 'pointer',
+                              color: T.ink4, padding: 2, display: 'inline-flex',
+                            }}>
+                            <Icon name="copy" size={13} stroke={1.8}/>
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -523,7 +549,7 @@ export default function FilesFace() {
           if (!item) return null;
           const isImg = item.type !== 'dir' && isImageType(item.type);
           return (
-            <div style={{
+            <div className="edge-files-detail" style={{
               width: 320, flexShrink: 0, borderLeft: `1px solid ${T.borderSoft}`,
               background: T.surfaceAlt, display: 'flex', flexDirection: 'column',
               overflow: 'hidden',
@@ -650,7 +676,7 @@ export default function FilesFace() {
         })()}
         {/* 未选中 / 详情关闭时占位提示，仅在详情开着但没选文件时显示 */}
         {showDetails && !selected && (
-          <div style={{
+          <div className="edge-files-detail-empty" style={{
             width: 320, flexShrink: 0, borderLeft: `1px solid ${T.borderSoft}`,
             background: T.surfaceAlt, display: 'flex', alignItems: 'center',
             justifyContent: 'center', padding: 20, textAlign: 'center',
