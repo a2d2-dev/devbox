@@ -85,6 +85,8 @@ func main() {
 		AuthPassword:      cfg.Auth.Password,
 		AuthSessionTTL:    cfg.Auth.SessionTTL,
 		LinksPath:         cfg.Console.LinksPath,
+		BrowserDataPath:   cfg.Console.BrowserDataPath,
+		BrowserInsecureTLS: cfg.Console.BrowserInsecureTLS,
 	}, col, appMgr, storeMgr)
 
 	go func() {

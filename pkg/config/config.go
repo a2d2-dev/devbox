@@ -31,6 +31,8 @@ type ConsoleConfig struct {
 	SupervisorSocket  string `mapstructure:"supervisor_socket"`   // supervisord Unix socket 路径
 	SupervisorConfDir string `mapstructure:"supervisor_conf_dir"` // supervisor conf.d 目录
 	LinksPath         string `mapstructure:"links_path"`          // 服务导航 YAML 路径；空 = /etc/devbox/links.yaml
+	BrowserDataPath   string `mapstructure:"browser_data_path"`    // 浏览器书签/历史 JSON 路径；空 = /etc/devbox/browser.json
+	BrowserInsecureTLS bool  `mapstructure:"browser_insecure_tls"` // 浏览器代理是否跳过远端 TLS 校验（内网自签证书）
 }
 
 // KubernetesConfig 可选的 K8s 集成（应用市场 / Pod 管理）。
@@ -75,6 +77,8 @@ func Load(configFile string) (*Config, error) {
 	v.BindEnv("console.console_url", "DEVBOX_CONSOLE_URL")
 	v.BindEnv("console.supervisor_socket", "DEVBOX_SUPERVISOR_SOCKET")
 	v.BindEnv("console.supervisor_conf_dir", "DEVBOX_SUPERVISOR_CONF_DIR")
+	v.BindEnv("console.browser_data_path", "DEVBOX_CONSOLE_BROWSER_DATA_PATH")
+	v.BindEnv("console.browser_insecure_tls", "DEVBOX_CONSOLE_BROWSER_INSECURE_TLS")
 	v.BindEnv("kubernetes.kubeconfig", "DEVBOX_KUBECONFIG")
 	v.BindEnv("kubernetes.namespace", "DEVBOX_NAMESPACE")
 	v.BindEnv("kubernetes.apiserver_url", "DEVBOX_APISERVER_URL")
@@ -108,6 +112,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("console.supervisor_socket", "/var/run/supervisor.sock")
 	v.SetDefault("console.supervisor_conf_dir", "/etc/supervisor/conf.d")
 	v.SetDefault("console.links_path", "/etc/devbox/links.yaml")
+	v.SetDefault("console.browser_data_path", "/etc/devbox/browser.json")
+	v.SetDefault("console.browser_insecure_tls", false)
 
 	v.SetDefault("kubernetes.kubeconfig", "")
 	v.SetDefault("kubernetes.namespace", "default")

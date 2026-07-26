@@ -598,3 +598,62 @@ export async function getLogs(appId, tail = 100) {
     return '';
   }
 }
+
+// ─── Browser 应用：书签 / 历史 ───────────────────────────────────
+// 后端持久化在 /etc/devbox/browser.json（单机单用户一份）。增删后手动调
+// 返回的 refresh() 重拉（不轮询——浏览器交互是用户驱动的，不需要定时刷）。
+
+export function useBookmarks() {
+  return usePoll('/browser/bookmarks', { fallback: [] });
+}
+
+export function useHistory() {
+  return usePoll('/browser/history', { fallback: [] });
+}
+
+export async function addBookmark(title, url) {
+  const r = await authFetch(`${API}/browser/bookmarks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, url }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json().catch(() => null);
+}
+
+export async function removeBookmark(id) {
+  const r = await authFetch(`${API}/browser/bookmarks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json().catch(() => null);
+}
+
+// 记录访问：fire-and-forget，失败不影响导航
+export async function addHistory(url, title) {
+  try {
+    await authFetch(`${API}/browser/history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, title }),
+    });
+  } catch { /* ignore */ }
+}
+
+export async function clearHistory() {
+  const r = await authFetch(`${API}/browser/history`, { method: 'DELETE' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json().catch(() => null);
+}
+
+// 探测目标 URL 能否被 iframe 直连（后端 HEAD 检测 X-Frame-Options / CSP frame-ancestors）。
+// 导航前调：能直连就 iframe 直连（快、无副作用），检测到拦截头才走代理。
+// 任何探测失败/异常默认 direct=true（交回前端直连，由浏览器自然报错）。
+export async function probeDirectEmbed(url) {
+  try {
+    const r = await authFetch(`${API}/browser/probe?url=${encodeURIComponent(url)}`);
+    if (!r.ok) return { direct: true, reason: 'probe-failed' };
+    const d = await r.json();
+    return d && typeof d.direct === 'boolean' ? d : { direct: true, reason: 'unknown' };
+  } catch {
+    return { direct: true, reason: 'error' };
+  }
+}

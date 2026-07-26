@@ -39,6 +39,10 @@ type Config struct {
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
+	// BrowserDataPath 浏览器应用的书签/历史 JSON 路径；空 = /etc/devbox/browser.json。
+	BrowserDataPath string `mapstructure:"browser_data_path"`
+	// BrowserInsecureTLS 浏览器代理是否跳过远端 TLS 校验（内网自签证书场景），默认 false。
+	BrowserInsecureTLS bool `mapstructure:"browser_insecure_tls"`
 }
 
 // Server 本地控制台 HTTP 服务器
@@ -58,6 +62,8 @@ type Server struct {
 	links         *links.Registry
 	gpuHistory    *gpuhistory.Collector
 	vmManager     *vms.Manager
+	browser       *browserStore     // 浏览器应用的书签/历史持久化
+	browserClient *http.Client      // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
 }
 
 // NewServer 创建控制台服务器
@@ -81,6 +87,8 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, appMgr 
 		links:         links.New(cfg.LinksPath),
 		gpuHistory:    gpuhistory.New(10*time.Second, 6*time.Hour),
 		vmManager:     vms.NewManager(),
+		browser:       newBrowserStore(cfg.BrowserDataPath),
+		browserClient: newBrowserClient(cfg.BrowserInsecureTLS),
 	}
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
@@ -219,6 +227,9 @@ func (s *Server) registerRoutes() {
 
 	// 认证路由
 	s.registerAuthRoutes()
+
+	// 浏览器应用（代理 + 书签/历史）
+	s.registerBrowserRoutes()
 
 	// 静态文件兜底
 	fileServer := http.FileServer(staticFS)
