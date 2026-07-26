@@ -5,6 +5,7 @@ import { Icon } from '../icons'
 import { StatusDot, Chip, Sparkline } from '../components/ui'
 import { useAppLogs, useAppVersions, switchAppVersion, appOp, deleteApp, useAppDetail } from '../hooks/useApi'
 import { motion, project, springs, useMotionPref } from '../motion'
+import { useOverlayLayer } from '../overlays/OverlayProvider'
 import { btnSecondary, btnPrimary, btnDanger } from './AppWindow'
 import TabBar from './TabBar'
 // Story 4.7：「容器 Shell」tab + 渲染分支在 merge commit 693efd5 中被吞，2026-06-22 恢复
@@ -860,15 +861,21 @@ function MgmtVersions({ app }) {
 function UninstallConfirm({ app, onCancel, onConfirm }) {
   const [typed, setTyped] = useState('');
   const matches = typed === app.name;
+  const dialogRef = useRef(null);
+  const inputRef = useRef(null);
+  const { backdropProps, layerProps } = useOverlayLayer({
+    id: 'uninstall-confirm', onDismiss: onCancel, layerRef: dialogRef, initialFocusRef: inputRef, modal: true,
+  });
 
   return (
-    <div className="edge-backdrop-in" onClick={onCancel} style={{
+    <div className="edge-backdrop-in" {...backdropProps} style={{
       position: 'fixed', inset: 0, zIndex: 250,
       background: 'rgba(15,23,41,0.5)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
     }}>
-      <div onClick={(e) => e.stopPropagation()} className="edge-fade-in" style={{
+      <div ref={dialogRef} role="alertdialog" aria-modal="true" aria-labelledby="uninstall-title" tabIndex={-1}
+        className="edge-fade-in" {...layerProps} style={{
         width: 460, background: 'white', borderRadius: 12,
         boxShadow: '0 28px 64px -12px rgba(15,23,42,0.45)',
         overflow: 'hidden',
@@ -885,7 +892,7 @@ function UninstallConfirm({ app, onCancel, onConfirm }) {
             <Icon name="alertTri" size={16} stroke={2}/>
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>卸载应用</div>
+            <div id="uninstall-title" style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>卸载应用</div>
             <div style={{ fontSize: 11.5, color: '#b91c1c', marginTop: 2 }}>此操作不可撤销</div>
           </div>
           <div onClick={onCancel} style={{ width: 28, height: 28, borderRadius: 7, cursor: 'pointer',
@@ -932,7 +939,7 @@ function UninstallConfirm({ app, onCancel, onConfirm }) {
                 color: T.ink, fontWeight: 600, border: `1px solid ${T.border}`,
               }}>{app.name}</span> 确认：
             </div>
-            <input value={typed} onChange={(e) => setTyped(e.target.value)}
+            <input ref={inputRef} value={typed} onChange={(e) => setTyped(e.target.value)}
               autoFocus
               placeholder={app.name}
               style={{
@@ -1023,6 +1030,14 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
   const x = useMotionValue(open ? 0 : 1000);
   const [drawerWidth, setDrawerWidth] = useState(980);
   const backdropOpacity = useTransform(x, [0, drawerWidth || 1], [0.18, 0]);
+  const closeRef = useRef(null);
+  const { backdropProps, layerProps } = useOverlayLayer({
+    id: 'app-management',
+    onDismiss: onClose,
+    layerRef: drawerRef,
+    initialFocusRef: closeRef,
+    active: open,
+  });
 
   const measureDrawer = useCallback(() => {
     const width = drawerRef.current?.getBoundingClientRect().width;
@@ -1111,7 +1126,7 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
     <>
       {/* Backdrop */}
       <motion.div
-        onClick={onClose}
+        {...backdropProps}
         animate={pref.reduced ? { opacity: open ? 0.18 : 0 } : undefined}
         transition={{ duration: 0.2 }}
         style={{
@@ -1125,6 +1140,11 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
       {/* Drawer */}
       <motion.div
         ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="app-management-title"
+        tabIndex={-1}
+        {...layerProps}
         drag={pref.reduced ? false : 'x'}
         dragControls={dragControls}
         dragListener={false}
@@ -1185,7 +1205,7 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ ...T.type.heading, color: T.ink }}>{app.name}</div>
+                <div id="app-management-title" style={{ ...T.type.heading, color: T.ink }}>{app.name}</div>
                 <Chip tone={stateCfg.tone}>
                   <StatusDot tone={stateCfg.dot} size={6} pulse={stateCfg.pulse}/>{stateCfg.label}
                 </Chip>
@@ -1199,7 +1219,7 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
                 <span>{app.gpu || 'CPU'}</span>
               </div>
             </div>
-            <button onPointerDown={(event) => event.stopPropagation()} onClick={onClose} className="edge-press edge-menu-item" style={{
+            <button ref={closeRef} aria-label="关闭应用管理" onPointerDown={(event) => event.stopPropagation()} onClick={onClose} className="edge-press edge-menu-item" style={{
               width: 28, height: 28, borderRadius: 7, cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: T.ink3, background: 'transparent', border: 'none',

@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { btnSecondary } from '../components/AppWindow'
 import { getAuthToken } from '../hooks/useApi'
 import { AnimatePresence, PopScale } from '../motion'
+import { useOverlayLayer } from '../overlays/OverlayProvider'
 
 // Story 7.1 audit 需要 Bearer token。所有 fetch 调用走 authFetch 自动带 token。
 function authFetch(url, opts = {}) {
@@ -285,31 +286,32 @@ function EventRow({ ev, meta, onClick }) {
 // CR C7: 右侧详情抽屉（spec AC-AUDIT-PAGE-TABLE 要求）
 function DetailDrawer({ ev, meta, onClose }) {
   const tone = TONE_COLOR[meta.tone] || TONE_COLOR.slate
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  const drawerRef = useRef(null)
+  const closeRef = useRef(null)
+  const { backdropProps, layerProps } = useOverlayLayer({
+    id: 'audit-detail', onDismiss: onClose, layerRef: drawerRef, initialFocusRef: closeRef,
+  })
   return (
     <>
       {/* 半透明蒙层（点击关闭） */}
-      <div onClick={onClose} style={{
+      <div {...backdropProps} style={{
         position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.32)', zIndex: 50,
       }}/>
       {/* 右侧抽屉 */}
-      <div style={{
+      <div ref={drawerRef} role="dialog" aria-modal="true" aria-labelledby="audit-detail-title" tabIndex={-1}
+        {...layerProps} style={{
         position: 'absolute', top: 0, right: 0, bottom: 0, width: 440, zIndex: 51,
         background: T.surface, boxShadow: '-12px 0 32px -4px rgba(0,0,0,0.12)',
         display: 'flex', flexDirection: 'column',
       }}>
         {/* header */}
         <div style={{ padding: '16px 20px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{
+          <span id="audit-detail-title" style={{
             padding: '3px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
             background: tone + '18', color: tone,
           }}>{meta.label}</span>
           <div style={{ flex: 1, fontSize: 11.5, color: T.ink3 }}>事件 #{ev.id}</div>
-          <button onClick={onClose} style={{
+          <button ref={closeRef} onClick={onClose} aria-label="关闭审计详情" style={{
             border: 'none', background: 'transparent', cursor: 'pointer', color: T.ink3,
             padding: 4, display: 'flex',
           }}><Icon name="x" size={16} stroke={2}/></button>

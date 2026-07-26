@@ -80,7 +80,7 @@ function IframeFace({ app, onMgmt }) {
   );
 }
 
-function AppShell({ appId, app, authed, onRequireAuth, onOpenManagement }) {
+function AppShellContent({ appId, app, authed, onRequireAuth, onOpenManagement }) {
   // Native faces for built-in system tools
   if (appId === 'vscode')    return <VSCodeFace    onMgmt={onOpenManagement}/>;
   if (appId === 'jupyter')   return <JupyterFace   onMgmt={onOpenManagement}/>;
@@ -106,6 +106,14 @@ function AppShell({ appId, app, authed, onRequireAuth, onOpenManagement }) {
   // Generic iframe fallback for any installed app with a HostPort
   if (app) return <IframeFace app={app} onMgmt={onOpenManagement}/>;
   return null;
+}
+
+function AppShell(props) {
+  return (
+    <div data-shortcut-scope="app" style={{ display: 'contents' }}>
+      <AppShellContent {...props}/>
+    </div>
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════

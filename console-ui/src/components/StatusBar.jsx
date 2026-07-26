@@ -4,7 +4,7 @@ import { Icon } from '../icons'
 import { StatusDot, useClock } from './ui'
 import { AnimatePresence, PopScale } from '../motion'
 
-export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenAlerts, theme = 'light', deviceLabel, DEVICE, loginUser, onLogout }) {
+export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenAlerts, onOpenShortcutHelp, theme = 'light', deviceLabel, DEVICE, loginUser, onLogout }) {
   const isDarkBar = theme === 'dark'
   const now = useClock();
   const hh = String(now.getHours()).padStart(2, '0');
@@ -134,6 +134,12 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
 
       {/* Right: cloud + time */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+        <button type="button" onClick={onOpenShortcutHelp} title="键盘快捷键 (?)" aria-label="打开键盘快捷键帮助" style={{
+          width: 28, height: 28, borderRadius: 8, border: 'none',
+          background: C.pillBg, color: C.text2, cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 14, fontWeight: 700,
+        }}>?</button>
         <div style={{
           display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
           borderRadius: 999,

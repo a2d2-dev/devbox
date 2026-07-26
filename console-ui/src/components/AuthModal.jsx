@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { StatusDot } from './ui'
+import { useOverlayLayer } from '../overlays/OverlayProvider'
 
 // Generate a deterministic-looking 8-char code in XXXX-XXXX form
 function genCode() {
@@ -100,6 +101,10 @@ export function AuthModal({ reason, onClose, onSuccess }) {
   const [code] = useState(() => genCode());
   const [secondsLeft, setSecondsLeft] = useState(300);
   const [state, setState] = useState('waiting'); // waiting | confirming | success
+  const dialogRef = useRef(null);
+  const { backdropProps, layerProps } = useOverlayLayer({
+    id: 'auth-modal', onDismiss: onClose, layerRef: dialogRef, modal: true,
+  });
 
   // Countdown timer
   useEffect(() => {
@@ -126,26 +131,20 @@ export function AuthModal({ reason, onClose, onSuccess }) {
     }
   }, [state, onSuccess]);
 
-  // ESC to close
-  useEffect(() => {
-    const h = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [onClose]);
-
   const mm = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
   const ss = String(secondsLeft % 60).padStart(2, '0');
   const formattedCode = code.slice(0, 4) + '-' + code.slice(4, 8);
 
   return (
-    <div className="edge-backdrop-in" onClick={onClose} style={{
+    <div className="edge-backdrop-in" {...backdropProps} style={{
       position: 'fixed', inset: 0, zIndex: 200,
       background: 'rgba(15,23,41,0.45)',
       backdropFilter: 'blur(4px)',
       WebkitBackdropFilter: 'blur(4px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
-      <div onClick={(e) => e.stopPropagation()} className="edge-fade-in" style={{
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" tabIndex={-1}
+        className="edge-fade-in" {...layerProps} style={{
         width: 480, background: 'white', borderRadius: 14,
         boxShadow: '0 28px 64px -12px rgba(15,23,42,0.45), 0 0 0 1px rgba(15,23,42,0.06)',
         overflow: 'hidden',
@@ -166,7 +165,7 @@ export function AuthModal({ reason, onClose, onSuccess }) {
               <Icon name="shield" size={17} stroke={1.8}/>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14.5, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>
+              <div id="auth-modal-title" style={{ fontSize: 14.5, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>
                 节点访问授权
               </div>
               <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 2 }}>
