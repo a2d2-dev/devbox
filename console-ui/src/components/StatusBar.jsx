@@ -62,7 +62,7 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
   };
 
   const Pill = ({ tone, label, value }) => (
-    <div style={{
+    <div className="edge-status-metric" style={{
       display: 'inline-flex', alignItems: 'center', gap: 6,
       padding: '3px 9px 3px 8px', borderRadius: 999,
       background: C.pillBg,
@@ -76,7 +76,7 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
   );
 
   return (
-    <div style={{
+    <div className="edge-status-bar" style={{
       height: 48, paddingLeft: 16, paddingRight: 14,
       display: 'flex', alignItems: 'center', gap: 12,
       background: C.bar,
@@ -86,18 +86,18 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
       position: 'relative', zIndex: 30, flexShrink: 0,
     }}>
       {/* Left: device identity (user menu 在右侧 line 169 LF 2026-06-21) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flexShrink: 0 }}>
-        <div style={{
+      <div className="edge-status-identity" style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flexShrink: 0 }}>
+        <div className="edge-status-logo" style={{
           width: 28, height: 28, borderRadius: 8,
           background: C.logoBg, color: 'white',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
           boxShadow: '0 2px 4px rgba(37,99,235,0.3)',
         }}>E</div>
-        <div style={{ minWidth: 0, lineHeight: 1.15 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className="edge-status-device" style={{ minWidth: 0, lineHeight: 1.15 }}>
+          <div className="edge-status-device-name" style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'flex', alignItems: 'center', gap: 6 }}>
             {deviceLabel || DEVICE.name}
-            <span style={{
+            <span className="edge-status-dept" style={{
               fontSize: 9.5, padding: '1px 5px', borderRadius: 3,
               background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)',
               color: C.text3, fontWeight: 600,
@@ -105,7 +105,7 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
             }}>{DEVICE.dept}</span>
             {/* chevDown 删除 — 装饰但不触发下拉是误导 (LF 2026-06-21) */}
           </div>
-          <div style={{ fontSize: 10.5, color: C.text3, marginTop: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div className="edge-status-device-details" style={{ fontSize: 10.5, color: C.text3, marginTop: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
             <span>{DEVICE.site}</span>
             <span style={{ color: C.sep }}>·</span>
             <span className="mono">{DEVICE.sn}</span>
@@ -114,11 +114,11 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
       </div>
 
       {/* Center: health pills */}
-      <div style={{ flex: 1, display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'nowrap', overflow: 'hidden' }}>
+      <div className="edge-status-health" style={{ flex: 1, display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'nowrap', overflow: 'hidden' }}>
         <Pill tone={cpu < 70 ? 'green' : 'amber'} label="CPU" value={`${cpu}%`}/>
         <Pill tone={gpu < 80 ? 'green' : 'amber'} label="GPU" value={`${gpu}%`}/>
         <Pill tone={mem < 80 ? 'green' : 'amber'} label="内存" value={`${mem}%`}/>
-        <div onClick={onOpenAlerts} style={{
+        <button type="button" className="edge-status-alert" aria-label={`${alertCount} 条告警`} onClick={onOpenAlerts} style={{
           display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px 3px 8px', borderRadius: 999,
           background: alertCount > 0 ? C.alertBg : C.pillBg,
           border: alertCount > 0 ? `1px solid ${C.alertBd}` : '1px solid transparent',
@@ -129,12 +129,12 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
           <Icon name="alertTri" size={12} stroke={2}/>
           <span className="tnum" style={{ fontWeight: 600 }}>{alertCount}</span>
           <span>条告警</span>
-        </div>
+        </button>
       </div>
 
       {/* Right: cloud + time */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-        <div style={{
+      <div className="edge-status-actions" style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+        <div className="edge-status-cloud" style={{
           display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
           borderRadius: 999,
           background: online ? C.cloudOnBg : C.cloudOffBg,
@@ -146,9 +146,9 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
           <Icon name={online ? 'cloud' : 'cloudOff'} size={13} stroke={1.8}/>
           <span style={{ fontWeight: 600 }}>{online ? '云端在线' : '云端离线'}</span>
           <span style={{ opacity: 0.6 }}>·</span>
-          <span style={{ color: C.cloudSyncFg }}>同步 {lastSync}</span>
+          <span className="edge-status-sync" style={{ color: C.cloudSyncFg }}>同步 {lastSync}</span>
         </div>
-        <div style={{
+        <div className="edge-status-time" style={{
           display: 'inline-flex', alignItems: 'center', gap: 8,
           padding: '4px 10px', borderRadius: 8,
           background: C.timeBg,
@@ -183,8 +183,8 @@ function UserMenu({ user, theme, onLogout }) {
   const dark = theme === 'dark'
   const initial = (user || '?').charAt(0).toUpperCase()
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button onClick={() => setOpen(o => !o)} title={user} style={{
+    <div ref={ref} className="edge-status-user" style={{ position: 'relative' }}>
+      <button className="edge-status-user-button" aria-label={`用户菜单：${user}`} onClick={() => setOpen(o => !o)} title={user} style={{
         display: 'inline-flex', alignItems: 'center', gap: 6,
         height: 28, padding: '0 4px 0 4px', border: 'none',
         background: dark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.04)',

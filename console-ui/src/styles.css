@@ -182,6 +182,38 @@ button, [role="button"], [role="tab"] { touch-action: manipulation; }
   .edge-dock-close { display: inline-flex; }
 }
 
+/* StatusBar keeps identity, connectivity, alerts and account access reachable on narrow screens. */
+@media (max-width: 1023px) {
+  .edge-status-bar {
+    min-width: 0;
+    padding-left: max(10px, var(--edge-safe-left)) !important;
+    padding-right: max(8px, var(--edge-safe-right)) !important;
+    gap: 8px !important;
+  }
+  .edge-status-identity { flex: 1 1 auto !important; overflow: hidden; }
+  .edge-status-device { overflow: hidden; }
+  .edge-status-device-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .edge-status-health { flex: 0 0 auto !important; overflow: visible !important; }
+  .edge-status-metric { display: none !important; }
+  .edge-status-actions { min-width: 0; gap: 8px !important; }
+  .edge-status-sync, .edge-status-time { display: none !important; }
+  .edge-status-alert, .edge-status-user-button {
+    min-width: var(--edge-touch-target);
+    min-height: var(--edge-touch-target);
+    justify-content: center;
+  }
+}
+
+@media (max-width: 639px) {
+  .edge-status-bar { height: calc(52px + var(--edge-safe-top)) !important; padding-top: var(--edge-safe-top); }
+  .edge-status-logo { display: none !important; }
+  .edge-status-device-details, .edge-status-dept { display: none !important; }
+  .edge-status-cloud { width: var(--edge-touch-target); height: var(--edge-touch-target); padding: 0 !important; justify-content: center; }
+  .edge-status-cloud > span { display: none !important; }
+  .edge-status-alert { width: var(--edge-touch-target); padding: 0 !important; gap: 4px !important; }
+  .edge-status-alert > span:last-child { display: none !important; }
+}
+
 @media (max-width: 1023px) {
   html, body { overscroll-behavior: none; }
   input, select, textarea { font-size: 16px !important; }
