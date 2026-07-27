@@ -56,3 +56,22 @@ test('window shortcuts operate current apps and ignore input', async ({ page }) 
   await page.keyboard.press('Control+Alt+w')
   await expect(input).toBeVisible()
 })
+
+test('ordinary app content keeps shortcuts active while terminal scope suppresses them', async ({ page }) => {
+  await launchConsole(page)
+  await page.getByText('文件', { exact: true }).dblclick()
+  const ordinaryApp = page.getByText('工作区', { exact: true }).first()
+  await ordinaryApp.click()
+  await page.keyboard.press('Control+Alt+m')
+  await expect(ordinaryApp).toBeHidden()
+  await page.evaluate(() => {
+    const scope = document.createElement('div')
+    scope.dataset.shortcutScope = 'terminal'
+    scope.tabIndex = 0
+    scope.textContent = 'terminal shortcut scope fixture'
+    document.body.append(scope)
+    scope.focus()
+  })
+  await page.keyboard.press('Alt+1')
+  await expect(ordinaryApp).toBeHidden()
+})

@@ -7,8 +7,34 @@ describe('keyboard shortcut matcher', () => {
     expect(matchShortcut(event, shortcutRegistry, {})).toMatchObject({ shortcut: { id: 'shortcut-help' } })
   })
 
+  it.each([
+    [{ code: '', key: 'm' }, 'window-minimize'],
+    [{ code: 'Unidentified', key: 'm' }, 'window-minimize'],
+  ])('falls back to the declared key when code is unavailable: %o', (identity, id) => {
+    const event = new KeyboardEvent('keydown', { ...identity, ctrlKey: true, altKey: true })
+    expect(matchShortcut(event, shortcutRegistry, { activeId: 'dashboard' })?.shortcut.id).toBe(id)
+  })
+
+  it('prefers a usable code over the visible key', () => {
+    const event = new KeyboardEvent('keydown', { code: 'KeyW', key: 'm', ctrlKey: true, altKey: true })
+    expect(matchShortcut(event, shortcutRegistry, { activeId: 'dashboard' })?.shortcut.id).toBe('window-close')
+  })
+
+  it('matches help by character semantics when code is unavailable', () => {
+    const event = new KeyboardEvent('keydown', { code: 'Unidentified', key: '?', shiftKey: true })
+    expect(matchShortcut(event, shortcutRegistry, {})?.shortcut.id).toBe('shortcut-help')
+  })
+
   it('does not match repeated keydown events by default', () => {
     const event = new KeyboardEvent('keydown', { code: 'KeyD', ctrlKey: true, altKey: true, repeat: true })
+    expect(matchShortcut(event, shortcutRegistry, {})).toBeNull()
+  })
+
+  it.each([
+    { code: 'KeyD', key: 'd', ctrlKey: true, altKey: true, isComposing: true },
+    { code: 'KeyD', key: 'd', ctrlKey: true, altKey: true, keyCode: 229 },
+  ])('ignores IME composition keydown: %o', (init) => {
+    const event = new KeyboardEvent('keydown', init)
     expect(matchShortcut(event, shortcutRegistry, {})).toBeNull()
   })
 

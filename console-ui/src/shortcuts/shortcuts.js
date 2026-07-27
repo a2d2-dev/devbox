@@ -8,8 +8,8 @@ export const shortcutRegistry = [
     description: '打开或关闭此快捷键面板',
     category: 'general',
     bindings: [
-      { code: 'Slash', shift: true, displayKey: '?' },
-      { code: 'Slash', primary: true, displayKey: '/' },
+      { code: 'Slash', key: '?', shift: true, displayKey: '?' },
+      { code: 'Slash', key: '/', primary: true, displayKey: '/' },
     ],
   },
   {
@@ -18,7 +18,7 @@ export const shortcutRegistry = [
     name: '显示桌面',
     description: '最小化当前窗口并返回桌面',
     category: 'navigation',
-    bindings: [{ code: 'KeyD', ...modAlt, displayKey: 'D' }],
+    bindings: [{ code: 'KeyD', key: 'd', ...modAlt, displayKey: 'D' }],
   },
   {
     id: 'dock-app',
@@ -28,6 +28,7 @@ export const shortcutRegistry = [
     category: 'navigation',
     bindings: Array.from({ length: 9 }, (_, index) => ({
       code: `Digit${index + 1}`,
+      key: String(index + 1),
       alt: true,
       displayKey: String(index + 1),
       argument: index,
@@ -40,7 +41,7 @@ export const shortcutRegistry = [
     name: '最小化当前应用',
     description: '最小化当前活动窗口',
     category: 'window',
-    bindings: [{ code: 'KeyM', ...modAlt, displayKey: 'M' }],
+    bindings: [{ code: 'KeyM', key: 'm', ...modAlt, displayKey: 'M' }],
     enabled: ({ activeId }) => Boolean(activeId),
   },
   {
@@ -49,7 +50,7 @@ export const shortcutRegistry = [
     name: '最大化或还原',
     description: '切换当前活动窗口的显示模式',
     category: 'window',
-    bindings: [{ code: 'KeyF', ...modAlt, displayKey: 'F' }],
+    bindings: [{ code: 'KeyF', key: 'f', ...modAlt, displayKey: 'F' }],
     enabled: ({ activeId }) => Boolean(activeId),
   },
   {
@@ -58,7 +59,7 @@ export const shortcutRegistry = [
     name: '关闭当前应用',
     description: '关闭当前活动窗口并退出运行',
     category: 'window',
-    bindings: [{ code: 'KeyW', ...modAlt, displayKey: 'W' }],
+    bindings: [{ code: 'KeyW', key: 'w', ...modAlt, displayKey: 'W' }],
     enabled: ({ activeId }) => Boolean(activeId),
   },
 ]
@@ -84,7 +85,9 @@ export function bindingMatches(event, binding) {
   const primaryMatches = binding.primary
     ? (event.ctrlKey || event.metaKey) && !(event.ctrlKey && event.metaKey)
     : !event.ctrlKey && !event.metaKey
-  return event.code === binding.code
+  const hasUsableCode = event.code && event.code !== 'Unidentified'
+  const keyMatches = hasUsableCode ? event.code === binding.code : event.key === binding.key
+  return keyMatches
     && primaryMatches
     && matchesModifier(event, binding, 'altKey')
     && matchesModifier(event, binding, 'shiftKey')
@@ -104,7 +107,7 @@ export function isEditableContext(target) {
 }
 
 export function matchShortcut(event, registry = shortcutRegistry, context = {}) {
-  if (event.repeat || isEditableContext(event.target)) return null
+  if (event.repeat || event.isComposing || event.keyCode === 229 || isEditableContext(event.target)) return null
   for (const shortcut of registry) {
     for (const binding of shortcut.bindings) {
       if (!bindingMatches(event, binding)) continue

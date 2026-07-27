@@ -37,10 +37,33 @@ describe('useGlobalShortcuts', () => {
     expect(actions['show-desktop']).not.toHaveBeenCalled()
   })
 
+  it('handles keydown in the window capture phase before descendants stop propagation', () => {
+    const actions = { 'show-desktop': vi.fn() }
+    render(<Harness actions={actions}/>)
+    const target = document.createElement('button')
+    target.addEventListener('keydown', event => event.stopPropagation())
+    document.body.append(target)
+    target.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'KeyD', key: 'd', ctrlKey: true, altKey: true, bubbles: true, cancelable: true,
+    }))
+    expect(actions['show-desktop']).toHaveBeenCalledOnce()
+  })
+
   it('suppresses repeated actions', () => {
     const actions = { 'show-desktop': vi.fn() }
     render(<Harness actions={actions}/>)
     const event = keydown({ code: 'KeyD', ctrlKey: true, altKey: true, repeat: true })
+    expect(event.defaultPrevented).toBe(false)
+    expect(actions['show-desktop']).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { code: 'KeyD', key: 'd', ctrlKey: true, altKey: true, isComposing: true },
+    { code: 'KeyD', key: 'd', ctrlKey: true, altKey: true, keyCode: 229 },
+  ])('ignores composition events: %o', (init) => {
+    const actions = { 'show-desktop': vi.fn() }
+    render(<Harness actions={actions}/>)
+    const event = keydown(init)
     expect(event.defaultPrevented).toBe(false)
     expect(actions['show-desktop']).not.toHaveBeenCalled()
   })
