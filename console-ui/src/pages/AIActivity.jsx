@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { Icon } from '../icons'
 import { cleanupStaleCodex, useAIActivity, useAITranscript } from '../hooks/useApi'
 import TabBar from '../components/TabBar'
+import { useViewportEnvironment } from '../hooks/useViewportEnvironment'
 
 const aiTabItemStyle = {
   height: 39,
@@ -282,6 +283,7 @@ function TranscriptTail({ card }) {
 function AgentBoard({ board }) {
   const cards = board?.agents || [];
   const [selectedId, setSelectedId] = useState('');
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 
   useEffect(() => {
     if (!cards.length) {
@@ -308,8 +310,8 @@ function AgentBoard({ board }) {
 
   const meta = boardStatusMeta(selected?.status);
   return (
-    <div style={{ padding: 12, display: 'grid', gridTemplateColumns: '360px 1fr', gap: 12, minHeight: 560 }}>
-      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden', background: T.surface, minHeight: 0 }}>
+    <div className={`edge-ai-board${mobileDetailOpen ? ' is-detail-open' : ''}`} style={{ padding: 12, display: 'grid', gridTemplateColumns: '360px 1fr', gap: 12, minHeight: 560 }}>
+      <div className="edge-ai-board-list" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden', background: T.surface, minHeight: 0 }}>
         <div style={{ padding: '11px 14px', display: 'flex', alignItems: 'center', borderBottom: `1px solid ${T.borderSoft}` }}>
           <div style={{ fontSize: 13, fontWeight: 900, color: T.ink }}>Agent Board</div>
           <div style={{ flex: 1 }}/>
@@ -341,7 +343,7 @@ function AgentBoard({ board }) {
                 {group.cards.length ? (
                   <div style={{ display: 'grid', gap: 7, padding: 8 }}>
                     {group.cards.map(card => (
-                      <BoardAgentRow key={card.id} card={card} active={selected?.id === card.id} onClick={() => setSelectedId(card.id)}/>
+                      <BoardAgentRow key={card.id} card={card} active={selected?.id === card.id} onClick={() => { setSelectedId(card.id); setMobileDetailOpen(true); }}/>
                     ))}
                   </div>
                 ) : (
@@ -352,8 +354,11 @@ function AgentBoard({ board }) {
           })}
         </div>
       </div>
-      <div style={{ minWidth: 0, border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden', background: T.surface, display: 'grid', gridTemplateRows: 'auto 1fr', minHeight: 0 }}>
+      <div className="edge-ai-board-detail" style={{ minWidth: 0, border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden', background: T.surface, display: 'grid', gridTemplateRows: 'auto 1fr', minHeight: 0 }}>
         <div style={{ padding: '13px 15px', borderBottom: `1px solid ${T.borderSoft}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button type="button" className="edge-ai-back" onClick={() => setMobileDetailOpen(false)} aria-label="返回 Agent 列表">
+            <Icon name="chevLeft" size={16} stroke={2}/><span>列表</span>
+          </button>
           <span style={{ width: 10, height: 10, borderRadius: 5, background: meta.color, flexShrink: 0 }}/>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -449,7 +454,8 @@ function Issues({ issues }) {
 function ProcessTable({ rows }) {
   if (!rows?.length) return <Empty />;
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <div className="edge-ai-data-scroll">
+      <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
       <thead><tr>
         <th style={{ ...th, textAlign: 'left' }}>PID</th>
         <th style={{ ...th, textAlign: 'left' }}>进程</th>
@@ -475,8 +481,9 @@ function ProcessTable({ rows }) {
             <td style={td}>{fmtAge(p.ageSec)}</td>
           </tr>
         ))}
-      </tbody>
-    </table>
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -498,8 +505,9 @@ function ProcessConsole({ rows }) {
       <div style={{ marginBottom: 12, color: T.ink3, fontSize: 12.5 }}>
         共 <b style={{ color: T.ink }}>{rows.length}</b> 个进程 · 运行 <b style={{ color: T.green }}>{runningCount}</b> · 异常 <b style={{ color: T.red }}>{errorCount}</b>
       </div>
-      <div style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, overflow: 'hidden', background: T.surface }}>
-        <div style={{
+      <div className="edge-ai-data-scroll" style={{ border: `1px solid ${T.borderSoft}`, borderRadius: 8, background: T.surface }}>
+        <div style={{ minWidth: 720 }}>
+          <div style={{
           display: 'grid',
           gridTemplateColumns: '130px 150px 120px 1fr 86px',
           padding: '10px 16px',
@@ -538,8 +546,9 @@ function ProcessConsole({ rows }) {
                 <SoftButton tone="red" disabled title="暂未开放进程终止接口">终止</SoftButton>
               </div>
             </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -548,7 +557,8 @@ function ProcessConsole({ rows }) {
 function SessionTable({ rows }) {
   if (!rows?.length) return <Empty />;
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <div className="edge-ai-data-scroll">
+      <table style={{ width: '100%', minWidth: 820, borderCollapse: 'collapse' }}>
       <thead><tr>
         <th style={{ ...th, textAlign: 'left' }}>会话</th>
         <th style={{ ...th, textAlign: 'left' }}>模型/状态</th>
@@ -581,8 +591,9 @@ function SessionTable({ rows }) {
             <td style={td}>{fmtTime(s.updatedAt)}</td>
           </tr>
         ))}
-      </tbody>
-    </table>
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -679,7 +690,8 @@ function SessionsConsole({ rows }) {
 function WorkerTable({ rows }) {
   if (!rows?.length) return <Empty />;
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <div className="edge-ai-data-scroll">
+      <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
       <thead><tr>
         <th style={{ ...th, textAlign: 'left' }}>Worker</th>
         <th style={{ ...th, textAlign: 'left' }}>模型/权限</th>
@@ -710,8 +722,9 @@ function WorkerTable({ rows }) {
             <td style={td}><span className="mono" style={{ fontSize: 10.5, color: T.ink3 }}>{w.cwd || '-'}</span></td>
           </tr>
         ))}
-      </tbody>
-    </table>
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -962,9 +975,11 @@ function CodexCleanupPanel({ onDone }) {
 
 export default function AIActivity() {
   const { data, loading, error, refresh } = useAIActivity(5000);
+  const { isPhone } = useViewportEnvironment();
   const agents = data?.agentTypes || [];
   const [agentId, setAgentId] = useState('');
   const [tab, setTab] = useState('board');
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const active = useMemo(() => {
     if (!agents.length) return null;
     return agents.find(a => a.id === agentId) || agents[0];
@@ -976,9 +991,9 @@ export default function AIActivity() {
   const activeIssue = active?.issues?.some(i => i.severity === 'critical');
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'hidden' }}>
-      <div style={{ padding: '14px 22px', background: T.surface, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div className="edge-page edge-ai-page" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'hidden' }}>
+      <div className="edge-ai-header" style={{ padding: '14px 22px', background: T.surface, borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+        <div className="edge-ai-header-row" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{
             width: 40,
             height: 40,
@@ -1004,7 +1019,7 @@ export default function AIActivity() {
           {data?.generatedAt && <div style={{ fontSize: 11, color: T.ink3 }}>更新 {fmtTime(data.generatedAt)}</div>}
           <SoftButton tone="slate" icon="refresh" onClick={refresh}>刷新</SoftButton>
         </div>
-        <div style={{ display: 'flex', gap: 10, marginTop: 13, flexWrap: 'wrap' }}>
+        <div className="edge-ai-summary" style={{ display: 'flex', gap: 10, marginTop: 13, flexWrap: 'wrap' }}>
           <Stat icon="brain" label="Agent 类型" value={summary.agentTypes || agents.length} tone={T.blue}/>
           <Stat icon="dashboard" label="Board 卡片" value={board.agents?.length || 0} tone={T.teal}/>
           <Stat icon="cpu" label="Claude 进程" value={summary.claudeProcesses || 0} tone={T.indigo}/>
@@ -1014,8 +1029,8 @@ export default function AIActivity() {
         </div>
       </div>
 
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '300px 1fr', gap: 12, padding: 12, minHeight: 0 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflow: 'hidden' }}>
+      <div className={`edge-ai-layout${mobileDetailOpen ? ' is-detail-open' : ''}`} style={{ flex: 1, display: 'grid', gridTemplateColumns: '300px 1fr', gap: 12, padding: 12, minHeight: 0 }}>
+        <div className="edge-ai-master" style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflow: 'hidden' }}>
           <Section title="Agent 类型">
             <div style={{
               display: 'flex',
@@ -1028,7 +1043,7 @@ export default function AIActivity() {
             }}>
               {agents.length ? agents.map(a => (
                 <AgentCard key={a.id} agent={a} active={active?.id === a.id}
-                  onClick={() => { setAgentId(a.id); setTab('overview'); }}/>
+                  onClick={() => { setAgentId(a.id); setTab('overview'); if (isPhone) setMobileDetailOpen(true); }}/>
               )) : <Empty text={loading ? '正在加载...' : '没有发现 agent 活动'} />}
             </div>
           </Section>
@@ -1039,7 +1054,7 @@ export default function AIActivity() {
           </div>
         </div>
 
-        <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="edge-ai-detail" style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{
             background: T.surface,
             border: `1px solid ${T.border}`,
@@ -1054,6 +1069,9 @@ export default function AIActivity() {
               gap: 12,
               borderBottom: `1px solid ${T.borderSoft}`,
             }}>
+              <button type="button" className="edge-ai-back" onClick={() => setMobileDetailOpen(false)} aria-label="返回 Agent 类型列表">
+                <Icon name="chevLeft" size={16} stroke={2}/><span>列表</span>
+              </button>
               {active && <AgentIcon id={active.id} issue={activeIssue} active/>}
               <div style={{ minWidth: 0 }}>
                 <div style={{ ...T.type.heading, fontWeight: 900, color: T.ink }}>{active ? active.name : '详情'}</div>
@@ -1100,7 +1118,7 @@ export default function AIActivity() {
               {active && tab === 'overview' && (
                 <div style={{ padding: 12, display: 'grid', gap: 10 }}>
                   {active.id === 'codex' && <CodexCleanupPanel/>}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))', gap: 10 }}>
+                  <div className="edge-ai-stat-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))', gap: 10 }}>
                     <Stat icon="cpu" label="进程" value={active.processes?.length || 0}/>
                     <Stat icon="message" label="会话" value={active.sessions?.length || 0}/>
                     <Stat icon="file" label="配置" value={active.configs?.filter(c => c.exists).length || 0}/>

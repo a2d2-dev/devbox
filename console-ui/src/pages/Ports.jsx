@@ -73,13 +73,13 @@ export default function PortsFace({ authed, onRequireAuth }) {
     }).catch(() => setLoading(false));
   }, []);
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+    <div className="edge-page edge-ports-page" style={{ flex: 1, display: 'flex', flexDirection: 'column',
       background: T.surfaceAlt, overflow: 'hidden' }}>
-      <div style={{
+      <div className="edge-ports-header" style={{
         padding: '14px 24px', background: T.surface,
         borderBottom: `1px solid ${T.border}`, flexShrink: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
+        <div className="edge-ports-header-row" style={{ display: 'flex', alignItems: 'center' }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>端口与公网访问</div>
             <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>
@@ -94,9 +94,9 @@ export default function PortsFace({ authed, onRequireAuth }) {
         </div>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
+      <div className="edge-ports-content" style={{ flex: 1, overflow: 'auto', padding: 24 }}>
         {/* Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
+        <div className="edge-ports-stats" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
           {[
             { label: '已暴露端口', val: '7',  unit: '个' },
             { label: '公网访问', val: '4',  unit: '个' },
@@ -116,13 +116,13 @@ export default function PortsFace({ authed, onRequireAuth }) {
           ))}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <div className="edge-ports-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>端口列表</div>
           <div style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 999,
             background: T.surface, border: `1px solid ${T.border}`, color: T.ink3,
           }}>共 {livePorts.length} 个</div>
           <div style={{ flex: 1 }}/>
-          <div style={{
+          <div className="edge-ports-search" style={{
             display: 'flex', alignItems: 'center', gap: 8,
             height: 32, padding: '0 10px', borderRadius: 7,
             background: T.surface, border: `1px solid ${T.border}`, width: 260,
@@ -134,8 +134,9 @@ export default function PortsFace({ authed, onRequireAuth }) {
           </div>
         </div>
 
-        <Card padding={0}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+        <div className="edge-ports-table edge-table-scroll">
+          <Card padding={0}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
             <thead>
               <tr style={{ background: '#fafbfc' }}>
                 <th style={{ ...th, textAlign: 'left' }}>服务</th>
@@ -186,16 +187,16 @@ export default function PortsFace({ authed, onRequireAuth }) {
                     <td style={{ padding: '10px 14px', textAlign: 'right' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4 }}>
                         {p.state !== 'offline' && (
-                          <button style={iconBtnLight} title="复制 URL">
+                          <button type="button" style={iconBtnLight} title="复制 URL" aria-label={`复制 ${p.app} 的 URL`}>
                             <Icon name="copy" size={12} stroke={1.8}/>
                           </button>
                         )}
                         {p.state === 'public' && (
-                          <button style={iconBtnLight} title="二维码">
+                          <button type="button" style={iconBtnLight} title="二维码" aria-label={`显示 ${p.app} 的二维码`}>
                             <Icon name="qrcode" size={12} stroke={1.8}/>
                           </button>
                         )}
-                        <button style={iconBtnLight} title="编辑">
+                        <button type="button" style={iconBtnLight} title="编辑" aria-label={`编辑 ${p.app}`}>
                           <Icon name="gear" size={12} stroke={1.8}/>
                         </button>
                       </div>
@@ -204,8 +205,9 @@ export default function PortsFace({ authed, onRequireAuth }) {
                 );
               })}
             </tbody>
-          </table>
-        </Card>
+            </table>
+          </Card>
+        </div>
       </div>
     </div>
   );

@@ -141,7 +141,7 @@ export default function DiskManager() {
   }));
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+    <div className="edge-page edge-disks-page" style={{ flex: 1, display: 'flex', flexDirection: 'column',
       background: T.surfaceAlt, overflow: 'hidden' }}>
       {/* Header */}
       <div style={{
@@ -182,7 +182,7 @@ export default function DiskManager() {
         )}
         {/* 顶部：统计卡等宽均分 —— [平均] + 每块磁盘一张，点击选中深色高亮 */}
         {disks.length > 0 && (
-          <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+          <div className="edge-card-strip" style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
             <DiskStatCard aggregate io={aggIO} count={physIO.length}
               active={activeDev === 'avg'} onClick={() => setSelected('avg')}/>
             {disks.map(d => {
@@ -534,7 +534,7 @@ function DiskCard({ disk, io }) {
       </div>
 
       {/* 分区表 */}
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <div className="edge-table-scroll"><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ background: '#fafbfc' }}>
             <th style={{ ...th, textAlign: 'left' }}>分区</th>
@@ -555,7 +555,7 @@ function DiskCard({ disk, io }) {
             </td></tr>
           )}
         </tbody>
-      </table>
+      </table></div>
     </div>
   );
 }

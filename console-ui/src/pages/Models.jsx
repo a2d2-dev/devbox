@@ -54,8 +54,8 @@ export default function ModelsFace() {
   const filtered = liveModels.filter(m => filter === 'all' || (m.family || '').toLowerCase() === filter);
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'hidden' }}>
-      <div style={{
+    <div className="edge-page edge-models-page" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'hidden' }}>
+      <div className="edge-page-header" style={{
         padding: '14px 24px', background: T.surface,
         borderBottom: `1px solid ${T.border}`, flexShrink: 0,
         display: 'flex', alignItems: 'center', gap: 14,
@@ -103,7 +103,7 @@ export default function ModelsFace() {
         </div>
 
         <Card padding={0}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <div className="edge-table-scroll"><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
             <thead>
               <tr style={{ background: '#fafbfc', borderBottom: `1px solid ${T.borderSoft}` }}>
                 <th style={{ ...th, textAlign: 'left' }}>模型</th>
@@ -152,7 +152,7 @@ export default function ModelsFace() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </Card>
       </div>
     </div>

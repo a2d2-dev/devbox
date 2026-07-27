@@ -270,7 +270,7 @@ function GpuProcessTable({ data, status }) {
       {status === 'ok' && data.length === 0 ? (
         <div style={{ padding: '20px 16px', color: T.ink4, fontSize: 13, textAlign: 'center' }}>当前 GPU 上无活跃进程</div>
       ) : status === 'ok' ? (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div className="edge-table-scroll"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#fafbfc' }}>
               <th style={{ ...head, textAlign: 'left',  padding: '10px 16px' }}>PID</th>
@@ -291,7 +291,7 @@ function GpuProcessTable({ data, status }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : null}
     </div>
   );
@@ -322,7 +322,7 @@ function TopResourceBar({ cpu, gpuAvg, memPct, memUsed, memTotal, diskPct, diskU
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 12 }}>
+    <div className="edge-stat-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 12 }}>
       <Cell icon="cpu" label="CPU 使用率"
         pct={cpu} value={cpu == null ? '—' : `${cpu}%`}
         sub={cpu == null ? '加载中…' : '当前负载'} color={T.blue}/>
@@ -440,7 +440,7 @@ export default function MonitoringApp() {
   const windowLabel = (HISTORY_WINDOWS.find(w => w.value === historyWindow) || HISTORY_WINDOWS[0]).label;
 
   return (
-    <div style={{
+    <div className="edge-page edge-monitoring-page" style={{
       flex: 1, padding: '20px 24px', overflow: 'auto',
       background: T.surfaceAlt,
     }}>
@@ -484,25 +484,25 @@ export default function MonitoringApp() {
       <DiskIOPanel disks={metrics?.diskIO}/>
 
       {/* 趋势卡 —— 全部用 TrendChart 组件（自包含 header/chart/X轴/单位 formatter）*/}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+      <div className="edge-chart-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <TrendChart title={`CPU 使用率 · 最近 ${windowLabel}`} window={historyWindow}
           series={cpuSeries} color={T.blue} unit="percent" max={100}/>
         <TrendChart title={`GPU 使用率 · 最近 ${windowLabel}`} window={historyWindow}
           series={gpuSeries} color={T.indigo} unit="percent" max={100}/>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+      <div className="edge-chart-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <TrendChart title={`内存使用率 · 最近 ${windowLabel}`} window={historyWindow}
           series={memSeries} color={T.violet} unit="percent" max={100}/>
         <TrendChart title={`磁盘使用率 · 最近 ${windowLabel}`} window={historyWindow}
           series={diskSeries} color={T.cyan} unit="percent" max={100}/>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+      <div className="edge-chart-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <TrendChart title={`网络入站 · 最近 ${windowLabel}`} window={historyWindow}
           series={netRecvRate} color={T.green} unit="bytesPerSec"/>
         <TrendChart title={`网络出站 · 最近 ${windowLabel}`} window={historyWindow}
           series={netSentRate} color={T.amber} unit="bytesPerSec"/>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+      <div className="edge-chart-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <TrendChart title={`磁盘读取 · 最近 ${windowLabel}`} window={historyWindow}
           series={diskReadRate} color={T.teal} unit="bytesPerSec"/>
         <TrendChart title={`磁盘写入 · 最近 ${windowLabel}`} window={historyWindow}

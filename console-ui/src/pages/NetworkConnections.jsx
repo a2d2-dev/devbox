@@ -61,10 +61,10 @@ export default function NetworkConnections() {
   });
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+    <div className="edge-page edge-network-page" style={{ flex: 1, display: 'flex', flexDirection: 'column',
       background: T.surfaceAlt, overflow: 'hidden' }}>
       {/* Header */}
-      <div style={{
+      <div className="edge-page-header" style={{
         padding: '14px 24px', background: T.surface,
         borderBottom: `1px solid ${T.border}`, flexShrink: 0,
       }}>
@@ -84,7 +84,7 @@ export default function NetworkConnections() {
             <span> 条</span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        <div className="edge-filter-row" style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
           <select
             value={filters.stateFilter}
             onChange={e => setFilters({...filters, stateFilter: e.target.value})}
@@ -108,7 +108,7 @@ export default function NetworkConnections() {
             background: '#fef2f2', border: '1px solid #fecaca',
             color: '#991b1b', fontSize: 12, marginBottom: 14 }}>{error}</div>
         )}
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
+        <div className="edge-table-scroll" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: '#fafbfc' }}>

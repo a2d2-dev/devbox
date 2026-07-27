@@ -118,8 +118,8 @@ export function LoginScreen({ onLogin, deviceName }) {
   const model = about?.model || ''
 
   return (
-    <div style={{
-      display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', background: '#fff',
+    <div className="edge-login-screen" style={{
+      display: 'flex', width: '100vw', minHeight: '100vh', height: '100dvh', overflow: 'hidden', background: '#fff',
       fontFamily: '"PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", Arial, sans-serif',
       WebkitFontSmoothing: 'antialiased',
     }}>
@@ -187,7 +187,7 @@ export function LoginScreen({ onLogin, deviceName }) {
       </div>
 
       {/* ───── Right: Form Panel ───── */}
-      <div style={{
+      <div className="edge-login-form-panel" style={{
         flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: '32px 40px', background: '#fff',
       }}>
@@ -282,7 +282,7 @@ const loginCSS = `
   .login-mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-feature-settings: "tnum"; }
   .login-tnum { font-variant-numeric: tabular-nums; }
   @keyframes login-spin { to { transform: rotate(360deg); } }
-  @media (max-width: 880px) {
+  @media (max-width: 1023px) {
     .login-brand { display: none !important; }
   }
 `
@@ -380,7 +380,7 @@ function Field({ icon, type = 'text', value, onChange, placeholder, trailing, au
         onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
         style={{
           flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent',
-          fontSize: 14, color: T.ink,
+          fontSize: 16, color: T.ink,
           letterSpacing: type === 'password' ? '0.18em' : 0,
           fontFamily: 'inherit',
         }}/>

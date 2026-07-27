@@ -304,7 +304,7 @@ export default function VirtualMachines() {
   };
 
   return (
-    <div style={{
+    <div className="edge-page edge-vm-page" style={{
       flex: 1, width: '100%', minWidth: 0, height: '100%',
       display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'hidden',
     }}>
@@ -324,8 +324,8 @@ export default function VirtualMachines() {
         <ActionButton icon="refresh" label="刷新" disabled={loading} onClick={refresh}/>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, width: '100%', minWidth: 0, display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)' }}>
-        <aside style={{
+      <div className="edge-vm-layout" style={{ flex: 1, minHeight: 0, width: '100%', minWidth: 0, display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)' }}>
+        <aside className="edge-vm-list" style={{
           borderRight: `1px solid ${T.border}`, background: '#f8fafc',
           padding: 14, overflow: 'auto',
         }}>
@@ -339,7 +339,7 @@ export default function VirtualMachines() {
           </div>
         </aside>
 
-        <main style={{ minWidth: 0, overflow: 'auto', padding: 18 }}>
+        <main className="edge-vm-detail" style={{ minWidth: 0, overflow: 'auto', padding: 18 }}>
           {!current ? (
             <div style={{ color: T.ink3, fontSize: 13 }}>请选择虚拟机</div>
           ) : (
@@ -368,7 +368,7 @@ export default function VirtualMachines() {
                 </div>
               </section>
 
-              <section style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(140px, 1fr))', gap: 10 }}>
+              <section className="edge-vm-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(140px, 1fr))', gap: 10 }}>
                 <Metric label="CPU 时间" value={`${Math.round(current.cpuTimeSec || 0)}s`} sub={`${current.vcpus || 0} 个 vCPU`}/>
                 <Metric label="内存" value={`${pct(memUsed, memTotal)}%`} sub={`${fmtBytes(memUsed)} / ${fmtBytes(memTotal)}`}/>
                 <Metric label="可用内存" value={fmtBytes(memAvail)} sub={current.guest?.agentOK ? 'guest agent' : 'libvirt balloon'}/>
@@ -439,7 +439,7 @@ export default function VirtualMachines() {
                   <Icon name="hardDrive" size={15} stroke={1.8} style={{ color: T.ink2 }}/>
                   <span style={{ fontSize: 13, fontWeight: 720, color: T.ink }}>块设备</span>
                 </div>
-                <DiskTable disks={current.disks}/>
+                <div className="edge-table-scroll"><DiskTable disks={current.disks}/></div>
               </section>
 
               <section style={{ border: `1px solid ${T.border}`, borderRadius: 8, background: T.surface, overflow: 'hidden' }}>
@@ -450,7 +450,7 @@ export default function VirtualMachines() {
                   <Icon name="folder" size={15} stroke={1.8} style={{ color: T.ink2 }}/>
                   <span style={{ fontSize: 13, fontWeight: 720, color: T.ink }}>共享挂载</span>
                 </div>
-                <SharedMountTable filesystems={current.filesystems} mounts={current.guest?.mounts}/>
+                <div className="edge-table-scroll"><SharedMountTable filesystems={current.filesystems} mounts={current.guest?.mounts}/></div>
               </section>
 
               <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

@@ -23,7 +23,7 @@ function ServiceTable() {
   const head = { fontSize: 10.5, fontWeight: 600, color: T.ink3,
     letterSpacing: '0.06em', textTransform: 'uppercase' };
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <table className="edge-wide-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr style={{ background: '#fafbfc' }}>
           <th style={{ ...head, textAlign: 'left',  padding: '10px 16px' }}>服务</th>
@@ -115,7 +115,7 @@ export default function DashboardApp({ onOpenApp }) {
   const cpuCount = metrics && metrics.cpuPercent ? metrics.cpuPercent.length : null;
 
   return (
-    <div style={{
+    <div className="edge-page edge-dashboard-page" style={{
       flex: 1, padding: '20px 24px', overflow: 'auto',
       background: T.surfaceAlt,
     }}>
@@ -134,7 +134,7 @@ export default function DashboardApp({ onOpenApp }) {
       </div>
 
       {/* 4 SimpleResourceCard (AC-2) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 14 }}>
+      <div className="edge-stat-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 14 }}>
         <SimpleResourceCard icon="cpu" label="CPU 使用率"
           color={T.blue}
           value={cpu == null ? null : `${cpu}%`}
@@ -183,7 +183,7 @@ export default function DashboardApp({ onOpenApp }) {
           <div style={{ flex: 1 }}/>
           <span style={{ fontSize: 11.5, color: T.ink3 }}>共 {liveApps.filter(a=>a.kind==='app').length} 个 · {liveApps.filter(a=>a.kind==='app'&&a.state==='running').length} 运行中 · {liveApps.filter(a=>a.kind==='app'&&a.state==='error').length} 异常</span>
         </div>
-        <ServiceTable/>
+        <div className="edge-table-scroll"><ServiceTable/></div>
       </div>
     </div>
   );

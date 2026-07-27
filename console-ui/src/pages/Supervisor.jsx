@@ -55,7 +55,7 @@ function ServiceCard({ proc, onViewLog, onControl }) {
   const canJump = isRunning && url;
 
   return (
-    <div style={{
+    <div className="edge-supervisor-service" style={{
       background: 'white', borderRadius: 8,
       border: `1px solid ${T.border}`,
       padding: '10px 14px',
@@ -111,7 +111,7 @@ function ServiceCard({ proc, onViewLog, onControl }) {
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+      <div className="edge-supervisor-actions" style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
         {canJump && (
           <a href={url} target="_blank" rel="noreferrer" title="打开服务" style={{ ...actionBtn, color: T.blueDeep, textDecoration: 'none' }}>
             <Icon name="external" size={13} stroke={1.8}/>
@@ -165,12 +165,12 @@ function LogModal({ name, onClose }) {
   }, [log]);
 
   return (
-    <div style={{
+    <div className="edge-modal-backdrop" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: 1000,
     }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div className="edge-responsive-modal edge-log-modal" onClick={e => e.stopPropagation()} style={{
         width: '80%', maxWidth: 900, height: '70vh',
         background: '#1e293b', borderRadius: 12,
         display: 'flex', flexDirection: 'column',
@@ -242,9 +242,9 @@ export default function SupervisorFace() {
   }, []);
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#f8fafc' }}>
+    <div className="edge-page edge-supervisor-page" style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#f8fafc' }}>
       {/* Header */}
-      <div style={{
+      <div className="edge-supervisor-header" style={{
         padding: '10px 16px', borderBottom: `1px solid ${T.borderSoft}`,
         background: T.surface, display: 'flex', alignItems: 'center', gap: 12,
         flexShrink: 0,
