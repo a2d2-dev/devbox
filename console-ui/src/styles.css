@@ -4,6 +4,12 @@
   --edge-safe-bottom: env(safe-area-inset-bottom, 0px);
   --edge-safe-left: env(safe-area-inset-left, 0px);
   --edge-touch-target: 44px;
+  --edge-cloud-link-online: #22c55e;
+  --edge-cloud-link-connecting: #f59e0b;
+  --edge-cloud-link-offline: #dc6b67;
+  --edge-cloud-link-unknown: #94a3b8;
+  --edge-cloud-link-core: 8px;
+  --edge-cloud-link-ring: 1px;
 }
 
 html, body, #root {
@@ -182,6 +188,44 @@ button, [role="button"], [role="tab"] { touch-action: manipulation; }
   .edge-dock-close { display: inline-flex; }
 }
 
+@keyframes edgeCloudLinkConnecting {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.48; }
+}
+
+.edge-cloud-link {
+  --edge-cloud-link-color: var(--edge-cloud-link-unknown);
+  min-width: var(--edge-touch-target);
+  min-height: var(--edge-touch-target);
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  color: inherit;
+  white-space: nowrap;
+}
+.edge-cloud-link--online { --edge-cloud-link-color: var(--edge-cloud-link-online); }
+.edge-cloud-link--connecting { --edge-cloud-link-color: var(--edge-cloud-link-connecting); }
+.edge-cloud-link--offline { --edge-cloud-link-color: var(--edge-cloud-link-offline); }
+.edge-cloud-link--unknown { --edge-cloud-link-color: var(--edge-cloud-link-unknown); }
+.edge-cloud-link-led {
+  width: var(--edge-cloud-link-core);
+  height: var(--edge-cloud-link-core);
+  flex: 0 0 var(--edge-cloud-link-core);
+  border-radius: 50%;
+  background: var(--edge-cloud-link-color);
+  box-shadow: 0 0 0 var(--edge-cloud-link-ring) color-mix(in srgb, var(--edge-cloud-link-color) 46%, transparent);
+}
+.edge-cloud-link--connecting .edge-cloud-link-led {
+  animation: edgeCloudLinkConnecting 2.4s ease-in-out infinite;
+}
+.edge-cloud-link-label {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
 /* StatusBar keeps identity, connectivity, alerts and account access reachable on narrow screens. */
 @media (max-width: 1023px) {
   .edge-status-bar {
@@ -202,14 +246,14 @@ button, [role="button"], [role="tab"] { touch-action: manipulation; }
     min-height: var(--edge-touch-target);
     justify-content: center;
   }
+  .edge-cloud-link { width: var(--edge-touch-target); padding: 0; }
+  .edge-cloud-link-label { display: none; }
 }
 
 @media (max-width: 639px) {
   .edge-status-bar { height: calc(52px + var(--edge-safe-top)) !important; padding-top: var(--edge-safe-top); }
   .edge-status-logo { display: none !important; }
   .edge-status-device-details, .edge-status-dept { display: none !important; }
-  .edge-status-cloud { width: var(--edge-touch-target); height: var(--edge-touch-target); padding: 0 !important; justify-content: center; }
-  .edge-status-cloud > span { display: none !important; }
   .edge-status-alert { width: var(--edge-touch-target); padding: 0 !important; gap: 4px !important; }
   .edge-status-alert > span:last-child { display: none !important; }
 }
@@ -537,6 +581,9 @@ button, [role="button"], [role="tab"] { touch-action: manipulation; }
     scroll-behavior: auto !important;
   }
 
+  .edge-cloud-link--connecting .edge-cloud-link-led {
+    animation: none;
+  }
   .edge-icon-hover,
   .edge-dock-item,
   .edge-press,

@@ -4,8 +4,56 @@ import { Icon } from '../icons'
 import { StatusDot, useClock } from './ui'
 import { AnimatePresence, PopScale } from '../motion'
 
-export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenAlerts, theme = 'light', deviceLabel, DEVICE, loginUser, onLogout }) {
-  const isDarkBar = theme === 'dark'
+const CLOUD_LINK_STATES = {
+  online: { label: '云端在线' },
+  connecting: { label: '云端连接中' },
+  offline: { label: '云端离线' },
+  unknown: { label: '云端状态未知' },
+}
+
+function resolveCloudLinkState(value) {
+  if (value === true || value === 'online') return 'online'
+  if (value === false || value === 'offline') return 'offline'
+  if (value === 'connecting') return 'connecting'
+  return 'unknown'
+}
+
+export function CloudLinkIndicator({ status }) {
+  const state = resolveCloudLinkState(status)
+  const label = CLOUD_LINK_STATES[state].label
+  const accessibleLabel = `云端连接状态：${label}`
+
+  return (
+    <div
+      className={`edge-cloud-link edge-cloud-link--${state}`}
+      role="status"
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
+      data-cloud-link-state={state}
+    >
+      <span className="edge-cloud-link-led" aria-hidden="true" />
+      <span className="edge-cloud-link-label">{label}</span>
+    </div>
+  )
+}
+
+function MetricPill({ tone, label, value, colors }) {
+  return (
+    <div className="edge-status-metric" style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '3px 9px 3px 8px', borderRadius: 999,
+      background: colors.pillBg,
+      fontSize: 12, color: colors.text2,
+      whiteSpace: 'nowrap', flexShrink: 0,
+    }}>
+      <StatusDot tone={tone} size={7}/>
+      <span style={{ color: colors.text3 }}>{label}</span>
+      <span className="mono tnum" style={{ color: colors.text, fontWeight: 600 }}>{value}</span>
+    </div>
+  )
+}
+
+export function StatusBar({ cpu, gpu, mem, alertCount, online, onOpenAlerts, theme = 'light', deviceLabel, DEVICE, loginUser, onLogout }) {
   const now = useClock();
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
@@ -30,13 +78,6 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
     alertBg: 'rgba(245,158,11,0.18)',
     alertFg: '#fbbf24',
     alertBd: 'rgba(245,158,11,0.45)',
-    cloudOnBg: 'rgba(16,185,129,0.16)',
-    cloudOnFg: '#34d399',
-    cloudOnBd: 'rgba(16,185,129,0.4)',
-    cloudOffBg: 'rgba(239,68,68,0.16)',
-    cloudOffFg: '#fca5a5',
-    cloudOffBd: 'rgba(239,68,68,0.4)',
-    cloudSyncFg: 'rgba(241,245,249,0.55)',
   } : {
     bar: 'rgba(255,255,255,0.85)',
     barBd: 'rgba(226,232,240,0.7)',
@@ -52,28 +93,9 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
     alertBg: '#fef3c7',
     alertFg: '#b45309',
     alertBd: '#fde68a',
-    cloudOnBg: '#ecfdf5',
-    cloudOnFg: '#047857',
-    cloudOnBd: '#a7f3d0',
-    cloudOffBg: '#fef2f2',
-    cloudOffFg: '#b91c1c',
-    cloudOffBd: '#fecaca',
-    cloudSyncFg: T.ink3,
   };
 
-  const Pill = ({ tone, label, value }) => (
-    <div className="edge-status-metric" style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '3px 9px 3px 8px', borderRadius: 999,
-      background: C.pillBg,
-      fontSize: 12, color: C.text2,
-      whiteSpace: 'nowrap', flexShrink: 0,
-    }}>
-      <StatusDot tone={tone} size={7}/>
-      <span style={{ color: C.text3 }}>{label}</span>
-      <span className="mono tnum" style={{ color: C.text, fontWeight: 600 }}>{value}</span>
-    </div>
-  );
+
 
   return (
     <div className="edge-status-bar" style={{
@@ -115,9 +137,9 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
 
       {/* Center: health pills */}
       <div className="edge-status-health" style={{ flex: 1, display: 'flex', justifyContent: 'center', gap: 6, flexWrap: 'nowrap', overflow: 'hidden' }}>
-        <Pill tone={cpu < 70 ? 'green' : 'amber'} label="CPU" value={`${cpu}%`}/>
-        <Pill tone={gpu < 80 ? 'green' : 'amber'} label="GPU" value={`${gpu}%`}/>
-        <Pill tone={mem < 80 ? 'green' : 'amber'} label="内存" value={`${mem}%`}/>
+        <MetricPill tone={cpu < 70 ? 'green' : 'amber'} label="CPU" value={`${cpu}%`} colors={C}/>
+        <MetricPill tone={gpu < 80 ? 'green' : 'amber'} label="GPU" value={`${gpu}%`} colors={C}/>
+        <MetricPill tone={mem < 80 ? 'green' : 'amber'} label="内存" value={`${mem}%`} colors={C}/>
         <button type="button" className="edge-status-alert" aria-label={`${alertCount} 条告警`} onClick={onOpenAlerts} style={{
           display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px 3px 8px', borderRadius: 999,
           background: alertCount > 0 ? C.alertBg : C.pillBg,
@@ -134,20 +156,7 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
 
       {/* Right: cloud + time */}
       <div className="edge-status-actions" style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-        <div className="edge-status-cloud" style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
-          borderRadius: 999,
-          background: online ? C.cloudOnBg : C.cloudOffBg,
-          color: online ? C.cloudOnFg : C.cloudOffFg,
-          fontSize: 11.5, fontWeight: 500,
-          border: `1px solid ${online ? C.cloudOnBd : C.cloudOffBd}`,
-          whiteSpace: 'nowrap',
-        }}>
-          <Icon name={online ? 'cloud' : 'cloudOff'} size={13} stroke={1.8}/>
-          <span style={{ fontWeight: 600 }}>{online ? '云端在线' : '云端离线'}</span>
-          <span style={{ opacity: 0.6 }}>·</span>
-          <span className="edge-status-sync" style={{ color: C.cloudSyncFg }}>同步 {lastSync}</span>
-        </div>
+        <CloudLinkIndicator status={online} />
         <div className="edge-status-time" style={{
           display: 'inline-flex', alignItems: 'center', gap: 8,
           padding: '4px 10px', borderRadius: 8,
