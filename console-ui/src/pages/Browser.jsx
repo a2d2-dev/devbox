@@ -88,6 +88,7 @@ export default function BrowserFace() {
   const [activeId, setActiveId] = useState(() => tabs[0].id);
   const [address, setAddress] = useState('');
   const [panel, setPanel] = useState(null); // null | 'bookmarks' | 'history'
+  const [compact, setCompact] = useState(true); // true=标签条与地址栏合并成一行；false=两行（Chrome 标准）
 
   const active = useMemo(() => tabs.find(t => t.id === activeId) || tabs[0], [tabs, activeId]);
   const currentUrl = active && active.index >= 0 ? active.entries[active.index] : '';
@@ -186,95 +187,101 @@ export default function BrowserFace() {
     refreshHistory();
   }, [refreshHistory]);
 
+  // 标签条内容（compact 与两行布局共用）
+  const tabsStrip = (
+    <>
+      {tabs.map(t => {
+        const isActive = t.id === activeId;
+        return (
+          <div key={t.id} onClick={() => setActiveId(t.id)} className="edge-press"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, height: 30,
+              padding: '0 6px 0 10px', borderRadius: T.radius.md,
+              // 合并态整行是 surface，active tab 用 surfaceAlt 凸显；两行态反过来
+              background: isActive ? (compact ? T.surfaceAlt : T.surface) : 'transparent',
+              border: `1px solid ${isActive ? T.border : 'transparent'}`,
+              fontSize: 12, color: T.ink, whiteSpace: 'nowrap', cursor: 'pointer',
+              flexShrink: 0, maxWidth: 220,
+            }}>
+            <Icon name="globe" size={12} stroke={1.8} style={{ color: T.ink3, flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
+            <button onClick={(e) => closeTab(t.id, e)} className="edge-press" title="关闭标签页"
+              style={{ width: 18, height: 18, borderRadius: T.radius.xs, border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.ink3, flexShrink: 0 }}>
+              <Icon name="x" size={11} stroke={2} />
+            </button>
+          </div>
+        );
+      })}
+      <button onClick={() => openNewTab()} className="edge-press" title="新建标签页"
+        style={{ width: 28, height: 28, borderRadius: T.radius.sm, border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.ink2, flexShrink: 0 }}>
+        <Icon name="plus" size={15} stroke={2} />
+      </button>
+    </>
+  );
+
+  // 工具条内容：导航 + 地址栏 + 书签/历史 + 布局开关
+  const toolbarControls = (
+    <>
+      <IconBtn name="chevLeft" title="后退" disabled={!canBack} onClick={goBack} />
+      <IconBtn name="chevRight" title="前进" disabled={!canFwd} onClick={goFwd} />
+      <IconBtn name="refresh" title="刷新" disabled={!currentUrl} onClick={reload} />
+      <IconBtn name="home" title="主页" onClick={goHome} />
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: T.radius.pill, padding: '0 14px', height: 34, marginLeft: 4, marginRight: 4, minWidth: 0 }}>
+        <Icon name="lock" size={12} style={{ color: currentUrl.startsWith('https://') ? T.green : T.ink3, flexShrink: 0 }} />
+        <input
+          value={address}
+          onChange={e => setAddress(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commitAddress(); }}
+          placeholder="输入网址（如 192.168.1.10:3000 或 example.com）"
+          spellCheck={false}
+          style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12.5, color: T.ink, ...MONO }}
+        />
+        {active && active.loading && (
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.blue, flexShrink: 0 }} className="edge-pulse" />
+        )}
+      </div>
+      <IconBtn name="star" title={isBookmarked ? '取消收藏' : '收藏当前页'} active={isBookmarked} disabled={!currentUrl} onClick={toggleBookmark} />
+      <IconBtn name="history" title="历史记录" active={panel === 'history'} onClick={() => setPanel(p => p === 'history' ? null : 'history')} />
+      <IconBtn name="sidebar" title={compact ? '展开：标签与地址栏分行' : '合并：单行紧凑'} active={compact} onClick={() => setCompact(c => !c)} />
+    </>
+  );
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: T.surfaceAlt, position: 'relative' }}>
-      {/* ─── 标签条 ─── */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 4,
-        padding: '6px 8px', background: T.surfaceAlt,
-        borderBottom: `1px solid ${T.borderSoft}`, flexShrink: 0, overflowX: 'auto',
-      }}>
-        {tabs.map(t => {
-          const isActive = t.id === activeId;
-          return (
-            <div
-              key={t.id}
-              onClick={() => setActiveId(t.id)}
-              className="edge-press"
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6, height: 30,
-                padding: '0 6px 0 10px', borderRadius: T.radius.md,
-                background: isActive ? T.surface : 'transparent',
-                border: `1px solid ${isActive ? T.border : 'transparent'}`,
-                fontSize: 12, color: T.ink, whiteSpace: 'nowrap', cursor: 'pointer',
-                flexShrink: 0, maxWidth: 220,
-              }}
-            >
-              <Icon name="globe" size={12} stroke={1.8} style={{ color: T.ink3, flexShrink: 0 }} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
-              <button
-                onClick={(e) => closeTab(t.id, e)}
-                className="edge-press"
-                title="关闭标签页"
-                style={{
-                  width: 18, height: 18, borderRadius: T.radius.xs, border: 'none',
-                  background: 'transparent', cursor: 'pointer', display: 'flex',
-                  alignItems: 'center', justifyContent: 'center', color: T.ink3, flexShrink: 0,
-                }}
-              >
-                <Icon name="x" size={11} stroke={2} />
-              </button>
-            </div>
-          );
-        })}
-        <button onClick={() => openNewTab()} className="edge-press" title="新建标签页"
-          style={{
-            width: 28, height: 28, borderRadius: T.radius.sm, border: 'none',
-            background: 'transparent', cursor: 'pointer', display: 'flex',
-            alignItems: 'center', justifyContent: 'center', color: T.ink2, flexShrink: 0,
-          }}>
-          <Icon name="plus" size={15} stroke={2} />
-        </button>
-      </div>
-
-      {/* ─── 工具条 ─── */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 4,
-        padding: '8px 12px', background: T.surface,
-        borderBottom: `1px solid ${T.borderSoft}`, flexShrink: 0,
-      }}>
-        <IconBtn name="chevLeft" title="后退" disabled={!canBack} onClick={goBack} />
-        <IconBtn name="chevRight" title="前进" disabled={!canFwd} onClick={goFwd} />
-        <IconBtn name="refresh" title="刷新" disabled={!currentUrl} onClick={reload} />
-        <IconBtn name="home" title="主页" onClick={goHome} />
-
-        {/* 地址栏 */}
+      {/* ─── 标签条 + 工具条（compact 合并为一行 / 两行 Chrome 标准）─── */}
+      {compact ? (
         <div style={{
-          flex: 1, display: 'flex', alignItems: 'center', gap: 8,
-          background: T.surfaceAlt, border: `1px solid ${T.border}`,
-          borderRadius: T.radius.pill, padding: '0 14px', height: 34,
-          marginLeft: 4, marginRight: 4,
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 8px', background: T.surface,
+          borderBottom: `1px solid ${T.borderSoft}`, flexShrink: 0,
         }}>
-          <Icon name="lock" size={12} style={{ color: currentUrl.startsWith('https://') ? T.green : T.ink3, flexShrink: 0 }} />
-          <input
-            value={address}
-            onChange={e => setAddress(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') commitAddress(); }}
-            placeholder="输入网址（如 192.168.1.10:3000 或 example.com）"
-            spellCheck={false}
-            style={{
-              flex: 1, border: 'none', background: 'transparent', outline: 'none',
-              fontSize: 12.5, color: T.ink, ...MONO,
-            }}
-          />
-          {active && active.loading && (
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.blue, flexShrink: 0 }} className="edge-pulse" />
-          )}
+          {/* tabs 区：限宽 + 横向滚动，多 tab 不挤掉地址栏 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, maxWidth: '42%', overflowX: 'auto' }}>
+            {tabsStrip}
+          </div>
+          {/* 工具条区：地址栏 flex:1 占余 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
+            {toolbarControls}
+          </div>
         </div>
-
-        <IconBtn name="star" title={isBookmarked ? '取消收藏' : '收藏当前页'} active={isBookmarked} disabled={!currentUrl} onClick={toggleBookmark} />
-        <IconBtn name="history" title="历史记录" active={panel === 'history'} onClick={() => setPanel(p => p === 'history' ? null : 'history')} />
-      </div>
+      ) : (
+        <>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '6px 8px', background: T.surfaceAlt,
+            borderBottom: `1px solid ${T.borderSoft}`, flexShrink: 0, overflowX: 'auto',
+          }}>
+            {tabsStrip}
+          </div>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '8px 12px', background: T.surface,
+            borderBottom: `1px solid ${T.borderSoft}`, flexShrink: 0,
+          }}>
+            {toolbarControls}
+          </div>
+        </>
+      )}
 
       {/* ─── 内容区 ─── */}
       {currentUrl ? (
