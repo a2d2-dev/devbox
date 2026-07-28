@@ -85,6 +85,42 @@ type ApplicationSource struct {
 	CatalogID string `json:"catalogId,omitempty"`
 }
 
+// Ownership 应用所有权（系统 Compose project 自动发现与接管）。
+type Ownership string
+
+const (
+	// OwnershipManaged devbox 创建或已被接管（可读写，走完整生命周期/编辑边界）。
+	OwnershipManaged Ownership = "managed"
+	// OwnershipDiscovered daemon 发现、尚未接管的外部 compose project（只读）。
+	// 写操作（start/stop/restart/remove/edit）一律拒绝，需用户显式接管。
+	OwnershipDiscovered Ownership = "discovered"
+)
+
+// DiscoveredInfo 外部 compose project 的发现诊断（系统自动发现、未接管）。
+//
+// 安全：WorkingDir/ConfigFiles 仅为 compose labels 的「路径字符串」，供 UI 诊断展示与
+// 接管前提示；列表扫描绝不读取这些路径指向的宿主文件。只有在用户显式点击「接管」后，
+// Takeover 才读取并严格校验这些文件。
+type DiscoveredInfo struct {
+	Project     string   `json:"project"`               // com.docker.compose.project
+	WorkingDir  string   `json:"workingDir,omitempty"`  // com.docker.compose.project.working_dir（路径字符串，非内容）
+	ConfigFiles []string `json:"configFiles,omitempty"` // com.docker.compose.project.config_files（路径字符串，非内容）
+	ReadOnly    bool     `json:"readOnly"`              // true：未接管，禁止写操作
+	// TakeoverAvailable 该 discovered project 当前是否可接管。false 时 Reason 给出原因（不含文件内容）：
+	// project name 非法（含控制字符/换行，防 task/audit/marker 注入）、同 project 容器
+	// working_dir/config_files 标签不一致、或缺少标签。列表仍展示，但接管被拒。
+	TakeoverAvailable bool   `json:"takeoverAvailable"`
+	Reason            string `json:"reason,omitempty"`
+}
+
+// TakeoverRequest 接管一个 discovered compose project（显式用户动作：由只读发现态转为受管）。
+//
+// 接管时后端重新观测 daemon 取最新 working_dir/config_files labels，不信任客户端提交的路径。
+type TakeoverRequest struct {
+	ID           string `json:"id"` // discovered 稳定 ID（ext-/discovered- 前缀）
+	ConfirmRisky bool   `json:"confirmRisky,omitempty"`
+}
+
 // ServiceStatus 单个 service（→ container）的运行态。
 type ServiceStatus struct {
 	Name        string        `json:"name"`
@@ -152,6 +188,28 @@ type Application struct {
 	Revision int64             `json:"revision"` // desired generation
 	Observed ObservedState     `json:"observed"`
 	LastTask *Task             `json:"lastTask,omitempty"`
+
+	// Ownership 所有权（managed/discovered）。discovered 为只读，写操作需先接管。
+	// 旧前端忽略该字段；新 UI 据此区分「受管」与「已发现/未接管」。
+	Ownership Ownership `json:"ownership,omitempty"`
+	// Discovered 仅 OwnershipDiscovered 填充：来源路径诊断（labels 路径字符串，非文件内容）。
+	Discovered *DiscoveredInfo `json:"discovered,omitempty"`
+
+	// RuntimeProject runtime adapter 内部使用的真实 compose project name（系统 Compose project
+	// 自动发现与接管）：接管的外部 project 保留原名，devbox 创建的为 devbox-<id>。
+	// 不序列化（json:"-"）：刻意不复用 K8s 专属的 Namespace 字段，避免语义混淆；
+	// controller 注入，compose runtime 的 Apply/Operate/Remove/Logs/projectEmpty 与 worker
+	// 健康检查统一从此读取。未接管 project 名通过 Discovered.Project 暴露给 UI。
+	RuntimeProject string `json:"-"`
+
+	// ObservedWorkingDir/ObservedConfigFiles 来自 compose labels 的「路径字符串」（诊断用，
+	// 非文件内容）。内部不序列化；列表扫描不读取这些路径。仅未接管 project 经 Discovered
+	// 暴露给 UI，接管时才读取并校验对应宿主文件。
+	ObservedWorkingDir  string   `json:"-"`
+	ObservedConfigFiles []string `json:"-"`
+	// ObservedDiscoveredConflict 同 project 不同容器的 working_dir/config_files 标签不一致
+	// （内部不序列化）。Discovered.TakeoverAvailable 据此为 false，避免接管任取其一。
+	ObservedDiscoveredConflict bool `json:"-"`
 }
 
 // DesiredApplication 创建/更新请求体（PUT/POST /apps）。
@@ -229,6 +287,9 @@ const (
 	TaskOperate TaskType = "operate" // start/stop/restart/redeploy
 	TaskRemove  TaskType = "remove"  // 卸载
 	TaskRestore TaskType = "restore" // 回滚到某 revision
+	// TaskTakeover 接管 discovered compose project（同步成功操作，不入队 worker）。
+	// 记录在 operation history 中，summary 含 confirmed=true/false（事务内留痕，审计失败亦可见）。
+	TaskTakeover TaskType = "takeover"
 )
 
 // Task 异步变更任务。HTTP 写操作返回 202 + Task，前端轮询 GET /tasks/{id}。

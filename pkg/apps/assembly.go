@@ -61,10 +61,13 @@ func AssembleController(ctx context.Context, cfg ControllerConfig, logger *zap.L
 	worker.Start(ctx) // 崩溃恢复 + 准备消费
 
 	var prechecker composePrechecker
+	var takeoverRenderer takeoverPrechecker
 	if cr, ok := adapters[RuntimeCompose].(*composeRuntime); ok {
 		prechecker = cr
+		takeoverRenderer = cr
 	}
-	controller := NewController(repo, paths, adapters, worker, logger, WithPrechecker(prechecker))
+	controller := NewController(repo, paths, adapters, worker, logger,
+		WithPrechecker(prechecker), WithTakeoverPrechecker(takeoverRenderer))
 	cleanup := func() { _ = repo.Close() }
 	return controller, cleanup, nil
 }

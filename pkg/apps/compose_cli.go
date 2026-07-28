@@ -34,23 +34,25 @@ func newComposeCLI(endpoint ...string) *composeCLI {
 	return &composeCLI{binary: "docker", dockerHost: host}
 }
 
+// composeFixedEnv 是 Compose/Docker CLI 子进程的「完全固定」环境：不继承宿主 PATH/locale，
+// 避免 compose 插值 ${PATH}/${LANG} 等暴露控制面。PATH 固定为标准位置（docker 二进制所在）；
+// LANG=C 固定 locale。HOME/DOCKER_CONFIG/SSL_CERT*/代理/DOCKER_HOST 一律不进 Env：daemon 端点
+// 走 docker 全局 -H，自定义 DOCKER_CONFIG 走 --config（父进程解析），workload 插值的唯一用户
+// 值来源是受管 .env。
+var composeFixedEnv = []string{
+	"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	"LANG=C",
+}
+
 func (c *composeCLI) command(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, c.binary, args...)
-	// Compose/Docker 环境变量不能覆盖 Controller 选择的 daemon/project/file。保留
-	// PATH、代理和 registry 凭证等正常环境，其余控制变量明确隔离。
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, item := range os.Environ() {
-		key := item
-		if i := strings.IndexByte(key, '='); i >= 0 {
-			key = key[:i]
-		}
-		if key == "DOCKER_HOST" || key == "DOCKER_CONTEXT" || key == "DOCKER_TLS_VERIFY" ||
-			key == "DOCKER_CERT_PATH" || strings.HasPrefix(key, "COMPOSE_") {
-			continue
-		}
-		env = append(env, item)
+	// docker 全局参数（前置）：-H 端点（不用 DOCKER_HOST env）；--config 仅当父进程显式 DOCKER_CONFIG。
+	globals := []string{"-H", c.dockerHost}
+	if dc := os.Getenv("DOCKER_CONFIG"); dc != "" {
+		globals = append(globals, "--config", dc)
 	}
-	cmd.Env = append(env, "DOCKER_HOST="+c.dockerHost)
+	full := append(globals, args...)
+	cmd := exec.CommandContext(ctx, c.binary, full...)
+	cmd.Env = composeFixedEnv // 完全固定，不继承宿主 env
 	return cmd
 }
 
@@ -135,6 +137,69 @@ func (c *composeCLI) RenderConfig(ctx context.Context, content, env string) (str
 		}
 		// 仅回显 stderr（结构化校验信息，脱敏截断）；丢弃 stdout（可能含渲染后的 secret）。
 		return "", ValidationErr("compose 配置无效: " + sanitizeWithEnvValues(strings.TrimSpace(stderr.String()), env))
+	}
+	return stdout.String(), nil
+}
+
+// argsForFiles 构造 compose 参数前缀，使用显式多文件 + 受控 env-file（接管归一化用）。
+// files 应为 devbox 控制临时目录里的副本（非原始 config path），envFile 为受控空 .env，
+// 避免 CLI 自动读取 working_dir/.env。--project-directory 保留相对 bind 路径语义。
+func (c *composeCLI) argsForFiles(projectDir, project string, files []string, envFile string, sub ...string) []string {
+	args := []string{
+		"compose",
+		"--project-directory", projectDir,
+		"-p", project,
+		"--ansi", "never",
+	}
+	if envFile != "" {
+		args = append(args, "--env-file", envFile)
+	}
+	for _, f := range files {
+		args = append(args, "-f", f)
+	}
+	return append(args, sub...)
+}
+
+// renderProjectConfig 用 -f <files...> config 归一化/合并多 compose 文件。
+//
+// files 必须是 devbox 控制临时目录里的副本（消除原始路径的 TOCTOU）；envFile 是受控空 .env
+// （--env-file 阻止 compose 自动读取 working_dir/.env）。projectDir=canonical working_dir
+// （--project-directory，保留相对 bind 语义）；进程 CWD 置于 envFile 所在临时目录。
+//
+// noInterpolate=true：`config --no-interpolate`，变量引用 ${VAR} 保留（secret 不进正文），
+//   用于生成托管单一规范 compose.yaml（多文件无损合并，绝不只复制首文件）。
+// noInterpolate=false：`config`（以受控空 env 插值），仅用于内存风险分析，不持久化。
+//
+// 安全：exec 独立参数数组、env 隔离、30s 超时、stdout/stderr 各 1MB 上限；失败只回显
+// 经脱敏截断的 stderr（结构化校验信息），不回显 compose 正文/文件内容。
+func (c *composeCLI) renderProjectConfig(ctx context.Context, projectDir, project string, files []string, envFile string, noInterpolate bool) (string, error) {
+	if len(files) == 0 {
+		return "", ValidationErr("缺少 compose 配置文件")
+	}
+	sub := []string{"config"}
+	if noInterpolate {
+		sub = append(sub, "--no-interpolate")
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := c.command(runCtx, c.argsForFiles(projectDir, project, files, envFile, sub...)...)
+	// CWD 置于受控临时目录（envFile 所在）；--env-file 阻止自动加载 working_dir/.env。
+	if envFile != "" {
+		cmd.Dir = filepath.Dir(envFile)
+	} else {
+		cmd.Dir = projectDir
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{w: &stdout, max: 1 << 20}
+	cmd.Stderr = &limitedWriter{w: &stderr, max: 1 << 20}
+	if err := cmd.Run(); err != nil {
+		if isExecNotFound(err) {
+			return "", CapabilityErr("docker compose 不可用，无法归一化 Compose 配置")
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", CapabilityErr("compose 归一化超时")
+		}
+		return "", ValidationErr("compose 归一化失败: " + sanitizeLog(strings.TrimSpace(stderr.String())))
 	}
 	return stdout.String(), nil
 }

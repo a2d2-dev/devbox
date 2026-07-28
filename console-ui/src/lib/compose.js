@@ -231,6 +231,52 @@ export function runtimeLabel(rt) {
   return rt === 'compose' ? 'Docker Compose' : rt === 'kubernetes' ? 'Kubernetes' : '未知';
 }
 
+// ─── discovered 服务清单（只读诊断）──────────────────────────────
+// formatServicePort：PortMapping → "host:container/proto"（有宿主端口）或 "container/proto"。
+export function formatServicePort(p) {
+  if (!p) return '';
+  const proto = String(p.protocol || 'tcp').toLowerCase();
+  if (p.hostPort && p.hostPort > 0) return `${p.hostPort}:${p.containerPort}/${proto}`;
+  if (p.containerPort) return `${p.containerPort}/${proto}`;
+  return '';
+}
+
+// serviceInventory：把 observed.services 汇成只读清单（名称/state/health/端口），按 limit 截断。
+// 返回 { rows, total, truncated }。discovered 卡片只读展示用（无写操作）。
+export function serviceInventory(app, limit = 4) {
+  const services = (app && app.observed && app.observed.services) || [];
+  const rows = services.map((s) => ({
+    name: s.name || '—',
+    state: s.state || '',
+    health: s.health || '',
+    ports: (s.ports || []).map(formatServicePort).filter(Boolean),
+  }));
+  const total = rows.length;
+  const truncated = total > limit;
+  return { rows: rows.slice(0, limit), total, truncated };
+}
+
+export const HEALTH_LABEL = {
+  healthy: '健康', unhealthy: '不健康', starting: '启动中', none: '—',
+};
+
+// appActionSet：据 ownership 返回允许的动作集合（前端据此渲染，保证 discovered 不暴露写操作）。
+//   discovered（未接管）：禁止 lifecycle（start/stop/restart/redeploy）、uninstall、detail（不开
+//     AppMgmtDrawer 以免暴露编辑/生命周期/卸载）；只允许 takeover（当 takeoverAvailable 时）。
+//     只读诊断（project/来源路径/services/phase/ports）已在卡片内联展示。
+//   managed（含已接管）：完整 lifecycle + uninstall + detail。
+export function appActionSet(app) {
+  if (app?.ownership === 'discovered') {
+    return {
+      lifecycle: false,
+      uninstall: false,
+      detail: false,
+      takeover: !!app?.discovered?.takeoverAvailable,
+    };
+  }
+  return { lifecycle: true, uninstall: true, detail: true, takeover: false };
+}
+
 // ─── RemovePreview 辅助 ──────────────────────────────────────────
 // 把 willDelete / willKeep 字符串数组分类成「容器/网络」「受管数据」「保留(外部/挂载)」。
 export function classifyPreview(preview) {

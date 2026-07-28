@@ -341,6 +341,10 @@ export function useApps(interval = 10000) {
         source: a.source || null,
         revision: a.revision || 0,
         lastTask: a.lastTask || null,
+        // 系统 Compose project 自动发现与接管：ownership(managed/discovered) + discovered 诊断。
+        // discovered 为只读，ComposeManager 据此渲染 DiscoveredCard（隐藏全部写操作）。
+        ownership: a.ownership || '',
+        discovered: a.discovered || null,
       }));
     },
   });
@@ -721,6 +725,17 @@ export async function removeAppEx(appId, purge = false) {
 // 回滚到历史 revision（202 + Task）。
 export async function restoreAppRevision(appId, rev) {
   const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}/revisions/${rev}/restore`, { method: 'POST' });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+// 接管 discovered compose project（同步返回受管 Application；confirmRisky 用于 confirmation 级风险）。
+export async function takeoverApp(appId, confirmRisky = false, idempotencyKey) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+  const r = await authFetch(`${API}/apps/${encodeURIComponent(appId)}/takeover`, {
+    method: 'POST', headers, body: JSON.stringify({ confirmRisky: !!confirmRisky }),
+  });
   if (!r.ok) throw await readErr(r);
   return r.json();
 }

@@ -82,6 +82,9 @@ func (p *Paths) PendingEnvFile(appID string, rev int64) string {
 }
 
 // ProjectName Compose project 名（固定 devbox-<app-id>）。
+//
+// 仅用于 devbox 自己创建的应用。接管的外部 compose project 必须保留原 project name
+// 原地管理，应使用 ComposeProjectName(meta)，不要直接调用本函数。
 func ProjectName(appID string) string { return ProjectPrefix + appID }
 
 // AppIDFromProject 从 compose project 名还原 appID；非受管前缀返回空。
@@ -96,8 +99,111 @@ func AppIDFromProject(project string) string {
 	return id
 }
 
+// ComposeProjectName 返回 app 真实 compose project name（系统 Compose project 自动发现与接管）。
+//
+// 这是 runtime adapter 解析真实 project 的唯一领域入口（单一事实源）：
+//   - 接管的外部 project 保留其原始 project name 原地管理——容器名、网络名与 named volume
+//     都按 compose project name 键控，保留原名 = 不重建 = 数据不变；
+//   - devbox 自己创建的应用用 devbox-<app-id>。
+//
+// controller 在构造交给 runtime 的 Application 时把结果写入 app.RuntimeProject（内部字段，
+// 不序列化），compose runtime 的 Apply/Operate/Remove/Logs/projectEmpty 与 worker 健康检查
+// 统一从 composeProject(app)=app.RuntimeProject 读取，不复用 K8s 专属的 Namespace。
+func ComposeProjectName(meta AppRecord) string {
+	if meta.OriginalProject != "" {
+		return meta.OriginalProject
+	}
+	return ProjectName(meta.ID)
+}
+
+// ExternalIDPrefix / DiscoveredAltPrefix discovered（未接管）compose project 稳定 ID 的前缀。
+// 主候选用 ext-，与受管历史 meta 冲突时回退 discovered-。二者均含 shortHash(project)，
+// 不全局禁止任何前缀——历史合法受管 app id（含 ext- 开头）照常使用，冲突由 resolveDiscoveredID 消解。
+const (
+	ExternalIDPrefix    = "ext-"
+	DiscoveredAltPrefix = "discovered-"
+)
+
+// IsExternalID 判断 id 是否为 discovered compose project 的稳定 ID（主/副候选前缀）。
+func IsExternalID(id string) bool {
+	return strings.HasPrefix(id, ExternalIDPrefix) || strings.HasPrefix(id, DiscoveredAltPrefix)
+}
+
+// discoveredIDWithPrefix 在固定前缀下为 project 生成稳定、合法、≤63 的 ID：
+//   - base = Slugify(project)，截断预留 "-"+hash（共 13 字符），裁首尾 '-'；
+//   - hash = shortHash(project)，含原始 project name → "a_b"/"a-b" slug 相同也区分；
+//   - base 为空兜底 "discovered"；最终过 isValidAppID（3..63）。
+func discoveredIDWithPrefix(prefix, project string) string {
+	if project == "" {
+		return ""
+	}
+	hash := shortHash(project)
+	maxBase := 63 - len(prefix) - len("-"+hash)
+	if maxBase < 1 {
+		maxBase = 1
+	}
+	base := Slugify(project)
+	if len(base) > maxBase {
+		base = strings.Trim(base[:maxBase], "-")
+	}
+	if base == "" {
+		base = "discovered"
+	}
+	id := prefix + base + "-" + hash
+	if !isValidAppID(id) {
+		id = prefix + "discovered-" + hash
+	}
+	return id
+}
+
+// ExternalID discovered compose project 的主候选稳定 ID（ext-<slug>-<hash>）。
+func ExternalID(project string) string { return discoveredIDWithPrefix(ExternalIDPrefix, project) }
+
+// DiscoveredAltID discovered compose project 的第二稳定候选 ID（discovered-<slug>-<hash>）。
+// 主候选与某受管 meta 冲突时使用；与主候选仅前缀不同，hash 仍含原始 project name，
+// 故与其它 project 的主/副 ID 不碰撞，且对同一 project 稳定。
+func DiscoveredAltID(project string) string {
+	return discoveredIDWithPrefix(DiscoveredAltPrefix, project)
+}
+
+// resolveDiscoveredID 在 claimed（已占用的 app ID 集合）约束下，返回 project 稳定、不冲突
+// 的 discovered ID。list/get/takeover 必须用同一函数 + 同一 claimed 集，保证 ID 一致、
+// 冲突时双方都展示且 discovered ID 稳定。
+//
+// 候选顺序（每个都含 shortHash(project)，对同一 project 稳定）：
+//  1. 主候选 ExternalID（ext-<slug>-<hash>）；
+//  2. 副候选 DiscoveredAltID（discovered-<slug>-<hash>）；
+//  3. 有界 salt 候选（固定 salt 表，改输入→改 hash，仍稳定且与 project 绑定）。
+//
+// 任一候选被 claimed 占用即跳过；全部被占返回空串，调用方按冲突处理（list 跳过该
+// discovered 项，takeover 返回显式冲突错误）——不无检查返回可能冲突的 ID。
+func resolveDiscoveredID(project string, claimed map[string]bool) string {
+	for _, cand := range []string{ExternalID(project), DiscoveredAltID(project)} {
+		if !claimed[cand] {
+			return cand
+		}
+	}
+	for _, salt := range []string{"x", "y", "z", "w"} {
+		cand := discoveredIDWithPrefix(ExternalIDPrefix, salt+"\x00"+project)
+		if !claimed[cand] {
+			return cand
+		}
+	}
+	return ""
+}
+
 // appIDRegexp 合法 app ID：小写字母/数字/连字符，3..63 字符，不以连字符开头结尾。
 var appIDRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$`)
+
+// composeProjectNameRegexp Compose project name 官方约束：小写字母/数字开头，后接小写字母/
+// 数字/下划线/连字符，长度 1..64。用于接管前严格校验（拒控制字符/换行，防 task/audit/marker 注入）。
+var composeProjectNameRegexp = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// ValidComposeProjectName 严格校验 Compose project name（接管前）。非法时 discovered 列表
+// 仍展示，但 takeoverAvailable=false、Takeover 拒绝。
+func ValidComposeProjectName(project string) bool {
+	return composeProjectNameRegexp.MatchString(project)
+}
 
 // isValidAppID 严格校验 app ID（防路径穿越）。
 func isValidAppID(id string) bool {

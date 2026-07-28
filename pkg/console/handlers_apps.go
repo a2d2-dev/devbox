@@ -2,6 +2,8 @@ package console
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -241,6 +243,8 @@ func (s *Server) handleAppByID(w http.ResponseWriter, r *http.Request) {
 		s.removePreview(w, r, id)
 	case len(segments) == 2 && segments[1] == "operations" && r.Method == http.MethodGet:
 		s.listOperations(w, r, id)
+	case len(segments) == 2 && segments[1] == "takeover" && r.Method == http.MethodPost:
+		s.takeoverApp(w, r, id)
 	case len(segments) == 2 && isCompatAction(segments[1]) && r.Method == http.MethodPost:
 		// 兼容旧 action：内部统一走 Controller，同步等待。
 		s.operateCompat(w, r, id, compatAction(segments[1]))
@@ -454,6 +458,53 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request, id, rev
 		return
 	}
 	s.jsonStatus(w, http.StatusAccepted, task)
+}
+
+// takeoverApp POST /apps/{id}/takeover：把 discovered compose project 接管为受管。
+// body 可选（含 confirmRisky）；id 来自路径。成功返回接管后的 managed Application（200）。
+//
+// 解码硬约束（不依赖 ContentLength，兼容 chunked/HTTP2）：始终 decode；EOF=空 body（confirmRisky
+// 默认 false）；其它解码错误 400；超 MaxBytes 上限 413；DisallowUnknownFields；拒绝 trailing JSON。
+func (s *Server) takeoverApp(w http.ResponseWriter, r *http.Request, id string) {
+	if s.controller == nil {
+		http.Error(w, "app controller not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	var body apps.TakeoverRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		if errors.Is(err, io.EOF) {
+			// 空 body：confirmRisky 默认 false，允许。
+		} else {
+			var mb *http.MaxBytesError
+			code := http.StatusBadRequest
+			msg := "invalid request body"
+			if errors.As(err, &mb) {
+				code = http.StatusRequestEntityTooLarge
+				msg = "request body too large"
+			}
+			writeJSONErrStatus(w, code, map[string]any{"error": msg})
+			return
+		}
+	} else {
+		// 首对象解码成功后，必须恰好到 EOF：第二次 Decode 严格要求 io.EOF。
+		// nil（第二对象）/ 任何其它错误（trailing garbage）都视为多余输入 → 400。
+		if extra := dec.Decode(&struct{}{}); !errors.Is(extra, io.EOF) {
+			writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{"error": "request body must be a single JSON object"})
+			return
+		}
+	}
+	body.ID = id
+	app, err := s.controller.Takeover(r.Context(), body, apps.ApplyOptions{
+		IdempotencyKey: idempotencyKey(r), Actor: defaultActor, AllowRiskyConfirmation: body.ConfirmRisky,
+	})
+	if err != nil {
+		writeAppErr(w, err)
+		return
+	}
+	s.jsonStatus(w, http.StatusOK, app)
 }
 
 // awaitTask 轮询任务到终态或超时；监听 request ctx，客户端断开立即返回。

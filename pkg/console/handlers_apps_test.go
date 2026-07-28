@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/a2d2-dev/devbox/pkg/apps"
@@ -53,6 +54,8 @@ type stubController struct {
 
 	restoreTask apps.Task
 	restoreErr  error
+
+	takeoverErr error
 }
 
 func (s *stubController) Capability(context.Context) (apps.CapabilityReport, error) {
@@ -85,6 +88,12 @@ func (s *stubController) Remove(context.Context, string, apps.RemoveOptions) (ap
 }
 func (s *stubController) RestoreRevision(context.Context, string, int64, apps.ApplyOptions) (apps.Task, error) {
 	return s.restoreTask, s.restoreErr
+}
+func (s *stubController) Takeover(_ context.Context, req apps.TakeoverRequest, _ apps.ApplyOptions) (apps.Application, error) {
+	if s.takeoverErr != nil {
+		return apps.Application{}, s.takeoverErr
+	}
+	return apps.Application{ID: req.ID, Name: "stub", Runtime: apps.RuntimeCompose, Ownership: apps.OwnershipManaged}, nil
 }
 func (s *stubController) GetTask(_ context.Context, id string) (apps.Task, error) {
 	if s.taskErr != nil {
@@ -279,4 +288,59 @@ func TestHTTPRestore202(t *testing.T) {
 	s := newTestServer(stub)
 	w := do(s, http.MethodPost, "/api/v1/apps/a/revisions/2/restore", nil)
 	assert.Equal(t, http.StatusAccepted, w.Code)
+}
+
+func TestHTMPTakeoverReturns200(t *testing.T) {
+	stub := &stubController{}
+	s := newTestServer(stub)
+	w := do(s, http.MethodPost, "/api/v1/apps/ext-foo-abcd/takeover", apps.TakeoverRequest{ConfirmRisky: true})
+	assert.Equal(t, http.StatusOK, w.Code)
+	var got apps.Application
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, apps.OwnershipManaged, got.Ownership)
+}
+
+func TestHTMPTakeoverBlockedMaps422(t *testing.T) {
+	stub := &stubController{}
+	stub.takeoverErr = apps.RiskBlockedErr("blocked", nil)
+	s := newTestServer(stub)
+	w := do(s, http.MethodPost, "/api/v1/apps/ext-foo-abcd/takeover", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+func TestHTMPTakeoverDecodeHardening(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		noLen      bool // 模拟 chunked（ContentLength=-1）
+		wantStatus int
+	}{
+		{"empty body ok", "", false, http.StatusOK},
+		{"valid confirmRisky", `{"confirmRisky":true}`, false, http.StatusOK},
+		{"chunked valid", `{"confirmRisky":false}`, true, http.StatusOK},
+		{"invalid json", `{not json`, false, http.StatusBadRequest},
+		{"unknown field", `{"foo":"bar"}`, false, http.StatusBadRequest},
+		{"trailing json", `{"confirmRisky":true}{}`, false, http.StatusBadRequest},
+		{"trailing garbage", `{"confirmRisky":true}garbage`, false, http.StatusBadRequest},
+		{"oversize", `{"x":"` + strings.Repeat("a", 5000) + `"}`, false, http.StatusRequestEntityTooLarge},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stub := &stubController{}
+			s := newTestServer(stub)
+			var r *http.Request
+			if c.body == "" {
+				r = httptest.NewRequest(http.MethodPost, "/api/v1/apps/ext-x/takeover", nil)
+			} else {
+				r = httptest.NewRequest(http.MethodPost, "/api/v1/apps/ext-x/takeover", strings.NewReader(c.body))
+				r.Header.Set("Content-Type", "application/json")
+			}
+			if c.noLen {
+				r.ContentLength = -1
+			}
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, r)
+			assert.Equal(t, c.wantStatus, w.Code, "body=%q", c.body)
+		})
+	}
 }

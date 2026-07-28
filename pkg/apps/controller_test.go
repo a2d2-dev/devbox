@@ -21,6 +21,7 @@ type fakeAdapter struct {
 	kind            RuntimeKind
 	observed        map[string]Application
 	observeErr      error
+	observeCalls    int
 	applyErr        error
 	operateErr      error
 	removeErr       error
@@ -41,9 +42,21 @@ func (f *fakeAdapter) Kind() RuntimeKind { return f.kind }
 func (f *fakeAdapter) Observe(context.Context) (map[string]Application, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.observeCalls++
 	// 返回副本，避免测试间共享底层数据。
 	out := make(map[string]Application, len(f.observed))
 	for k, v := range f.observed {
+		if f.kind == RuntimeCompose {
+			// compose Observe 契约：keyed by compose project name。测试内部按 app-id 存储
+			// 受管应用（Application.ID=app-id）；这里按 project name 重键（RuntimeProject 优先，
+			// 否则 devbox-<id>）。discovered 项预填 RuntimeProject=原 project 名。
+			key := v.RuntimeProject
+			if key == "" {
+				key = ProjectName(v.ID)
+			}
+			out[key] = v
+			continue
+		}
 		out[k] = v
 	}
 	return out, f.observeErr

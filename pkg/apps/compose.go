@@ -41,6 +41,23 @@ func (c *composeRuntime) RenderConfig(ctx context.Context, content, env string) 
 	return c.cli.RenderConfig(ctx, content, env)
 }
 
+// RenderProjectConfig 在 projectDir(--project-directory)下用显式多 -f 文件（devbox 控制临时副本）
+// + 受控空 envFile 归一化合并 compose（接管用）。noInterpolate=true 生成托管单一 compose.yaml
+// （变量保留）；false 用于内存风险分析。
+func (c *composeRuntime) RenderProjectConfig(ctx context.Context, projectDir, project string, files []string, envFile string, noInterpolate bool) (string, error) {
+	return c.cli.renderProjectConfig(ctx, projectDir, project, files, envFile, noInterpolate)
+}
+
+// SocketPath 返回受管 docker daemon 的 unix socket 路径（非 unix 端点则空）。
+// 接管路径校验用它拒绝 working_dir 落在 socket 所在目录。
+func (c *composeRuntime) SocketPath() string {
+	host := c.cli.dockerHost
+	if strings.HasPrefix(host, "unix://") {
+		return strings.TrimPrefix(host, "unix://")
+	}
+	return ""
+}
+
 // Capability 探测 docker daemon + compose 可用性。不可用返回清晰原因。
 func (c *composeRuntime) Capability(ctx context.Context) RuntimeCapability {
 	if err := c.engine.ping(ctx); err != nil {
@@ -58,7 +75,66 @@ func (c *composeRuntime) Capability(ctx context.Context) RuntimeCapability {
 	}
 }
 
-// Observe 聚合所有 devbox-* compose project 的运行态。
+// composeProject 解析 app 真实 compose project name（runtime adapter 内部统一入口）。
+//
+// 优先 app.RuntimeProject（controller 由 ComposeProjectName(meta) 注入：接管的外部
+// project 保留原名、devbox 创建的为 devbox-<id>）；缺失时回退 devbox-<id>。Apply/
+// Operate/Remove/Logs/projectEmpty 全部经此 helper，不直接 ProjectName(app.ID)，确保
+// 接管后用原 project name 原地管理现有容器/网络/named volume。
+func composeProject(app Application) string {
+	if app.RuntimeProject != "" {
+		return app.RuntimeProject
+	}
+	return ProjectName(app.ID)
+}
+
+// aggregateProjectLabels 聚合同 project 全部容器的 working_dir/config_files 标签。
+// 取首个容器的值作为代表；若任一容器的 (working_dir, 规范化 config_files) 与首个不一致，
+// 标记 conflict（任取其一接管不安全 → Discovered.TakeoverAvailable=false）。
+func aggregateProjectLabels(cts []engineContainer) (workDir string, configFiles []string, conflict bool) {
+	if len(cts) == 0 {
+		return "", nil, false
+	}
+	workDir = cts[0].Labels["com.docker.compose.project.working_dir"]
+	configFiles = splitComposeFiles(cts[0].Labels["com.docker.compose.project.config_files"])
+	canonical := workDir + "\x00" + strings.Join(configFiles, "\x00")
+	for _, ct := range cts[1:] {
+		wd := ct.Labels["com.docker.compose.project.working_dir"]
+		cf := splitComposeFiles(ct.Labels["com.docker.compose.project.config_files"])
+		if wd+"\x00"+strings.Join(cf, "\x00") != canonical {
+			conflict = true
+			break
+		}
+	}
+	return workDir, configFiles, conflict
+}
+
+// splitComposeFiles 解析 com.docker.compose.project.config_files label（逗号分隔的路径列表）。
+// 仅切分字符串，不触碰文件系统；空/空白项丢弃。列表扫描与接管共用此切分语义。
+func splitComposeFiles(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// Observe 聚合 daemon 上所有 compose project 的运行态，keyed by compose project name。
+//
+// key 为 com.docker.compose.project（运行时身份），而非 app-id：controller 持有 meta，
+// 由 ComposeProjectName(meta) 把 domain app-id ↔ project name 互转后合并；discovered
+// （未登记、非 devbox-*）project 由 controller 据此 map 直接构造只读 Application。
+// 列表扫描只读容器 labels 的 project/service/image/state/ports 与 working_dir/
+// config_files 的「路径字符串」，绝不读取这些路径指向的宿主文件。
 func (c *composeRuntime) Observe(ctx context.Context) (map[string]Application, error) {
 	containers, err := c.engine.listContainers(ctx, nil)
 	if err != nil {
@@ -66,32 +142,39 @@ func (c *composeRuntime) Observe(ctx context.Context) (map[string]Application, e
 		c.logger.Warn("observe compose apps failed; returning Kubernetes results only", zap.Error(err))
 		return map[string]Application{}, nil
 	}
-	// 按 app-id（来自 compose project）分组容器。
+	// 按 compose project name 分组容器（含 stopped，因 listContainers all=true）。
 	groups := map[string][]engineContainer{}
 	for _, ct := range containers {
 		project := ct.Labels["com.docker.compose.project"]
-		appID := AppIDFromProject(project)
-		if appID == "" {
-			continue // 非受管前缀或非法 id
+		if project == "" {
+			continue // 非 compose 容器
 		}
-		groups[appID] = append(groups[appID], ct)
+		groups[project] = append(groups[project], ct)
 	}
 	out := make(map[string]Application, len(groups))
-	for appID, cts := range groups {
-		out[appID] = c.aggregateApp(appID, cts)
+	for project, cts := range groups {
+		out[project] = c.aggregateApp(project, cts)
 	}
 	return out, nil
 }
 
 // aggregateApp 把一组同 project 容器聚合成一个 Application（运行态）。
-func (c *composeRuntime) aggregateApp(appID string, cts []engineContainer) Application {
+//
+// RuntimeProject 携带真实 project name（controller 与 runtime 的内部 identity）；
+// ID 仅对 devbox-* project 还原为 app-id（便于受管匹配），其余留空——discovered 的
+// 稳定 ID 由 controller 用 ExternalID(project) 赋予。Namespace 刻意不设（K8s 专属）。
+func (c *composeRuntime) aggregateApp(project string, cts []engineContainer) Application {
 	app := Application{
-		ID:        appID,
-		Name:      appID,
-		Kind:      "app",
-		Runtime:   RuntimeCompose,
-		Namespace: ProjectName(appID),
+		ID:             AppIDFromProject(project),
+		Name:           project,
+		Kind:           "app",
+		Runtime:        RuntimeCompose,
+		RuntimeProject: project,
 	}
+	// 诊断用 compose labels 路径字符串（非文件内容）：聚合同 project 全部容器的标签，
+	// 不一致则标记 conflict（任取其一接管不安全 → Discovered.TakeoverAvailable=false）。
+	// 列表扫描不读取这些路径；仅未接管 project 经 Discovered 暴露给 UI。
+	app.ObservedWorkingDir, app.ObservedConfigFiles, app.ObservedDiscoveredConflict = aggregateProjectLabels(cts)
 	services := aggregateServices(cts)
 	var endpoints []Endpoint
 	for _, svc := range services {
@@ -275,10 +358,10 @@ func aggregatePhase(services []ServiceStatus) Phase {
 }
 
 // Apply 部署：compose config 预检 → pull（best-effort，失败记录）→ up -d。
-// 超时 15 分钟（拉大镜像）。
+// 超时 15 分钟（拉大镜像）。project 取自 app.RuntimeProject（接管保留原名）。
 func (c *composeRuntime) Apply(ctx context.Context, app Application, composeFile string, progress func(TaskPhase, string)) error {
 	dir := filepath.Dir(composeFile)
-	project := ProjectName(app.ID)
+	project := composeProject(app)
 	progress(PhaseTaskResolving, "解析 Compose 配置")
 	if err := c.cli.config(ctx, dir, project); err != nil {
 		return err
@@ -300,9 +383,9 @@ func (c *composeRuntime) pullUp(ctx context.Context, dir, project, appID string,
 	return c.cli.up(ctx, dir, project)
 }
 
-// Operate start/stop/restart/redeploy。
+// Operate start/stop/restart/redeploy。project 取自 app.RuntimeProject（接管保留原名）。
 func (c *composeRuntime) Operate(ctx context.Context, app Application, action Action, progress func(TaskPhase, string)) error {
-	dir, project := c.dirProject(app.ID)
+	dir, project := c.dirProject(app)
 	runCtx, cancel := withTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	switch action {
@@ -324,15 +407,15 @@ func (c *composeRuntime) Operate(ctx context.Context, app Application, action Ac
 }
 
 // Remove 卸载：compose down。purge 时 --volumes 删除受管 volume（external 永不删）。
-// 幂等：若项目已不存在（容器为 0），视为已删除。
+// 幂等：若项目已不存在（容器为 0），视为已删除。project 取自 app.RuntimeProject。
 func (c *composeRuntime) Remove(ctx context.Context, app Application, purge bool) error {
-	dir, project := c.dirProject(app.ID)
+	dir, project := c.dirProject(app)
 	runCtx, cancel := withTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	err := c.cli.down(runCtx, dir, project, purge)
 	if err != nil {
 		// 容错：检查容器是否已清空。
-		if c.projectEmpty(ctx, app.ID) {
+		if c.projectEmpty(ctx, app) {
 			return nil
 		}
 		return err
@@ -342,7 +425,7 @@ func (c *composeRuntime) Remove(ctx context.Context, app Application, purge bool
 
 // Logs 取指定 Compose service 容器日志；service 为空时兼容取第一个容器。
 func (c *composeRuntime) Logs(ctx context.Context, app Application, opts LogOptions) (LogPage, error) {
-	containers, err := c.engine.listContainers(ctx, []string{"com.docker.compose.project=" + ProjectName(app.ID)})
+	containers, err := c.engine.listContainers(ctx, []string{"com.docker.compose.project=" + composeProject(app)})
 	if err != nil {
 		return LogPage{}, err
 	}
@@ -378,13 +461,14 @@ func (c *composeRuntime) envFile(appID string) string {
 	return string(b)
 }
 
-func (c *composeRuntime) dirProject(appID string) (string, string) {
-	return c.paths.AppDir(appID), ProjectName(appID)
+// dirProject 返回受管 app 目录与真实 compose project name（接管保留原名）。
+func (c *composeRuntime) dirProject(app Application) (string, string) {
+	return c.paths.AppDir(app.ID), composeProject(app)
 }
 
-// projectEmpty 该 app 受管容器是否为 0（幂等删除判定）。
-func (c *composeRuntime) projectEmpty(ctx context.Context, appID string) bool {
-	containers, err := c.engine.listContainers(ctx, []string{"com.docker.compose.project=" + ProjectName(appID)})
+// projectEmpty 该 project 受管容器是否为 0（幂等删除判定）。
+func (c *composeRuntime) projectEmpty(ctx context.Context, app Application) bool {
+	containers, err := c.engine.listContainers(ctx, []string{"com.docker.compose.project=" + composeProject(app)})
 	if err != nil {
 		return false
 	}

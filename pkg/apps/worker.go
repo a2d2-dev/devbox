@@ -252,6 +252,10 @@ func (w *worker) execute(ctx context.Context, taskID string) {
 			if hasMeta {
 				app.Name = meta.Name
 				app.Source = meta.Source
+				// compose：注入真实 project name（接管保留原名），供 adapter 与健康检查统一使用。
+				if rt == RuntimeCompose {
+					app.RuntimeProject = ComposeProjectName(meta)
+				}
 			}
 			if adapter == nil {
 				execErr = CapabilityErr("runtime " + string(rt) + " unavailable")
@@ -287,6 +291,15 @@ func (w *worker) execute(ctx context.Context, taskID string) {
 	}
 }
 
+// observeKey 返回 adapter.Observe 结果中定位该 app 的 key：compose keyed by project name
+// （app.RuntimeProject，接管保留原名），k8s keyed by app-id。健康检查据此定位观测条目。
+func observeKey(app Application) string {
+	if app.Runtime == RuntimeCompose && app.RuntimeProject != "" {
+		return app.RuntimeProject
+	}
+	return app.ID
+}
+
 // dispatch 按 task 类型路由到 adapter，并处理副作用（observed revision / 清理）。
 func (w *worker) dispatch(ctx context.Context, adapter runtimeAdapter, task Task, app Application) error {
 	progress := func(phase TaskPhase, message string) { w.setPhase(ctx, task.ID, phase, message) }
@@ -300,7 +313,7 @@ func (w *worker) dispatch(ctx context.Context, adapter runtimeAdapter, task Task
 			return err
 		}
 		// up 返回成功不代表容器已就绪；有 healthcheck 时等待全部 healthy。
-		if err := w.waitForHealthy(ctx, task.ID, adapter, task.AppID); err != nil {
+		if err := w.waitForHealthy(ctx, task.ID, adapter, app); err != nil {
 			return err
 		}
 		if task.Revision > 0 {
@@ -315,7 +328,7 @@ func (w *worker) dispatch(ctx context.Context, adapter runtimeAdapter, task Task
 		}
 		// desired running 的动作需校验容器实际出现；stop 不校验（容器停止/消失均正常）。
 		if task.Action == ActionStart || task.Action == ActionRestart || task.Action == ActionRedeploy {
-			if err := w.waitForHealthy(ctx, task.ID, adapter, task.AppID); err != nil {
+			if err := w.waitForHealthy(ctx, task.ID, adapter, app); err != nil {
 				return err
 			}
 		}
@@ -372,12 +385,12 @@ func (w *worker) promoteTaskFiles(task Task) error {
 // waitForHealthy 在 apply/restore/start/restart/redeploy 后重新 Observe。没有 healthcheck
 // 的服务在全部 running 后成功；声明了 healthcheck 的服务必须全部 healthy。容器短暂
 // 未出现使用 observeGrace，有界健康等待使用 healthTimeout，均尊重 ctx。
-func (w *worker) waitForHealthy(ctx context.Context, taskID string, adapter runtimeAdapter, appID string) error {
+func (w *worker) waitForHealthy(ctx context.Context, taskID string, adapter runtimeAdapter, app Application) error {
 	w.setPhase(ctx, taskID, PhaseTaskWaitingHealth, "等待服务健康")
 	started := time.Now()
 	deadline := started.Add(w.healthTimeout)
 	for {
-		ready, retryable, err := w.checkObservedOnce(ctx, adapter, appID)
+		ready, retryable, err := w.checkObservedOnce(ctx, adapter, app)
 		if ready || err != nil && !retryable {
 			return err
 		}
@@ -399,21 +412,21 @@ func (w *worker) waitForHealthy(ctx context.Context, taskID string, adapter runt
 }
 
 // checkObservedOnce 返回 ready、是否可重试以及错误。starting/created 属于可重试；
-// unhealthy/failed/exited 属于确定失败。
-func (w *worker) checkObservedOnce(ctx context.Context, adapter runtimeAdapter, appID string) (bool, bool, error) {
+// unhealthy/failed/exited 属于确定失败。按 observeKey(app) 在 Observe 结果中定位。
+func (w *worker) checkObservedOnce(ctx context.Context, adapter runtimeAdapter, app Application) (bool, bool, error) {
 	obs, err := adapter.Observe(ctx)
 	if err != nil {
-		w.logger.Warn("verify: observe runtime state failed", zap.String("app", appID), zap.Error(err))
+		w.logger.Warn("verify: observe runtime state failed", zap.String("app", app.ID), zap.Error(err))
 		return false, true, fmt.Errorf("部署后无法观测运行时状态")
 	}
-	app, hasObs := obs[appID]
-	if !hasObs || len(app.Observed.Services) == 0 {
+	observed, hasObs := obs[observeKey(app)]
+	if !hasObs || len(observed.Observed.Services) == 0 {
 		return false, true, fmt.Errorf("部署后未观测到任何容器，请检查镜像/配置")
 	}
-	if app.Observed.Phase == PhaseFailed || app.Observed.Phase == PhaseDegraded {
+	if observed.Observed.Phase == PhaseFailed || observed.Observed.Phase == PhaseDegraded {
 		return false, false, fmt.Errorf("部署后容器进入失败或降级状态")
 	}
-	for _, service := range app.Observed.Services {
+	for _, service := range observed.Observed.Services {
 		if service.Health == "unhealthy" || service.State == "exited" || service.State == "dead" {
 			return false, false, fmt.Errorf("服务 %s 未通过健康检查", service.Name)
 		}

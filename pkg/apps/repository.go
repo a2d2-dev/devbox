@@ -29,6 +29,11 @@ type AppRecord struct {
 	Parameters       map[string]string // 非敏感参数快照
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	// OriginalProject 接管的外部 compose project 原名（系统 Compose project 自动发现与接管）。
+	// 非空时 runtime 用它（而非 devbox-<id>）作为 -p project name，原地管理现有容器/网络/
+	// named volume，避免改名导致数据变化；为空表示 devbox 自己创建（project=devbox-<id>）。
+	// 重启后从 SQLite 恢复，ComposeProjectName(meta) 据此解析真实 project。
+	OriginalProject string
 }
 
 // AuditRecord 审计日志（detail 已脱敏，不含 secret）。
@@ -174,6 +179,7 @@ func (r *sqliteRepo) migrate(ctx context.Context) error {
 			source_store_id TEXT NOT NULL DEFAULT '',
 			source_catalog_id TEXT NOT NULL DEFAULT '',
 			source_version TEXT NOT NULL DEFAULT '',
+			original_project TEXT NOT NULL DEFAULT '',
 			revision      INTEGER NOT NULL DEFAULT 0,
 			observed_revision INTEGER NOT NULL DEFAULT 0,
 			parameters    TEXT NOT NULL DEFAULT '{}',
@@ -251,6 +257,7 @@ func (r *sqliteRepo) migrate(ctx context.Context) error {
 		table, name string
 	}{
 		{"apps", "source_catalog_id"},
+		{"apps", "original_project"},
 		{"revisions", "source_store_id"},
 		{"revisions", "source_catalog_id"},
 	} {
@@ -318,16 +325,17 @@ func (r *sqliteRepo) UpsertAppMeta(ctx context.Context, a AppRecord) error {
 func upsertAppMetaExec(e dbExecer, ctx context.Context, a AppRecord) error {
 	params, _ := json.Marshal(a.Parameters)
 	_, err := e.ExecContext(ctx, `INSERT INTO apps
-		(id,name,runtime,source_kind,source_store_id,source_catalog_id,source_version,revision,observed_revision,parameters,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,name,runtime,source_kind,source_store_id,source_catalog_id,source_version,original_project,revision,observed_revision,parameters,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 		  name=excluded.name, runtime=excluded.runtime,
 		  source_kind=excluded.source_kind, source_store_id=excluded.source_store_id,
-		  source_catalog_id=excluded.source_catalog_id, source_version=excluded.source_version, revision=excluded.revision,
+		  source_catalog_id=excluded.source_catalog_id, source_version=excluded.source_version,
+		  original_project=excluded.original_project, revision=excluded.revision,
 		  observed_revision=excluded.observed_revision,
 		  parameters=excluded.parameters, updated_at=excluded.updated_at`,
 		a.ID, a.Name, string(a.Runtime),
-		string(a.Source.Kind), a.Source.StoreID, a.Source.CatalogID, a.Source.Version,
+		string(a.Source.Kind), a.Source.StoreID, a.Source.CatalogID, a.Source.Version, a.OriginalProject,
 		a.Revision, a.ObservedRevision, string(params), a.CreatedAt.Format(time.RFC3339Nano), a.UpdatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("upsert app meta: %w", err)
@@ -336,7 +344,7 @@ func upsertAppMetaExec(e dbExecer, ctx context.Context, a AppRecord) error {
 }
 
 func (r *sqliteRepo) GetAppMeta(ctx context.Context, id string) (AppRecord, bool, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id,name,runtime,source_kind,source_store_id,source_catalog_id,source_version,revision,observed_revision,parameters,created_at,updated_at FROM apps WHERE id=?`, id)
+	row := r.db.QueryRowContext(ctx, `SELECT id,name,runtime,source_kind,source_store_id,source_catalog_id,source_version,original_project,revision,observed_revision,parameters,created_at,updated_at FROM apps WHERE id=?`, id)
 	a, err := scanApp(row.Scan)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -348,7 +356,7 @@ func (r *sqliteRepo) GetAppMeta(ctx context.Context, id string) (AppRecord, bool
 }
 
 func (r *sqliteRepo) ListAppMetas(ctx context.Context) ([]AppRecord, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,runtime,source_kind,source_store_id,source_catalog_id,source_version,revision,observed_revision,parameters,created_at,updated_at FROM apps ORDER BY name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,runtime,source_kind,source_store_id,source_catalog_id,source_version,original_project,revision,observed_revision,parameters,created_at,updated_at FROM apps ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -440,12 +448,13 @@ type scanner func(dest ...any) error
 func scanApp(scan scanner) (AppRecord, error) {
 	var a AppRecord
 	var runtime, sourceKind, params, created, updated string
-	var storeID, catalogID, sourceVer sql.NullString
-	if err := scan(&a.ID, &a.Name, &runtime, &sourceKind, &storeID, &catalogID, &sourceVer, &a.Revision, &a.ObservedRevision, &params, &created, &updated); err != nil {
+	var storeID, catalogID, sourceVer, originalProject sql.NullString
+	if err := scan(&a.ID, &a.Name, &runtime, &sourceKind, &storeID, &catalogID, &sourceVer, &originalProject, &a.Revision, &a.ObservedRevision, &params, &created, &updated); err != nil {
 		return AppRecord{}, err
 	}
 	a.Runtime = RuntimeKind(runtime)
 	a.Source = ApplicationSource{Kind: SourceKind(sourceKind), StoreID: storeID.String, CatalogID: catalogID.String, Version: sourceVer.String}
+	a.OriginalProject = originalProject.String
 	_ = json.Unmarshal([]byte(params), &a.Parameters)
 	if a.Parameters == nil {
 		a.Parameters = map[string]string{}

@@ -20,12 +20,12 @@ import UninstallDialog from '../components/UninstallDialog';
 import { SYSTEM_APPS } from '../data/systemApps';
 import {
   useApps, useAppCapability, useTask, appActionAsync,
-  validateCompose, applyComposeApp, useStoreApps, useCatalogApps,
+  validateCompose, applyComposeApp, takeoverApp, useStoreApps, useCatalogApps,
 } from '../hooks/useApi';
 import {
   PHASE_LABEL, PHASE_TONE, observedPhase, runtimeLabel, appOrigin,
   computeUpgrade, groupRisks, canDeployGivenRisks, slugify, parseEnv,
-  formatRelativeTime,
+  formatRelativeTime, serviceInventory, HEALTH_LABEL,
 } from '../lib/compose';
 
 export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }) {
@@ -37,6 +37,7 @@ export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }
   const [showCreate, setShowCreate] = useState(false);
   const [activeTask, setActiveTask] = useState(null); // {id, label, appId}
   const [uninstall, setUninstall] = useState(null);   // app | null
+  const [takeover, setTakeover] = useState(null);     // discovered app | null
   const toast = useToast();
 
   const { task } = useTask(activeTask?.id);
@@ -118,16 +119,25 @@ export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }
         )}
 
         {filter !== 'system' && list.map((app) => (
-          <AppCard
-            key={app.id}
-            app={app}
-            storeApps={storeApps}
-            catalogApps={catalogApps}
-            disabled={!!activeTask}
-            onAction={(action, label) => guard(doAction)(app.id, action, label)}
-            onUninstall={() => setUninstall(app)}
-            onOpenApp={onOpenApp}
-          />
+          app.ownership === 'discovered' ? (
+            <DiscoveredCard
+              key={app.id}
+              app={app}
+              disabled={!!activeTask}
+              onTakeover={() => (authed ? setTakeover(app) : onRequireAuth?.())}
+            />
+          ) : (
+            <AppCard
+              key={app.id}
+              app={app}
+              storeApps={storeApps}
+              catalogApps={catalogApps}
+              disabled={!!activeTask}
+              onAction={(action, label) => guard(doAction)(app.id, action, label)}
+              onUninstall={() => setUninstall(app)}
+              onOpenApp={onOpenApp}
+            />
+          )
         ))}
       </div>
 
@@ -152,6 +162,17 @@ export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }
             setUninstall(null);
             if (taskId) setActiveTask({ id: taskId, label: '卸载', appId: uninstall.id });
             else { toast.ok('已卸载'); refresh(); }
+          }}
+        />
+      )}
+
+      {takeover && (
+        <TakeoverDialog
+          app={takeover}
+          onClose={() => setTakeover(null)}
+          onDone={(ok) => {
+            setTakeover(null);
+            if (ok) { toast.ok('已接管，现在可以编辑与部署'); refresh(); }
           }}
         />
       )}
@@ -635,6 +656,265 @@ function RiskList({ tone, label, items }) {
   );
 }
 
+// ─── DiscoveredCard：外部 compose project，只读，引导接管 ───────
+// 一眼可辨「已发现 · 只读」；隐藏全部写操作（不是灰掉）；展示来源路径诊断（等宽 +
+// ellipsis + title，不撑破卡片）；不可接管时显示原因；说明「完全 down 不可发现」边界。
+function DiscoveredCard({ app, disabled, onTakeover }) {
+  const phase = observedPhase(app);
+  const di = app.discovered || {};
+  const services = app.observed?.services || [];
+  const endpoints = app.observed?.endpoints || [];
+  const canTakeover = !!di.takeoverAvailable;
+  const cfgCount = Array.isArray(di.configFiles) ? di.configFiles.length : 0;
+
+  return (
+    <div style={{ ...card, border: `1px dashed ${T.border}`, background: '#fcfcfd' }}>
+      {/* Row 1: 只读标识 + project + phase */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={discoveredBadge} title="由 Docker Compose 创建、尚未由 devbox 接管的外部 project">
+          <Icon name="eye" size={11} stroke={2}/>已发现 · 只读
+        </span>
+        <strong style={{ color: T.ink, fontSize: 14 }}>{app.name}</strong>
+        <span style={runtimeBadge(true)} title={runtimeLabel('compose')}>Compose</span>
+        <span style={{ fontSize: 12, color: T.ink3, fontWeight: 600 }}>{PHASE_LABEL[phase] || phase}</span>
+        <span style={{ flex: 1 }} />
+        <span className="tnum" style={{ fontSize: 11.5, color: T.ink3 }}>
+          {services.length > 0
+            ? `${services.length} 服务 · ${app.ready || 0}/${app.replicas || services.length} 就绪`
+            : '0 服务'}
+        </span>
+      </div>
+
+      {/* Row 2: 来源路径诊断（等宽 + ellipsis；只展示路径字符串，不读取内容）+ endpoints */}
+      <div style={{ fontSize: 12, color: T.ink3, marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {di.workingDir && (
+          <div style={pathRow} title={`工作目录：${di.workingDir}`}>
+            <span style={{ color: T.ink4 }}>工作目录</span>
+            <span className="mono" style={pathText}>{di.workingDir}</span>
+          </div>
+        )}
+        {cfgCount > 0 && (
+          <div style={pathRow} title={`配置文件（${cfgCount}）：${(di.configFiles || []).join(', ')}`}>
+            <span style={{ color: T.ink4 }}>配置文件</span>
+            <span className="mono" style={pathText}>{cfgCount} 个</span>
+          </div>
+        )}
+        {endpoints.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {endpoints.map((e, i) => (
+              <a key={i} href={e.url} target="_blank" rel="noreferrer" title={e.name || e.url}
+                 style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: T.blue, textDecoration: 'none',
+                   fontSize: 11.5, padding: '1px 7px', borderRadius: 4, background: T.blueSoft, border: '1px solid #bfdbfe' }}>
+                <Icon name="external" size={10} stroke={2}/>{e.name || openHost(e.url)}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 只读服务清单（名称/state/health/端口；tnum 动态数字；长列表截断；无写操作） */}
+      <ServiceInventory app={app} />
+
+      {/* 不可接管原因（不含文件内容） */}
+      {!canTakeover && di.reason && (
+        <div style={{ fontSize: 11.5, color: '#92400e', marginTop: 8, padding: '6px 9px',
+          background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 7 }}>
+          暂不可接管：{di.reason}
+        </div>
+      )}
+
+      {/* 完全 down 边界提示 */}
+      <div style={{ fontSize: 11, color: T.ink4, marginTop: 8 }}>
+        列表仅显示仍有容器记录的 project；若已 <span className="mono">compose down</span> 且容器记录被删除，则无法自动发现，可改用「新建 Compose」粘贴/上传导入。
+      </div>
+
+      {/* Row 4: 接管 CTA（min 40px hit area，edge-press）；无任何写操作，不开详情 drawer
+          （避免 AppMgmtDrawer 暴露编辑/生命周期/卸载入口；只读诊断已内联在卡片上） */}
+      <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+        <button onClick={onTakeover} disabled={disabled || !canTakeover}
+          className="edge-press edge-btn-primary" aria-label={`接管并编辑 ${app.name}`}
+          style={{ ...primaryBtn, minHeight: 40, opacity: (disabled || !canTakeover) ? 0.6 : 1 }}>
+          <Icon name="download" size={13} stroke={2}/>接管并编辑
+        </button>
+        {!canTakeover && (
+          <span style={{ fontSize: 11.5, color: T.ink4 }}>解决上述问题后即可接管</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ServiceInventory：discovered 卡片的只读服务清单（名称/state/health/端口）。
+// 动态数字用 tnum；长列表截断前若干项 + 「还有 N 个服务」。无写操作。
+function ServiceInventory({ app }) {
+  const { rows, total, truncated } = serviceInventory(app);
+  if (total === 0) {
+    return <div style={{ fontSize: 11.5, color: T.ink4, marginTop: 6 }}>0 服务</div>;
+  }
+  return (
+    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {rows.map((s, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, minWidth: 0 }}>
+          <span style={{ color: T.ink2, fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={s.name}>{s.name}</span>
+          {s.state && <span className="tnum" style={{ color: T.ink4 }}>{s.state}</span>}
+          {s.health && s.health !== 'none' && (
+            <span style={{ fontSize: 10.5, padding: '0 6px', borderRadius: 999,
+              background: s.health === 'healthy' ? '#ecfdf5' : s.health === 'unhealthy' ? '#fef2f2' : '#fffbeb',
+              color: s.health === 'healthy' ? '#047857' : s.health === 'unhealthy' ? '#b91c1c' : '#92400e',
+              border: `1px solid ${s.health === 'healthy' ? '#a7f3d0' : s.health === 'unhealthy' ? '#fecaca' : '#fde68a'}` }}>
+              {HEALTH_LABEL[s.health] || s.health}
+            </span>
+          )}
+          {s.ports.length > 0 && (
+            <span className="mono tnum" style={{ color: T.ink3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.ports.join(', ')}>
+              {s.ports.join(', ')}
+            </span>
+          )}
+        </div>
+      ))}
+      {truncated && <div className="tnum" style={{ fontSize: 11, color: T.ink4 }}>还有 {total - rows.length} 个服务…</div>}
+    </div>
+  );
+}
+
+// TakeoverDialog：接管确认弹层（Esc 关闭 / 初始聚焦 / aria-label；不引入新 motion）。
+function TakeoverDialog({ app, onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [findings, setFindings] = useState(null); // risk_blocked 时展示
+  const [confirmed, setConfirmed] = useState(false);
+  const confirmRef = useRef(null);
+  const di = app.discovered || {};
+  const grouped = findings ? groupRisks(findings) : { blocked: [], confirmation: [], warning: [] };
+  const needConfirm = grouped.confirmation.length > 0 && !confirmed;
+  const blocked = grouped.blocked.length > 0;
+  const canSubmit = !busy && !blocked && !needConfirm;
+
+  // 稳定关闭：busy 时（请求在途）禁止关闭，避免请求状态漂移。busy 同步到 ref（在 effect 中写，
+  // 不在 render 中写），Esc 与关闭按钮经 closeGuarded 读 ref 守卫。
+  const busyRef = useRef(false);
+  useEffect(() => { busyRef.current = busy; }, [busy]);
+  const closeGuarded = () => { if (!busyRef.current) onClose(); };
+
+  // 初始聚焦 + 焦点回归（mount/unmount 各一次）。
+  useEffect(() => {
+    const prev = document.activeElement;
+    confirmRef.current?.focus();
+    return () => {
+      if (prev && typeof prev.focus === 'function') {
+        try { prev.focus(); } catch { /* 焦点回归 best-effort */ }
+      }
+    };
+  }, []);
+
+  // Esc 关闭（经 busy 守卫）+ Tab/Shift+Tab focus trap（循环限定在 dialogRef 内，busy 不影响键盘）。
+  // 依赖 onClose；onClose 变化只重建 listener，不重新聚焦。
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        if (!busyRef.current) onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const root = dialogRef.current;
+      if (!root) return;
+      const focusable = root.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  async function submit() {
+    if (!canSubmit) return;
+    setBusy(true); setError(null); setFindings(null);
+    try {
+      await takeoverApp(app.id, confirmed, `takeover-${app.id}`);
+      onDone(true);
+    } catch (e) {
+      // 风险阻断（422）携带 findings；其它错误展示 message。
+      setFindings(e.findings || null);
+      setError(e.message || '接管失败');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={overlay} onClick={closeGuarded}>
+      <div ref={dialogRef} style={dialog} role="dialog" aria-modal="true"
+        aria-label={`接管 Compose project ${app.name}`} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Icon name="download" size={16} stroke={2} style={{ color: T.blue }}/>
+          <strong style={{ fontSize: 16, color: T.ink }}>接管并编辑「{app.name}」</strong>
+          <span style={{ flex: 1 }} />
+          <button ref={confirmRef} onClick={closeGuarded} disabled={busy} aria-disabled={busy}
+            aria-label="关闭接管对话框" style={ghostBtn}>
+            <Icon name="x" size={15} stroke={2}/>
+          </button>
+        </div>
+
+        <div style={{ fontSize: 12.5, color: T.ink2, marginTop: 12, lineHeight: 1.6 }}>
+          接管会把该外部 Compose project 转为 devbox 受管：
+          <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+            <li>保留原 project name <span className="mono">{di.project || app.name}</span> 原地管理，容器/网络/named volume 不改名（数据不变）。</li>
+            <li>源目录只读：把归一化后的 compose 写入 devbox 托管副本，不修改你的原始文件。</li>
+            <li>接管后进入编辑 / 版本 / 日志 / 生命周期 / 卸载边界。</li>
+          </ul>
+        </div>
+
+        {di.workingDir && (
+          <div style={pathRow} title={di.workingDir}>
+            <span style={{ color: T.ink4, fontSize: 12 }}>来源</span>
+            <span className="mono" style={pathText}>{di.workingDir}</span>
+          </div>
+        )}
+
+        {error && <div style={errBox}>{error}</div>}
+        {findings && (
+          <>
+            <RiskList tone="#dc2626" label="阻断（不可接管）" items={grouped.blocked}/>
+            <RiskList tone="#d97706" label="需确认" items={grouped.confirmation}/>
+            <RiskList tone="#d97706" label="警告" items={grouped.warning}/>
+          </>
+        )}
+        {needConfirm && (
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10, cursor: 'pointer',
+            padding: 10, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
+            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} style={{ marginTop: 2 }}/>
+            <span style={{ fontSize: 12, color: '#92400e' }}>
+              我已知晓上述「需确认」级风险，确认接管。阻断级风险不可 override。
+            </span>
+          </label>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
+          <button onClick={submit} disabled={!canSubmit}
+            className="edge-press edge-btn-primary" aria-label="确认接管"
+            style={{ ...primaryBtn, minHeight: 40, opacity: canSubmit ? 1 : 0.6 }}>
+            <Icon name="check" size={13} stroke={2}/>{busy ? '接管中…' : '确认接管'}
+          </button>
+          <button onClick={closeGuarded} className="edge-press edge-btn-secondary"
+            style={{ ...btnSecondary, minHeight: 40, padding: '0 14px' }}>
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── styles ───────────────────────────────────────────────────────
 const card = {
   padding: '13px 16px', borderRadius: 12, background: '#fff',
@@ -684,3 +964,17 @@ function runtimeBadge(isCompose) {
     border: `1px solid ${isCompose ? '#a5f3fc' : '#c7d2fe'}`,
   };
 }
+const discoveredBadge = {
+  display: 'inline-flex', alignItems: 'center', gap: 4,
+  fontSize: 11, padding: '2px 9px', borderRadius: 999, fontWeight: 700,
+  background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa',
+};
+// 路径诊断行：等宽 + ellipsis + title，不撑破卡片。
+const pathRow = {
+  display: 'flex', alignItems: 'center', gap: 8, minWidth: 0,
+  fontSize: 11.5, marginTop: 4,
+};
+const pathText = {
+  color: T.ink3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};

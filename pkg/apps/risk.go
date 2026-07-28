@@ -126,15 +126,25 @@ type composeService struct {
 }
 
 // parseCompose 解析 Compose YAML 文本。返回精简根 + 解析错误。
-func parseCompose(raw string) (*composeRoot, error) {
+// parseComposeLenient 解析 Compose，但不要求 services（供 AnalyzeComposeFileAccess 分析
+// 只含 networks/volumes 的 override 文件：仍能检测顶层 include/secrets/configs）。
+func parseComposeLenient(raw string) (*composeRoot, error) {
 	var root composeRoot
 	if err := yaml.Unmarshal([]byte(raw), &root); err != nil {
 		return nil, fmt.Errorf("invalid compose yaml: %w", err)
 	}
+	return &root, nil
+}
+
+func parseCompose(raw string) (*composeRoot, error) {
+	root, err := parseComposeLenient(raw)
+	if err != nil {
+		return nil, err
+	}
 	if root.Services == nil {
 		return nil, fmt.Errorf("compose has no services")
 	}
-	return &root, nil
+	return root, nil
 }
 
 // AnalyzeCompose 分析 Compose 文本的风险。yaml 非法时返回 error。
@@ -251,7 +261,26 @@ func analyzeService(name string, svc composeService) []RiskFinding {
 
 // AnalyzeLiteralSecrets 必须对未插值的事实源调用；渲染后 ${KEY} 已变成值，无法区分。
 func AnalyzeLiteralSecrets(raw string) ([]RiskFinding, error) {
-	root, err := parseCompose(raw)
+	return analyzeLiteralSecrets(raw, false)
+}
+
+// AnalyzeLiteralSecretsLenient 同 AnalyzeLiteralSecrets，但用 lenient 解析（容忍无 services 的
+// override 文件：无 services 时返回空 findings）。Takeover 对多文件逐个 raw body 预检用此版本；
+// Apply 对完整文档仍用严格的 AnalyzeLiteralSecrets。
+func AnalyzeLiteralSecretsLenient(raw string) ([]RiskFinding, error) {
+	return analyzeLiteralSecrets(raw, true)
+}
+
+func analyzeLiteralSecrets(raw string, lenient bool) ([]RiskFinding, error) {
+	var (
+		root *composeRoot
+		err  error
+	)
+	if lenient {
+		root, err = parseComposeLenient(raw)
+	} else {
+		root, err = parseCompose(raw)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +299,7 @@ func AnalyzeLiteralSecrets(raw string) ([]RiskFinding, error) {
 // AnalyzeComposeFileAccess 在调用 Compose CLI 前检查会读取宿主文件的字段。MVP 只
 // 托管 compose.yaml/.env，不接受额外文件；否则第三方包可借后端权限读取宿主内容。
 func AnalyzeComposeFileAccess(raw string) ([]RiskFinding, error) {
-	root, err := parseCompose(raw)
+	root, err := parseComposeLenient(raw) // 容忍无 services 的 override 文件
 	if err != nil {
 		return nil, err
 	}

@@ -35,6 +35,9 @@ type Controller interface {
 	Operate(ctx context.Context, id string, action Action, opts OperationOptions) (Task, error)
 	Remove(ctx context.Context, id string, opts RemoveOptions) (Task, error)
 	RestoreRevision(ctx context.Context, id string, rev int64, opts ApplyOptions) (Task, error)
+	// Takeover 接管一个 discovered compose project（显式用户动作），转为受管：保留原 project
+	// name 原地管理，源目录只读不改。返回接管后的 managed Application。
+	Takeover(ctx context.Context, req TakeoverRequest, opts ApplyOptions) (Application, error)
 
 	GetTask(ctx context.Context, taskID string) (Task, error)
 	ListOperations(ctx context.Context, id string) ([]Task, error)
@@ -74,6 +77,15 @@ type composePrechecker interface {
 	RenderConfig(ctx context.Context, content, env string) (string, error)
 }
 
+// takeoverPrechecker 接管归一化与 socket 定位（生产为 composeRuntime，测试可注入 fake）。
+// files 必须是 devbox 控制临时目录里的副本（非原始 config path，消除 TOCTOU）；envFile 为
+// 受控空 .env（阻止自动读取 working_dir/.env）。noInterpolate=true 输出用于托管副本（变量
+// 保留），false 输出仅用于内存风险分析（可能含 secret，不持久化）。
+type takeoverPrechecker interface {
+	RenderProjectConfig(ctx context.Context, projectDir, project string, files []string, envFile string, noInterpolate bool) (string, error)
+	SocketPath() string
+}
+
 // service Controller 的默认实现。
 type service struct {
 	repo       Repository
@@ -81,6 +93,7 @@ type service struct {
 	adapters   map[RuntimeKind]runtimeAdapter
 	runner     taskRunner
 	prechecker composePrechecker
+	takeover   takeoverPrechecker // 接管归一化；nil 时 Takeover 从 compose adapter 类型断言
 	logger     *zap.Logger
 	now        func() time.Time
 	mutationMu sync.Mutex
@@ -98,6 +111,11 @@ func WithClock(now func() time.Time) ServiceOption {
 // WithPrechecker 注入 Compose 预检器（生产用真实 compose adapter，测试用 fake）。
 func WithPrechecker(p composePrechecker) ServiceOption {
 	return func(s *service) { s.prechecker = p }
+}
+
+// WithTakeoverPrechecker 注入接管归一化器（生产用真实 compose adapter，测试用 fake）。
+func WithTakeoverPrechecker(p takeoverPrechecker) ServiceOption {
+	return func(s *service) { s.takeover = p }
 }
 
 // NewController 构造 Controller。adapters 至少含一个运行时；runner 由 worker 提供。
@@ -178,55 +196,154 @@ func (s *service) List(ctx context.Context, filter Filter) ([]Application, error
 }
 
 // observeAll 合并所有 adapter 的运行态与 SQLite 元数据，返回完整 Application 列表。
+//
+// Compose：SQLite 元数据为权威（受管 app），运行态从 compose adapter 取（keyed by
+// compose project name，经 ComposeProjectName(meta) 与 meta 互转匹配）。obs 中所有
+// 「未被受管 project 集合覆盖」的 compose project 作为 discovered（只读）追加——
+// 含未登记的 devbox-* project（prefix 非所有权证据，验收要求所有 compose project）。
+// discovered 的稳定 ID 若与受管 meta 冲突，由 resolveDiscoveredID 消解到第二候选，
+// 双方都展示且 ID 稳定。
+// 单次 snapshot：一次 ListAppMetas + 一次 compose Observe + 一次 k8s Observe，基于同一快照
+// 构建 claimed 与输出。避免多次 Observe 返回不同结果导致 discovered ID 分配与最终 K8s 列表
+// 不一致/重复 ID，且不重复 K8s API 成本。
 func (s *service) observeAll(ctx context.Context) ([]Application, error) {
 	var out []Application
 
-	// Compose apps：SQLite 元数据为权威，运行态从 compose adapter 取。
+	metas, err := s.repo.ListAppMetas(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list app metas: %w", err)
+	}
+	var composeObs map[string]Application
 	if ca, ok := s.adapters[RuntimeCompose]; ok {
-		metas, err := s.repo.ListAppMetas(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("list app metas: %w", err)
-		}
-		obs, _ := ca.Observe(ctx) // 不可用时空 map，不报错
-		registered := map[string]bool{}
-		for _, m := range metas {
-			if m.Runtime != RuntimeCompose {
-				continue
-			}
-			registered[m.ID] = true
-			app := s.buildComposeApp(m, obs[m.ID], true)
-			s.decorateTaskState(ctx, &app)
-			out = append(out, app)
-		}
-		// 容错：受管容器存在但元数据缺失（应不会发生），跳过——以登记为准。
+		composeObs, _ = ca.Observe(ctx) // keyed by compose project name；不可用时空 map
+	}
+	var k8sObs map[string]Application
+	if ka, ok := s.adapters[RuntimeKubernetes]; ok {
+		k8sObs, _ = ka.Observe(ctx)
 	}
 
-	// K8s apps：无 SQLite 记录，纯观测。
-	if ka, ok := s.adapters[RuntimeKubernetes]; ok {
-		obs, _ := ka.Observe(ctx)
-		for _, app := range obs {
+	// 基于「同一 snapshot」构建 claimed（受管 meta ID + 本快照 K8s observed ID）+ managedProject。
+	claimed, managedProject := managedSets(metas)
+	for id := range k8sObs {
+		if id != "" {
+			claimed[id] = true
+		}
+	}
+
+	// 受管 compose apps。
+	for _, m := range metas {
+		if m.Runtime != RuntimeCompose {
+			continue
+		}
+		project := ComposeProjectName(m)
+		var obsApp Application
+		var hasObs bool
+		if composeObs != nil {
+			obsApp, hasObs = composeObs[project]
+		}
+		app := s.buildComposeApp(m, obsApp, hasObs)
+		s.decorateTaskState(ctx, &app)
+		out = append(out, app)
+	}
+	// discovered：所有未被受管 project 集合覆盖的 compose project（含未登记 devbox-*）。
+	// ID 经 resolveDiscoveredIDs 按 project 名排序后确定性分配（claimed 含受管 meta + 本快照 K8s ID）。
+	if composeObs != nil {
+		idByProject := resolveDiscoveredIDs(claimed, managedProject, composeObs)
+		for project, obsApp := range composeObs {
+			if managedProject[project] {
+				continue
+			}
+			id, ok := idByProject[project]
+			if !ok {
+				continue // 无法分配稳定 ID（候选全被占），跳过而非给出冲突 ID
+			}
+			app := s.buildDiscoveredApp(project, obsApp, id)
 			s.decorateTaskState(ctx, &app)
 			out = append(out, app)
 		}
+	}
+	// K8s apps（同一 k8sObs 快照）。
+	for _, app := range k8sObs {
+		s.decorateTaskState(ctx, &app)
+		out = append(out, app)
 	}
 	return out, nil
 }
 
-// buildComposeApp 把 compose 元数据与运行态合并为对外 Application。
-func (s *service) buildComposeApp(meta AppRecord, obs Application, registered bool) Application {
+// managedSets 从 metas 派生：claimed=所有受管 app ID（任意 runtime，discovered 冲突消解用）；
+// managedProject=受管 compose project name 集合（ComposeProjectName(meta)，发现去重用）。
+func managedSets(metas []AppRecord) (claimed, managedProject map[string]bool) {
+	claimed = map[string]bool{}
+	managedProject = map[string]bool{}
+	for _, m := range metas {
+		claimed[m.ID] = true
+		if m.Runtime == RuntimeCompose {
+			managedProject[ComposeProjectName(m)] = true
+		}
+	}
+	return claimed, managedProject
+}
+
+// discoveryClaimed 构建发现用的 claimed/managedProject：claimed = 所有受管 app ID（任意 runtime
+// 的 meta）∪ K8s observed app ID（K8s 无 meta，但 ID 不得与 discovered 碰撞）；managedProject =
+// 受管 compose project name 集合。List/Get/Takeover 共用，保证 discovered ID 与 K8s app 不碰撞。
+func (s *service) discoveryClaimed(ctx context.Context) (claimed, managedProject map[string]bool, err error) {
+	metas, err := s.repo.ListAppMetas(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	claimed, managedProject = managedSets(metas)
+	if ka := s.adapters[RuntimeKubernetes]; ka != nil {
+		if kobs, kerr := ka.Observe(ctx); kerr == nil {
+			for id := range kobs {
+				if id != "" {
+					claimed[id] = true
+				}
+			}
+		}
+	}
+	return claimed, managedProject, nil
+}
+
+// resolveDiscoveredIDs 为 obs 中所有未受管 compose project 分配稳定、互不冲突的 discovered ID
+// （claimed 含受管 meta + K8s observed ID）。按 project 名排序后依次分配（确定性），已分配 ID
+// 并入 claimed。List/Get/Takeover 共用，保证同一 project 三处同 ID 且不与 K8s app 碰撞。
+func resolveDiscoveredIDs(claimed, managedProject map[string]bool, obs map[string]Application) map[string]string {
+	projects := make([]string, 0, len(obs))
+	for project := range obs {
+		if !managedProject[project] {
+			projects = append(projects, project)
+		}
+	}
+	sort.Strings(projects) // 确定性分配顺序（不依赖 map 迭代序）
+	idByProject := make(map[string]string, len(projects))
+	for _, project := range projects {
+		id := resolveDiscoveredID(project, claimed)
+		if id == "" {
+			continue
+		}
+		idByProject[project] = id
+		claimed[id] = true
+	}
+	return idByProject
+}
+
+// buildComposeApp 把 compose 元数据与运行态合并为对外 Application（受管：可读写）。
+func (s *service) buildComposeApp(meta AppRecord, obs Application, hasObs bool) Application {
 	app := Application{
-		ID:        meta.ID,
-		Name:      meta.Name,
-		Kind:      "app",
-		Runtime:   RuntimeCompose,
-		Source:    meta.Source,
-		Revision:  meta.Revision,
-		CreatedAt: meta.CreatedAt,
-		Namespace: ProjectName(meta.ID),
+		ID:             meta.ID,
+		Name:           meta.Name,
+		Kind:           "app",
+		Runtime:        RuntimeCompose,
+		Source:         meta.Source,
+		Revision:       meta.Revision,
+		CreatedAt:      meta.CreatedAt,
+		Ownership:      OwnershipManaged,
+		RuntimeProject: ComposeProjectName(meta), // runtime adapter 与 worker 内部 identity（接管保留原名）
 	}
 	app.Observed.Revision = meta.ObservedRevision
 
-	if obs.ID != "" {
+	if hasObs {
 		// 有运行态。
 		app.Observed.Phase = obs.Observed.Phase
 		app.Observed.Services = obs.Observed.Services
@@ -245,6 +362,95 @@ func (s *service) buildComposeApp(meta AppRecord, obs Application, registered bo
 	}
 	s.fillCompatFields(&app)
 	return app
+}
+
+// buildDiscoveredApp 把一个未登记的 compose project 观测态构造为只读 Application。
+//
+// OwnershipDiscovered + Discovered 只读诊断（project/来源路径字符串，非文件内容）。
+// 写操作一律拒绝，UI 引导用户「接管并编辑」。完全 down 且容器记录已删除的 project
+// 无法从 daemon 发现（obs 不含它），此边界由 UI/文档说明。ID 由 resolveDiscoveredID
+// 在 claimed 约束下消解（与受管冲突时回退第二候选），与 list/get/takeover 同算法。
+func (s *service) buildDiscoveredApp(project string, obs Application, id string) Application {
+	di := &DiscoveredInfo{
+		Project:     project,
+		WorkingDir:  obs.ObservedWorkingDir,
+		ConfigFiles: obs.ObservedConfigFiles,
+		ReadOnly:    true,
+	}
+	// 可接管性：project name 合法 + 容器标签一致 + 有 working_dir/config_files。
+	di.TakeoverAvailable, di.Reason = takeoverAvailability(project, obs, di)
+	app := Application{
+		ID:             id,
+		Name:           project,
+		Kind:           "app",
+		Runtime:        RuntimeCompose,
+		Ownership:      OwnershipDiscovered,
+		RuntimeProject: project,
+		Discovered:     di,
+	}
+	app.Observed.Phase = obs.Observed.Phase
+	app.Observed.Services = obs.Observed.Services
+	app.Observed.Endpoints = obs.Observed.Endpoints
+	s.fillCompatFields(&app)
+	return app
+}
+
+// takeoverAvailability 评估 discovered project 是否可接管，返回原因（不含文件内容）。
+func takeoverAvailability(project string, obs Application, di *DiscoveredInfo) (bool, string) {
+	if !ValidComposeProjectName(project) {
+		return false, "compose project name 非法（含控制字符/换行或不符合命名规则），无法安全接管"
+	}
+	if obs.ObservedDiscoveredConflict {
+		return false, "同 project 容器的 working_dir/config_files 标签不一致，无法确定接管来源"
+	}
+	if di.WorkingDir == "" || len(di.ConfigFiles) == 0 {
+		return false, "缺少 working_dir/config_files 标签"
+	}
+	return true, ""
+}
+
+// findDiscoveredByID 在 compose 观测中按稳定 ID 查找未接管 project（Get/Logs/Takeover 用）。
+// 用与 list 完全相同的 discoveryClaimed + resolveDiscoveredIDs 算法定位，保证 ID 一致。
+func (s *service) findDiscoveredByID(ctx context.Context, id string) (Application, bool) {
+	if id == "" {
+		return Application{}, false
+	}
+	ca := s.adapters[RuntimeCompose]
+	if ca == nil {
+		return Application{}, false
+	}
+	claimed, managedProject, err := s.discoveryClaimed(ctx)
+	if err != nil {
+		return Application{}, false
+	}
+	obs, err := ca.Observe(ctx)
+	if err != nil {
+		return Application{}, false
+	}
+	idByProject := resolveDiscoveredIDs(claimed, managedProject, obs)
+	for project, obsApp := range obs {
+		if idByProject[project] == id {
+			return s.buildDiscoveredApp(project, obsApp, id), true
+		}
+	}
+	return Application{}, false
+}
+
+// isDiscovered 判断 id 当前是否为未接管的 compose project（写保护用）。
+// 必须先查 meta：接管后 managed id 与 discovered 同算法，若不先排除受管会导致
+// Operate/Remove/Restore 永久 not_managed。
+func (s *service) isDiscovered(ctx context.Context, id string) bool {
+	if _, ok, err := s.repo.GetAppMeta(ctx, id); err != nil || ok {
+		return false // 有 meta（含已接管）→ 非只读 discovered
+	}
+	_, found := s.findDiscoveredByID(ctx, id)
+	return found
+}
+
+// notManagedErr 未接管写操作的统一错误（→ HTTP 400 validation, reason=not_managed）。
+func notManagedErr() *Error {
+	return newErr(ErrKindValidation, "not_managed",
+		"应用未接管，请先点击「接管并编辑」后再执行写操作", nil)
 }
 
 // decorateTaskState 把持久 Task 状态合并进 Application。运行时 Observe 描述容器
@@ -321,11 +527,18 @@ func (s *service) Get(ctx context.Context, id string) (Application, error) {
 	if meta, ok, err := s.repo.GetAppMeta(ctx, id); err != nil {
 		return Application{}, err
 	} else if ok {
-		var obs map[string]Application
+		var obsApp Application
+		var hasObs bool
 		if ca := s.adapters[RuntimeCompose]; ca != nil {
-			obs, _ = ca.Observe(ctx)
+			obs, _ := ca.Observe(ctx)
+			obsApp, hasObs = obs[ComposeProjectName(meta)]
 		}
-		app := s.buildComposeApp(meta, obs[id], true)
+		app := s.buildComposeApp(meta, obsApp, hasObs)
+		s.decorateTaskState(ctx, &app)
+		return app, nil
+	}
+	// discovered compose project（未登记，只读）。
+	if app, ok := s.findDiscoveredByID(ctx, id); ok {
 		s.decorateTaskState(ctx, &app)
 		return app, nil
 	}
@@ -358,19 +571,33 @@ func (s *service) resolveRuntime(ctx context.Context, id string) (RuntimeKind, A
 }
 
 func (s *service) Logs(ctx context.Context, id string, opts LogOptions) (LogPage, error) {
-	rt, meta, hasMeta, err := s.resolveRuntime(ctx, id)
-	if err != nil {
+	if meta, ok, err := s.repo.GetAppMeta(ctx, id); err != nil {
 		return LogPage{}, err
+	} else if ok {
+		adapter := s.adapters[meta.Runtime]
+		if adapter == nil {
+			return LogPage{}, CapabilityErr(fmt.Sprintf("runtime %s unavailable", meta.Runtime))
+		}
+		app := Application{ID: id, Runtime: meta.Runtime, Name: meta.Name}
+		if meta.Runtime == RuntimeCompose {
+			app.RuntimeProject = ComposeProjectName(meta) // 接管保留原名，按原 project 取容器
+		}
+		return adapter.Logs(ctx, app, opts)
 	}
-	adapter := s.adapters[rt]
-	if adapter == nil {
-		return LogPage{}, CapabilityErr(fmt.Sprintf("runtime %s unavailable", rt))
+	// discovered compose（只读日志；未接管也允许读取诊断日志）。
+	if app, ok := s.findDiscoveredByID(ctx, id); ok {
+		if ca := s.adapters[RuntimeCompose]; ca != nil {
+			return ca.Logs(ctx, app, opts)
+		}
 	}
-	app := Application{ID: id, Runtime: rt}
-	if hasMeta {
-		app.Name = meta.Name
+	// 否则 K8s 观测。
+	if ka := s.adapters[RuntimeKubernetes]; ka != nil {
+		obs, _ := ka.Observe(ctx)
+		if app, ok := obs[id]; ok {
+			return ka.Logs(ctx, app, opts)
+		}
 	}
-	return adapter.Logs(ctx, app, opts)
+	return LogPage{}, NotFoundErr(id)
 }
 
 // --- Validate（不落盘）---
@@ -805,6 +1032,9 @@ func (s *service) markTaskFailed(ctx context.Context, taskID, msg string) {
 
 func (s *service) Operate(ctx context.Context, id string, action Action, opts OperationOptions) (Task, error) {
 	defer s.lockMutation(id)()
+	if s.isDiscovered(ctx, id) {
+		return Task{}, notManagedErr()
+	}
 	if opts.IdempotencyKey != "" {
 		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, hashOperateRequest(id, action)); err != nil {
 			return Task{}, err
@@ -833,6 +1063,9 @@ func (s *service) Operate(ctx context.Context, id string, action Action, opts Op
 
 func (s *service) Remove(ctx context.Context, id string, opts RemoveOptions) (Task, error) {
 	defer s.lockMutation(id)()
+	if s.isDiscovered(ctx, id) {
+		return Task{}, notManagedErr()
+	}
 	if opts.IdempotencyKey != "" {
 		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, hashRemoveRequest(id, opts.Purge)); err != nil {
 			return Task{}, err
@@ -857,6 +1090,9 @@ func (s *service) Remove(ctx context.Context, id string, opts RemoveOptions) (Ta
 
 func (s *service) RestoreRevision(ctx context.Context, id string, rev int64, opts ApplyOptions) (Task, error) {
 	defer s.lockMutation(id)()
+	if s.isDiscovered(ctx, id) {
+		return Task{}, notManagedErr()
+	}
 	restoreHash := hashRestoreRequest(id, rev)
 	if opts.IdempotencyKey != "" {
 		if t, hit, err := s.lookupIdempotency(ctx, opts.IdempotencyKey, restoreHash); err != nil {
