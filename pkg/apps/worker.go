@@ -29,10 +29,12 @@ type worker struct {
 	observeGrace  time.Duration
 	pollInterval  time.Duration
 
-	mu     sync.Mutex
-	queues map[string]*appQueue
-	ctx    context.Context
-	slots  chan struct{}
+	mu         sync.Mutex
+	queues     map[string]*appQueue
+	ctx        context.Context
+	slots      chan struct{}
+	observerMu sync.RWMutex
+	observers  []func(Task)
 }
 
 // appQueue 单个 app 的串行队列 + 退出信号。
@@ -71,6 +73,29 @@ func (w *worker) WithWorkerConcurrency(limit int) *worker {
 		w.slots = make(chan struct{}, limit)
 	}
 	return w
+}
+
+// RegisterTaskObserver subscribes to durable terminal task transitions.
+func (w *worker) RegisterTaskObserver(observer func(Task)) {
+	if observer == nil {
+		return
+	}
+	w.observerMu.Lock()
+	w.observers = append(w.observers, observer)
+	w.observerMu.Unlock()
+}
+
+func (w *worker) notifyTaskTerminal(ctx context.Context, taskID string) {
+	task, err := w.repo.GetTask(ctx, taskID)
+	if err != nil || !task.Status.IsTerminal() {
+		return
+	}
+	w.observerMu.RLock()
+	observers := append([]func(Task){}, w.observers...)
+	w.observerMu.RUnlock()
+	for _, observer := range observers {
+		observer(task)
+	}
 }
 
 // Start 启动消费：崩溃恢复 + 准备好接收 Enqueue。
@@ -170,6 +195,7 @@ func (w *worker) executeSafe(ctx context.Context, taskID string) {
 			if task, err := w.repo.GetTask(ctx, taskID); err == nil && (task.Type == TaskApply || task.Type == TaskRestore) {
 				_ = os.Remove(w.paths.PendingEnvFile(task.AppID, task.Revision))
 			}
+			w.notifyTaskTerminal(ctx, taskID)
 		}
 	}()
 	w.execute(ctx, taskID)
@@ -289,6 +315,7 @@ func (w *worker) execute(ctx context.Context, taskID string) {
 	} else {
 		w.logger.Info("task succeeded", zap.String("id", taskID), zap.String("app", task.AppID))
 	}
+	w.notifyTaskTerminal(ctx, taskID)
 }
 
 // observeKey 返回 adapter.Observe 结果中定位该 app 的 key：compose keyed by project name

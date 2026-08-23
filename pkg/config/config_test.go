@@ -71,6 +71,20 @@ func TestLoadConfigWithDefaults(t *testing.T) {
 	assert.Equal(t, 9090, cfg.Console.Port)
 	assert.Equal(t, "info", cfg.Logging.Level)
 	assert.Equal(t, "default", cfg.Kubernetes.Namespace)
+	assert.Equal(t, []string{"/data", "/var/lib"}, cfg.Compose.MigrationAllowedRoots)
+}
+
+func TestLoadConfigWithDockerMigrationAllowedRoots(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "config-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.Write([]byte("compose:\n  migration_allowed_roots:\n    - /srv/docker\n"))
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	cfg, err := Load(tmpFile.Name())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/srv/docker"}, cfg.Compose.MigrationAllowedRoots)
 }
 
 func TestLoadConfigWithEnv(t *testing.T) {

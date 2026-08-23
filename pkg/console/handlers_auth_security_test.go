@@ -2,6 +2,7 @@ package console
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/auth"
 	devnetwork "github.com/a2d2-dev/devbox/pkg/network"
 	"github.com/a2d2-dev/devbox/pkg/security"
+	"github.com/a2d2-dev/devbox/pkg/users"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -165,6 +167,100 @@ func TestMissingOrInvalidOTPCountsAsFailureBeforeSessionCreation(t *testing.T) {
 	code, _ := totp.GenerateCode(enrollment.Secret, time.Now().Add(30*time.Second))
 	if got := loginRequest(t, s, "10.0.0.30", map[string]string{"password": "correct", "otp": code}).Code; got != http.StatusTooManyRequests {
 		t.Fatalf("OTP failures did not trigger ban: status=%d", got)
+	}
+}
+
+func TestMultiUserCredentialsAndTOTPCreatePrincipalSessionOnlyAfterBothPass(t *testing.T) {
+	userStore, err := users.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = userStore.Close() })
+	admin, err := userStore.CreateUser(context.Background(), users.CreateUser{
+		Username: "admin", Password: "Admin-pass-2026", Role: users.RoleAdmin, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	securityStore, _ := security.NewStore("", "")
+	enrollment, err := securityStore.BeginTOTP("DevBox", admin.Username)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ := totp.GenerateCode(enrollment.Secret, time.Now())
+	if _, err := securityStore.ConfirmTOTP(code); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		auth:     auth.New(auth.Config{Users: userStore, UsersConfigured: true, SessionTTL: 60}),
+		security: securityStore,
+		bans:     security.NewBanManager(security.BanRule{Threshold: 100, Window: time.Minute, BanFor: time.Minute}),
+	}
+
+	failed := loginRequest(t, s, "10.0.0.40", map[string]string{
+		"username": "admin", "password": "Admin-pass-2026", "otp": "000000",
+	})
+	if failed.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid OTP status=%d body=%s", failed.Code, failed.Body.String())
+	}
+
+	code, _ = totp.GenerateCode(enrollment.Secret, time.Now())
+	loggedIn := loginRequest(t, s, "10.0.0.40", map[string]string{
+		"username": "admin", "password": "Admin-pass-2026", "otp": code,
+	})
+	if loggedIn.Code != http.StatusOK {
+		t.Fatalf("admin TOTP login status=%d body=%s", loggedIn.Code, loggedIn.Body.String())
+	}
+	var response struct {
+		Token string         `json:"token"`
+		User  auth.Principal `json:"user"`
+	}
+	if err := json.Unmarshal(loggedIn.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Token == "" || response.User.UserID != admin.ID || !response.User.IsAdmin() {
+		t.Fatalf("unexpected principal session: %+v", response)
+	}
+}
+
+func TestOTPFailuresCountTowardMultiUserLoginRateLimit(t *testing.T) {
+	userStore, err := users.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = userStore.Close() })
+	_, err = userStore.CreateUser(context.Background(), users.CreateUser{
+		Username: "admin", Password: "Admin-pass-2026", Role: users.RoleAdmin, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	securityStore, _ := security.NewStore("", "")
+	enrollment, _ := securityStore.BeginTOTP("DevBox", "admin")
+	code, _ := totp.GenerateCode(enrollment.Secret, time.Now())
+	if _, err := securityStore.ConfirmTOTP(code); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		auth:     auth.New(auth.Config{Users: userStore, UsersConfigured: true, SessionTTL: 60}),
+		security: securityStore,
+		bans:     security.NewBanManager(security.BanRule{Threshold: 100, Window: time.Minute, BanFor: time.Minute}),
+	}
+	for i := 0; i < maxLoginFailures; i++ {
+		got := loginRequest(t, s, "10.0.0.41", map[string]string{
+			"username": "admin", "password": "Admin-pass-2026", "otp": "000000",
+		})
+		if got.Code != http.StatusUnauthorized {
+			t.Fatalf("OTP failure %d status=%d body=%s", i+1, got.Code, got.Body.String())
+		}
+	}
+	code, _ = totp.GenerateCode(enrollment.Secret, time.Now())
+	blocked := loginRequest(t, s, "10.0.0.41", map[string]string{
+		"username": "admin", "password": "Admin-pass-2026", "otp": code,
+	})
+	if blocked.Code != http.StatusTooManyRequests {
+		t.Fatalf("OTP failures did not reach login limiter: status=%d body=%s", blocked.Code, blocked.Body.String())
 	}
 }
 

@@ -1,1662 +1,360 @@
-import { useEffect, useState } from "react";
-import { T } from "../tokens";
-import { Icon } from "../icons";
-import { authFetch } from "../hooks/useApi";
-import { diagnosticsTools, settingsUpdatePayload } from "./settingsPayload";
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { T } from '../tokens'
+import { Icon } from '../icons'
+import { Chip, StatusDot } from '../components/ui'
+import { btnDanger, btnPrimary, btnSecondary } from '../components/AppWindow'
+import { authFetch } from '../hooks/useApi'
 
 const tabs = [
-  ["network", "网口状态", "network"],
-  ["remote", "远程访问", "globe"],
-  ["ssh", "SSH", "terminal"],
-  ["account", "账号安全", "lock"],
-  ["bans", "异常封禁", "shield"],
-  ["firewall", "防火墙", "shield"],
-  ["certs", "证书", "key"],
-  ["diagnostics", "诊断", "wrench"],
-];
+  { id: 'webdav', label: 'WebDAV', icon: 'globe' },
+  { id: 'smb', label: 'SMB', icon: 'server' },
+  { id: 'smtp', label: '邮件通知', icon: 'send' },
+  { id: 'maintenance', label: '系统维护', icon: 'wrench' },
+  { id: 'defaults', label: '默认应用', icon: 'apps' },
+  { id: 'about', label: '关于', icon: 'info' },
+]
 
-const panel = {
-  background: T.surface,
-  border: `1px solid ${T.border}`,
-  borderRadius: 8,
-  padding: 16,
-  width: "100%",
-  maxWidth: "100%",
-  minWidth: 0,
-};
-const input = {
-  height: 34,
-  border: `1px solid ${T.border}`,
-  borderRadius: 6,
-  padding: "0 9px",
-  fontSize: 12,
-  color: T.ink,
-  background: "#fff",
-  minWidth: 0,
-};
-const button = {
-  height: 32,
-  border: `1px solid ${T.border}`,
-  borderRadius: 6,
-  padding: "0 11px",
-  background: "#fff",
-  color: T.ink2,
-  fontSize: 12,
-  fontWeight: 600,
-  cursor: "pointer",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 6,
-};
-const primary = {
-  ...button,
-  color: "#fff",
-  background: T.blueDeep,
-  borderColor: T.blueDeep,
-};
-const danger = {
-  ...button,
-  color: "#b91c1c",
-  background: "#fff",
-  borderColor: "#fecaca",
-};
-
-async function request(path, options = {}) {
-  const r = await authFetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || data.message || `HTTP ${r.status}`);
-  return data;
+const field = {
+  height: 34, border: `1px solid ${T.border}`, borderRadius: 6,
+  padding: '0 10px', color: T.ink, background: 'white', fontSize: 12.5,
+  boxSizing: 'border-box', outline: 'none', letterSpacing: 0,
 }
 
-function Section({ title, note, actions, children }) {
+const panel = {
+  background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+  overflow: 'hidden', boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
+}
+
+async function responseMessage(response) {
+  const text = await response.text()
+  if (!text) return `HTTP ${response.status}`
+  try {
+    const data = JSON.parse(text)
+    return data.message || data.error || text
+  } catch {
+    return text
+  }
+}
+
+function Toggle({ checked, onChange, label }) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: T.ink2, fontSize: 12.5 }}>
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} style={{ width: 16, height: 16, accentColor: T.blue }}/>
+      {label}
+    </label>
+  )
+}
+
+function FieldRow({ label, hint, children }) {
+  return (
+    <div className="maintenance-field-row" style={{ display: 'grid', gridTemplateColumns: '150px minmax(220px, 1fr)', gap: 18, alignItems: 'center', padding: '11px 16px', borderTop: `1px solid ${T.borderSoft}` }}>
+      <div>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: T.ink2 }}>{label}</div>
+        {hint && <div style={{ fontSize: 10.5, color: T.ink4, marginTop: 3, lineHeight: 1.4 }}>{hint}</div>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function Section({ title, icon, action, children }) {
   return (
     <section style={panel}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          marginBottom: 13,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>
-            {title}
-          </div>
-          {note && (
-            <div style={{ fontSize: 11, color: T.ink3, marginTop: 3 }}>
-              {note}
-            </div>
-          )}
-        </div>
-        <div style={{ flex: 1 }} />
-        {actions}
+      <div style={{ minHeight: 43, padding: '0 16px', display: 'flex', alignItems: 'center', gap: 8, background: T.surfaceAlt, borderBottom: `1px solid ${T.borderSoft}` }}>
+        <Icon name={icon} size={15} style={{ color: T.blueDeep }}/>
+        <h2 style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: T.ink, letterSpacing: 0 }}>{title}</h2>
+        <div style={{ flex: 1 }}/>{action}
       </div>
       {children}
     </section>
-  );
+  )
 }
 
-function Badge({ children, tone = "gray" }) {
-  const c = {
-    green: ["#ecfdf5", "#047857"],
-    red: ["#fef2f2", "#b91c1c"],
-    blue: ["#eff6ff", "#1d4ed8"],
-    amber: ["#fffbeb", "#a16207"],
-    gray: [T.surfaceAlt, T.ink3],
-  }[tone];
+function SaveBar({ busy, onSave, message }) {
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "2px 7px",
-        borderRadius: 999,
-        background: c[0],
-        color: c[1],
-        fontSize: 10.5,
-        fontWeight: 650,
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-function Empty({ text }) {
-  return (
-    <div
-      style={{
-        padding: "20px 8px",
-        textAlign: "center",
-        color: T.ink3,
-        fontSize: 12,
-      }}
-    >
-      {text}
+    <div style={{ position: 'sticky', bottom: 0, zIndex: 2, display: 'flex', alignItems: 'center', marginTop: 14, padding: '10px 0', background: T.surfaceAlt }}>
+      <div style={{ fontSize: 11.5, color: message?.error ? T.red : T.green, minHeight: 18 }}>{message?.text || ''}</div>
+      <div style={{ flex: 1 }}/>
+      <button type="button" onClick={onSave} disabled={busy} className="edge-press edge-btn-primary" style={{ ...btnPrimary, opacity: busy ? 0.6 : 1 }}>
+        <Icon name="check" size={13}/>{busy ? '保存中' : '保存设置'}
+      </button>
     </div>
-  );
+  )
 }
-function Field({ label, children }) {
+
+function WebDAVPage({ settings, setSettings, status, save, busy, message }) {
+  const cfg = settings.webdav
+  const update = patch => setSettings(prev => ({ ...prev, webdav: { ...prev.webdav, ...patch } }))
   return (
-    <label
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 5,
-        fontSize: 11,
-        color: T.ink3,
-        minWidth: 0,
-      }}
-    >
-      {label}
-      {children}
-    </label>
-  );
-}
-function ErrorBox({ error }) {
-  return error ? (
-    <div
-      style={{
-        padding: "9px 11px",
-        background: "#fef2f2",
-        border: "1px solid #fecaca",
-        borderRadius: 6,
-        color: "#991b1b",
-        fontSize: 11.5,
-      }}
-    >
-      {error}
-    </div>
-  ) : null;
-}
-function Preview({
-  title = "待执行变更",
-  text,
-  onConfirm,
-  confirmLabel = "确认 dry-run",
-}) {
-  return text ? (
-    <div
-      style={{
-        marginTop: 12,
-        border: "1px solid #bfdbfe",
-        borderRadius: 7,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          padding: "8px 10px",
-          background: "#eff6ff",
-          fontSize: 11.5,
-          fontWeight: 700,
-          color: "#1e40af",
-          display: "flex",
-          alignItems: "center",
-        }}
-      >
-        {title}
-        <div style={{ flex: 1 }} />
-        {onConfirm && (
-          <button style={primary} onClick={onConfirm}>
-            {confirmLabel}
-          </button>
-        )}
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 18, color: T.ink, letterSpacing: 0 }}>WebDAV 文件访问</h1>
+          <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>内置服务 · 控制台账户认证</div>
+        </div>
+        <div style={{ flex: 1 }}/>
+        <Chip tone={status?.running ? 'green' : status?.error ? 'red' : 'gray'}>
+          <StatusDot tone={status?.running ? 'green' : status?.error ? 'red' : 'gray'} size={6}/>
+          {status?.running ? '运行中' : '已停止'}
+        </Chip>
       </div>
-      <pre
-        style={{
-          margin: 0,
-          padding: 12,
-          maxHeight: 260,
-          overflow: "auto",
-          background: "#0f172a",
-          color: "#dbeafe",
-          fontSize: 11,
-          lineHeight: 1.55,
-          whiteSpace: "pre-wrap",
-        }}
-      >
-        {typeof text === "string" ? text : JSON.stringify(text, null, 2)}
-      </pre>
-    </div>
-  ) : null;
+      <Section title="服务配置" icon="globe">
+        <FieldRow label="启用 WebDAV" hint="保存后立即启停">
+          <Toggle checked={cfg.enabled} onChange={enabled => update({ enabled })} label={cfg.enabled ? '已启用' : '已停用'}/>
+        </FieldRow>
+        <FieldRow label="HTTP 端口" hint="端口被占用时不会保存">
+          <input aria-label="WebDAV HTTP 端口" type="number" min="1" max="65535" value={cfg.port} onChange={e => update({ port: Number(e.target.value) })} style={{ ...field, width: 150 }}/>
+        </FieldRow>
+        <FieldRow label="共享根目录" hint="必须位于控制台数据根内">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="folder" size={15} style={{ color: T.ink3 }}/>
+            <input aria-label="WebDAV 共享根目录" value={cfg.path} onChange={e => update({ path: e.target.value })} style={{ ...field, flex: 1, fontFamily: T.mono }}/>
+          </div>
+        </FieldRow>
+        <FieldRow label="访问模式">
+          <select aria-label="WebDAV 访问模式" value={cfg.readOnly ? 'readonly' : 'readwrite'} onChange={e => update({ readOnly: e.target.value === 'readonly' })} style={{ ...field, width: 180 }}>
+            <option value="readwrite">读写</option><option value="readonly">只读</option>
+          </select>
+        </FieldRow>
+        <FieldRow label="认证账户" hint="密码沿用控制台账户，不单独落盘">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: T.ink2, fontSize: 12.5 }}><Icon name="lock" size={14}/>devbox</div>
+        </FieldRow>
+      </Section>
+      {status?.error && <div style={{ marginTop: 10, padding: '9px 12px', border: '1px solid #fecaca', background: T.redSoft, color: '#b91c1c', borderRadius: 6, fontSize: 11.5 }}>{status.error}</div>}
+      <SaveBar busy={busy} onSave={save} message={message}/>
+    </>
+  )
 }
-const fmtRate = (n) =>
-  n
-    ? `${(n / 1024).toFixed(n > 1024 * 1024 ? 0 : 1)} ${n > 1024 * 1024 ? "MB/s" : "KB/s"}`
-    : "0 KB/s";
 
-function NetworkTab({ network }) {
-  const physical = (network?.interfaces || []).filter(
-    (x) => !["virtual", "loopback"].includes(x.type),
-  );
-  const virtual = (network?.interfaces || []).filter((x) =>
-    ["virtual", "loopback"].includes(x.type),
-  );
-  const table = (items) =>
-    items.length ? (
-      <div
-        style={{
-          display: "grid",
-          gap: 8,
-          overflowX: "auto",
-          width: "100%",
-          maxWidth: "100%",
-          minWidth: 0,
-        }}
-      >
-        {items.map((i) => (
-          <div
-            key={i.name}
-            style={{
-              border: `1px solid ${T.borderSoft}`,
-              borderRadius: 7,
-              padding: "11px 12px",
-              display: "grid",
-              gridTemplateColumns:
-                "minmax(130px,1.1fr) minmax(170px,1.5fr) repeat(3,minmax(90px,1fr))",
-              gap: 12,
-              alignItems: "center",
-              minWidth: 760,
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>
-                {i.name}{" "}
-                <Badge tone={i.state === "up" ? "green" : "gray"}>
-                  {i.state}
-                </Badge>
-              </div>
-              <div style={{ fontSize: 10.5, color: T.ink3, marginTop: 4 }}>
-                {i.type} · {i.mac || "无 MAC"}
-              </div>
-            </div>
-            <div style={{ fontSize: 11.5, color: T.ink2, lineHeight: 1.7 }}>
-              <div>IPv4: {(i.ipv4 || []).join(", ") || "-"}</div>
-              <div>IPv6: {(i.ipv6 || []).join(", ") || "-"}</div>
-              <div>
-                网关: {i.gateway || "-"} · DNS:{" "}
-                {(i.dns || []).join(", ") || "-"}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10.5, color: T.ink3 }}>配置</div>
-              <div style={{ fontSize: 12, fontWeight: 650, marginTop: 4 }}>
-                {i.mode?.toUpperCase()}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10.5, color: T.ink3 }}>链路</div>
-              <div style={{ fontSize: 12, fontWeight: 650, marginTop: 4 }}>
-                {i.linkMbps ? `${i.linkMbps} Mbps` : "-"} · {i.duplex || "-"}
-              </div>
-              <div style={{ fontSize: 10.5, color: T.ink3 }}>MTU {i.mtu}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10.5, color: T.ink3 }}>实时速率</div>
-              <div
-                className="mono"
-                style={{ fontSize: 11.5, marginTop: 4, color: T.green }}
-              >
-                ↓ {fmtRate(i.rxBytesSec)}
-              </div>
-              <div className="mono" style={{ fontSize: 11.5, color: T.blue }}>
-                ↑ {fmtRate(i.txBytesSec)}
-              </div>
-            </div>
+function SMBPage({ settings, setSettings, probe, save, busy, message }) {
+  const [preview, setPreview] = useState('')
+  const [action, setAction] = useState(null)
+  const shares = settings.smb || []
+  const updateShare = (index, patch) => setSettings(prev => ({ ...prev, smb: (prev.smb || []).map((share, i) => i === index ? { ...share, ...patch } : share) }))
+  const removeShare = index => setSettings(prev => ({ ...prev, smb: (prev.smb || []).filter((_, i) => i !== index) }))
+  const addShare = () => setSettings(prev => {
+    const current = prev.smb || []
+    return { ...prev, smb: [...current, { name: `share${current.length + 1}`, path: prev.webdav.path, readOnly: false, guest: false }] }
+  })
+  const renderPreview = async () => {
+    setAction({ text: '正在生成预览' })
+    const response = await authFetch('/api/v1/maintenance/smb/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(shares) })
+    if (!response.ok) return setAction({ text: await responseMessage(response), error: true })
+    const data = await response.json(); setPreview(data.preview); setAction({ text: '预览已更新' })
+  }
+  const apply = async () => {
+    setAction({ text: '正在校验并应用' })
+    const response = await authFetch('/api/v1/maintenance/smb/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(shares) })
+    if (!response.ok) return setAction({ text: await responseMessage(response), error: true })
+    setAction({ text: '受管配置已写入' })
+  }
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+        <div><h1 style={{ margin: 0, fontSize: 18, color: T.ink, letterSpacing: 0 }}>SMB 共享</h1><div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>系统 Samba 探测与受管配置</div></div>
+        <div style={{ flex: 1 }}/>
+        <Chip tone={probe?.active ? 'green' : probe?.installed ? 'amber' : 'gray'}>{probe?.active ? 'smbd 运行中' : probe?.installed ? '已安装 · 未运行' : '未安装'}</Chip>
+      </div>
+      {!probe?.installed && <div style={{ padding: '11px 13px', border: '1px solid #fde68a', background: T.amberSoft, borderRadius: 7, color: '#92400e', fontSize: 11.5, marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>Samba 未安装</div>
+        <code style={{ fontFamily: T.mono }}>sudo apt install samba</code><span style={{ marginLeft: 8 }}>安装后刷新页面。DevBox 不会自动安装系统包。</span>
+      </div>}
+      <Section title="共享目录" icon="folder" action={<button type="button" onClick={addShare} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, fontSize: 11.5 }}><Icon name="plus" size={12}/>添加共享</button>}>
+        {shares.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: T.ink4, fontSize: 12 }}>尚未配置 SMB 共享</div>}
+        {shares.map((share, index) => (
+          <div key={index} className="maintenance-smb-row" style={{ display: 'grid', gridTemplateColumns: '150px minmax(220px,1fr) 105px 90px 34px', gap: 9, alignItems: 'center', padding: '10px 12px', borderTop: index ? `1px solid ${T.borderSoft}` : 'none' }}>
+            <input aria-label={`SMB 共享名 ${index + 1}`} value={share.name} onChange={e => updateShare(index, { name: e.target.value })} placeholder="共享名" style={{ ...field, width: '100%' }}/>
+            <input aria-label={`SMB 路径 ${index + 1}`} value={share.path} onChange={e => updateShare(index, { path: e.target.value })} placeholder="数据根内路径" style={{ ...field, width: '100%', fontFamily: T.mono }}/>
+            <Toggle checked={share.readOnly} onChange={readOnly => updateShare(index, { readOnly })} label="只读"/>
+            <Toggle checked={share.guest} onChange={guest => updateShare(index, { guest })} label="Guest"/>
+            <button title="删除共享" aria-label="删除共享" type="button" onClick={() => removeShare(index)} className="edge-press" style={{ border: 0, background: 'transparent', color: T.red, cursor: 'pointer', width: 30, height: 30 }}><Icon name="trash" size={14}/></button>
           </div>
         ))}
+      </Section>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+        <button type="button" onClick={renderPreview} className="edge-press edge-btn-secondary" style={btnSecondary}><Icon name="eye" size={13}/>生成配置预览</button>
+        <button type="button" onClick={apply} disabled={!probe?.installed || !probe?.testparmInstalled} className="edge-press edge-btn-primary" style={{ ...btnPrimary, opacity: !probe?.installed || !probe?.testparmInstalled ? 0.45 : 1 }}><Icon name="check" size={13}/>校验并应用</button>
+        <span style={{ fontSize: 11.5, color: action?.error ? T.red : T.green }}>{action?.text}</span>
       </div>
-    ) : (
-      <Empty text="未发现接口" />
-    );
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <Section
-        title="物理与隧道接口"
-        note={`主地址 ${network?.ip || "-"} · 默认网关 ${network?.gateway || "-"}`}
-      >
-        {table(physical)}
-      </Section>
-      <Section title="虚拟与本地接口" note="分类展示，不参与默认管理入口选择">
-        {table(virtual)}
-      </Section>
-    </div>
-  );
+      {preview && <pre style={{ margin: '10px 0 0', padding: 14, minHeight: 130, maxHeight: 240, overflow: 'auto', borderRadius: 7, background: '#101827', color: '#dbeafe', fontSize: 11.5, lineHeight: 1.55, fontFamily: T.mono, whiteSpace: 'pre-wrap' }}>{preview}</pre>}
+      <SaveBar busy={busy} onSave={save} message={message}/>
+    </>
+  )
 }
 
-function RemoteTab({ remote, settings, setSettings, reload }) {
-  const [preview, setPreview] = useState("");
-  const [settingsPreview, setSettingsPreview] = useState(null);
-  const [result, setResult] = useState("");
-  const [error, setError] = useState("");
-  const ddns = {
-    provider: settings.ddnsProvider || "",
-    domain: settings.ddnsDomain || "",
-    credentialRef: settings.ddnsCredentialRef || "",
-    webhookURL: settings.ddnsWebhookURL || "",
-  };
-  const set = (k) => (e) => setSettings({ ...settings, [k]: e.target.value });
-  const previewDDNS = async () => {
-    try {
-      setError("");
-      const d = await request("/api/v1/network/ddns/preview", {
-        method: "POST",
-        body: JSON.stringify(ddns),
-      });
-      setPreview(d.preview);
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const save = async () => {
-    try {
-      setError("");
-      const payload = settingsUpdatePayload(settings, {
-        ddnsProvider: ddns.provider,
-        ddnsDomain: ddns.domain,
-        ddnsCredentialRef: ddns.credentialRef,
-        ddnsWebhookURL: ddns.webhookURL,
-      });
-      const d = await request("/api/v1/security/settings/preview", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      setSettingsPreview({ payload, preview: d });
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const confirmSave = async () => {
-    try {
-      await request("/api/v1/security/settings", {
-        method: "POST",
-        body: JSON.stringify({ ...settingsPreview.payload, confirm: true }),
-      });
-      setSettingsPreview(null);
-      setResult("配置已保存；端口或证书变更需重启 DevBox 生效");
-      reload();
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const updateNow = async () => {
-    try {
-      const d = await request("/api/v1/network/ddns/update", {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      setResult(d.result);
-    } catch (e) {
-      setError(e.message);
-    }
-  };
+function SMTPPage({ settings, setSettings, password, setPassword, save, busy, message }) {
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null)
+  const cfg = settings.smtp
+  const update = patch => setSettings(prev => ({ ...prev, smtp: { ...prev.smtp, ...patch } }))
+  const test = async () => {
+    setTesting(true); setTestResult(null)
+    const response = await authFetch('/api/v1/maintenance/smtp/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: cfg, password }) })
+    if (!response.ok) setTestResult({ text: await responseMessage(response), error: true })
+    else setTestResult({ text: (await response.json()).message })
+    setTesting(false)
+  }
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <Section
-        title="可用访问入口"
-        note={`当前会话 ${remote?.currentSessionIP || "-"} · HTTPS ${remote?.https ? "已监听" : "未监听"}`}
-      >
-        <div
-          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
-        >
-          <div>
-            <div style={{ fontSize: 11, color: T.ink3, marginBottom: 6 }}>
-              tun0 隧道地址
-            </div>
-            {(remote?.tunnelIPs || []).map((x) => (
-              <div
-                key={x}
-                className="mono"
-                style={{ fontSize: 12, marginBottom: 4 }}
-              >
-                {x}
-              </div>
-            ))}
-            {!remote?.tunnelIPs?.length && (
-              <Badge tone="amber">隧道未启用</Badge>
-            )}
-          </div>
-          <div>
-            <div style={{ fontSize: 11, color: T.ink3, marginBottom: 6 }}>
-              监听地址
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-              {(remote?.listeners || []).map((l, i) => (
-                <Badge key={i} tone="blue">
-                  {l.address}:{l.port}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        </div>
+    <>
+      <div style={{ marginBottom: 12 }}><h1 style={{ margin: 0, fontSize: 18, color: T.ink, letterSpacing: 0 }}>SMTP 邮件通知</h1><div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>登录失败告警已接入通知钩子</div></div>
+      <Section title="SMTP 账户" icon="send">
+        <FieldRow label="启用通知"><Toggle checked={cfg.enabled} onChange={enabled => update({ enabled })} label={cfg.enabled ? '已启用' : '已停用'}/></FieldRow>
+        <FieldRow label="服务器与端口"><div style={{ display: 'flex', gap: 8 }}><input aria-label="SMTP 服务器" value={cfg.host} onChange={e => update({ host: e.target.value })} placeholder="smtp.example.com" style={{ ...field, flex: 1 }}/><input aria-label="SMTP 端口" type="number" value={cfg.port || ''} onChange={e => update({ port: Number(e.target.value) })} placeholder="587" style={{ ...field, width: 100 }}/></div></FieldRow>
+        <FieldRow label="TLS 模式"><select aria-label="SMTP TLS 模式" value={cfg.tls || 'starttls'} onChange={e => update({ tls: e.target.value })} style={{ ...field, width: 180 }}><option value="starttls">STARTTLS</option><option value="tls">TLS</option><option value="none">无加密</option></select></FieldRow>
+        <FieldRow label="账号"><input aria-label="SMTP 账号" value={cfg.username} onChange={e => update({ username: e.target.value })} style={{ ...field, width: '100%' }}/></FieldRow>
+        <FieldRow label="密码" hint={settings.smtpPasswordSet ? '已加密保存；留空保持不变' : '保存时使用本机密钥加密'}><input aria-label="SMTP 密码" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={settings.smtpPasswordSet ? '已保存' : ''} autoComplete="new-password" style={{ ...field, width: '100%' }}/></FieldRow>
+        <FieldRow label="发件人"><input aria-label="SMTP 发件人" value={cfg.from} onChange={e => update({ from: e.target.value })} placeholder="DevBox <devbox@example.com>" style={{ ...field, width: '100%' }}/></FieldRow>
+        <FieldRow label="收件人"><input aria-label="SMTP 收件人" value={cfg.to} onChange={e => update({ to: e.target.value })} placeholder="ops@example.com" style={{ ...field, width: '100%' }}/></FieldRow>
       </Section>
-      <Section
-        title="DDNS"
-        note="凭据仅保存引用；立即更新在本机只执行 dry-run"
-        actions={
-          <>
-            <button style={button} onClick={previewDDNS}>
-              预览
-            </button>
-            <button style={primary} onClick={updateNow}>
-              立即更新
-            </button>
-          </>
-        }
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "150px 1fr 1fr",
-            gap: 9,
-          }}
-        >
-          <Field label="提供商">
-            <select
-              style={input}
-              value={ddns.provider}
-              onChange={set("ddnsProvider")}
-            >
-              <option value="">未配置</option>
-              <option value="cloudflare">Cloudflare</option>
-              <option value="webhook">自定义 Webhook</option>
-            </select>
-          </Field>
-          <Field label="域名">
-            <input
-              style={input}
-              value={ddns.domain}
-              onChange={set("ddnsDomain")}
-              placeholder="devbox.example.com"
-            />
-          </Field>
-          <Field label="凭据引用">
-            <input
-              style={input}
-              value={ddns.credentialRef}
-              onChange={set("ddnsCredentialRef")}
-              placeholder="env:CLOUDFLARE_TOKEN"
-            />
-          </Field>
-        </div>
-        {ddns.provider === "webhook" && (
-          <Field label="Webhook URL">
-            <input
-              style={{ ...input, width: "100%", marginTop: 9 }}
-              value={ddns.webhookURL}
-              onChange={set("ddnsWebhookURL")}
-              placeholder="https://..."
-            />
-          </Field>
-        )}
-        <Preview text={preview} />
-      </Section>
-      <Section
-        title="外链与访问端口"
-        note="分享域名供文件外链拼接；速率 0 表示不限速"
-        actions={
-          <button style={primary} onClick={save}>
-            生成变更预览
-          </button>
-        }
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))",
-            gap: 9,
-          }}
-        >
-          <Field label="分享域名">
-            <input
-              style={input}
-              value={settings.shareDomain || ""}
-              onChange={set("shareDomain")}
-              placeholder="https://share.example.com"
-            />
-          </Field>
-          <Field label="HTTP 端口">
-            <input
-              type="number"
-              style={input}
-              value={settings.httpPort || 9090}
-              onChange={(e) =>
-                setSettings({ ...settings, httpPort: +e.target.value })
-              }
-            />
-          </Field>
-          <Field label="HTTPS 端口">
-            <input
-              type="number"
-              style={input}
-              value={settings.httpsPort || 9443}
-              onChange={(e) =>
-                setSettings({ ...settings, httpsPort: +e.target.value })
-              }
-            />
-          </Field>
-          <Field label="上传 B/s">
-            <input
-              type="number"
-              style={input}
-              value={settings.maxUploadBytesSec || 0}
-              onChange={(e) =>
-                setSettings({ ...settings, maxUploadBytesSec: +e.target.value })
-              }
-            />
-          </Field>
-          <Field label="下载 B/s">
-            <input
-              type="number"
-              style={input}
-              value={settings.maxDownloadBytesSec || 0}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  maxDownloadBytesSec: +e.target.value,
-                })
-              }
-            />
-          </Field>
-        </div>
-        <Preview
-          text={settingsPreview?.preview}
-          onConfirm={settingsPreview ? confirmSave : null}
-          confirmLabel="确认保存"
-        />
-      </Section>
-      <ErrorBox error={error} />
-      {result && (
-        <div style={{ fontSize: 11.5, color: "#047857" }}>{result}</div>
-      )}
-    </div>
-  );
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}><button type="button" onClick={test} disabled={testing} className="edge-press edge-btn-secondary" style={btnSecondary}><Icon name="send" size={13}/>{testing ? '发送中' : '发送测试邮件'}</button><span style={{ fontSize: 11.5, color: testResult?.error ? T.red : T.green }}>{testResult?.text}</span></div>
+      <SaveBar busy={busy} onSave={save} message={message}/>
+    </>
+  )
 }
 
-function SSHTab({ ssh }) {
-  const [change, setChange] = useState({
-    port: ssh?.port || 22,
-    permitRootLogin: ssh?.permitRootLogin || "no",
-    passwordAuthentication: ssh?.passwordAuthentication || "no",
-  });
-  const [preview, setPreview] = useState("");
-  const [error, setError] = useState("");
-  const run = async (apply = false) => {
-    try {
-      setError("");
-      const path = apply
-        ? "/api/v1/security/ssh/apply"
-        : "/api/v1/security/ssh/preview";
-      const body = apply ? { change, confirm: true, dryRun: true } : change;
-      const d = await request(path, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      setPreview(d.diff + (d.message ? `\n\n${d.message}` : ""));
-    } catch (e) {
-      setError(e.message);
-    }
-  };
+function MaintenancePage({ settings, setSettings, currentVersion, save, busy, message }) {
+  const fileRef = useRef(null)
+  const [includeSecrets, setIncludeSecrets] = useState(false)
+  const [updateResult, setUpdateResult] = useState(null)
+  const [restore, setRestore] = useState(null)
+  const [restorePhrase, setRestorePhrase] = useState('')
+  const [resetChecked, setResetChecked] = useState(false)
+  const [resetPhrase, setResetPhrase] = useState('')
+  const [action, setAction] = useState(null)
+  const updateCfg = patch => setSettings(prev => ({ ...prev, updates: { ...prev.updates, ...patch } }))
+  const checkUpdate = async () => {
+    setAction({ text: '正在检查 GitHub Releases' })
+    const response = await authFetch('/api/v1/maintenance/updates/check')
+    if (!response.ok) return setAction({ text: await responseMessage(response), error: true })
+    setUpdateResult(await response.json()); setAction({ text: '检查完成' })
+  }
+  const download = async () => {
+    const response = await authFetch(`/api/v1/maintenance/backup?includeSecrets=${includeSecrets}`)
+    if (!response.ok) return setAction({ text: await responseMessage(response), error: true })
+    const blob = await response.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a')
+    a.href = url; a.download = `devbox-config-${new Date().toISOString().slice(0, 10)}.tar.gz`; a.click(); URL.revokeObjectURL(url)
+    setAction({ text: '配置备份已导出' })
+  }
+  const previewRestore = async file => {
+    if (!file) return
+    setAction({ text: '正在分析备份' })
+    const response = await authFetch('/api/v1/maintenance/restore/preview', { method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: file })
+    if (!response.ok) return setAction({ text: await responseMessage(response), error: true })
+    setRestore(await response.json()); setRestorePhrase(''); setAction({ text: '还原预览已生成' })
+  }
+  const confirmRestore = async () => {
+    const response = await authFetch('/api/v1/maintenance/restore/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: restore.token, confirmation: restorePhrase }) })
+    if (!response.ok) return setAction({ text: await responseMessage(response), error: true })
+    setRestore(null); setAction({ text: (await response.json()).message }); window.setTimeout(() => window.location.reload(), 800)
+  }
+  const reset = async () => {
+    const response = await authFetch('/api/v1/maintenance/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: resetChecked, phrase: resetPhrase }) })
+    if (!response.ok) return setAction({ text: await responseMessage(response), error: true })
+    setAction({ text: (await response.json()).message }); window.setTimeout(() => window.location.reload(), 800)
+  }
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <Section
-        title="sshd 有效配置"
-        note="来自 systemctl 与 sshd -T；修改不会在本机真实应用"
-      >
-        <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
-          <Badge tone={ssh?.running ? "green" : "red"}>
-            {ssh?.running ? "运行中" : "未运行"}
-          </Badge>
-          <Badge tone="blue">端口 {ssh?.port || "-"}</Badge>
-          <Badge>Root {ssh?.permitRootLogin || "unknown"}</Badge>
-          <Badge>密码 {ssh?.passwordAuthentication || "unknown"}</Badge>
-          <Badge>公钥 {ssh?.pubkeyAuthentication || "unknown"}</Badge>
-        </div>
-        {ssh?.error && <ErrorBox error={ssh.error} />}
-      </Section>
-      <Section
-        title="配置变更"
-        note="保存前校验端口冲突并生成 sshd_config diff"
-        actions={
-          <button style={primary} onClick={() => run(false)}>
-            生成预览
-          </button>
-        }
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))",
-            gap: 9,
-          }}
-        >
-          <Field label="端口">
-            <input
-              style={input}
-              type="number"
-              value={change.port}
-              onChange={(e) => setChange({ ...change, port: +e.target.value })}
-            />
-          </Field>
-          <Field label="Root 登录">
-            <select
-              style={input}
-              value={change.permitRootLogin}
-              onChange={(e) =>
-                setChange({ ...change, permitRootLogin: e.target.value })
-              }
-            >
-              <option value="no">禁止</option>
-              <option value="prohibit-password">仅公钥</option>
-              <option value="without-password">仅公钥（兼容值）</option>
-              <option value="yes">允许</option>
-            </select>
-          </Field>
-          <Field label="密码认证">
-            <select
-              style={input}
-              value={change.passwordAuthentication}
-              onChange={(e) =>
-                setChange({ ...change, passwordAuthentication: e.target.value })
-              }
-            >
-              <option value="no">关闭</option>
-              <option value="yes">开启</option>
-            </select>
-          </Field>
-        </div>
-        <Preview text={preview} onConfirm={() => run(true)} />
-      </Section>
-      <ErrorBox error={error} />
-    </div>
-  );
+    <>
+      <div style={{ marginBottom: 12 }}><h1 style={{ margin: 0, fontSize: 18, color: T.ink, letterSpacing: 0 }}>系统维护</h1><div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>DevBox 版本、配置备份与恢复出厂设置</div></div>
+      <div className="maintenance-two-col" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 12 }}>
+        <Section title="版本更新" icon="refresh">
+          <FieldRow label="当前版本"><code style={{ fontFamily: T.mono, color: T.ink2 }}>{currentVersion || 'dev'}</code></FieldRow>
+          <FieldRow label="检查更新"><Toggle checked={settings.updates.checkEnabled} onChange={checkEnabled => updateCfg({ checkEnabled })} label="查询 GitHub Releases"/></FieldRow>
+          <FieldRow label="自动更新" hint="仅保存开关，不执行自更新"><Toggle checked={settings.updates.autoUpdate} onChange={autoUpdate => updateCfg({ autoUpdate })} label="允许自动更新"/></FieldRow>
+          <div style={{ padding: 12, borderTop: `1px solid ${T.borderSoft}`, display: 'flex', alignItems: 'center', gap: 8 }}><button type="button" disabled={!settings.updates.checkEnabled} onClick={checkUpdate} className="edge-press edge-btn-secondary" style={btnSecondary}><Icon name="refresh" size={13}/>立即检查</button>{updateResult && <Chip tone={updateResult.updateAvailable ? 'amber' : 'green'}>{updateResult.updateAvailable ? `发现 ${updateResult.latestVersion}` : '已是最新版本'}</Chip>}</div>
+        </Section>
+        <Section title="配置备份" icon="download">
+          <div style={{ padding: 16, color: T.ink3, fontSize: 11.5, lineHeight: 1.6 }}>导出文件服务、通知、更新和默认应用配置。</div>
+          <FieldRow label="密钥与密码"><Toggle checked={includeSecrets} onChange={setIncludeSecrets} label="包含敏感信息"/></FieldRow>
+          <div style={{ padding: 12, borderTop: `1px solid ${T.borderSoft}` }}><button type="button" onClick={download} className="edge-press edge-btn-primary" style={btnPrimary}><Icon name="download" size={13}/>下载 tar.gz</button></div>
+        </Section>
+      </div>
+      <div style={{ marginTop: 12 }}><Section title="配置还原" icon="upload">
+        <div style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 10 }}><input ref={fileRef} type="file" accept=".gz,.tgz,application/gzip" onChange={e => previewRestore(e.target.files?.[0])} style={{ display: 'none' }}/><button type="button" onClick={() => fileRef.current?.click()} className="edge-press edge-btn-secondary" style={btnSecondary}><Icon name="upload" size={13}/>选择备份文件</button><span style={{ fontSize: 11.5, color: T.ink3 }}>确认还原前将自动备份当前配置</span></div>
+        {restore && <div style={{ margin: '0 14px 14px', padding: 13, border: '1px solid #fde68a', background: T.amberSoft, borderRadius: 7 }}><div style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>影响预览</div>{restore.changes.map(change => <div key={change} style={{ fontSize: 11.5, color: '#92400e', marginTop: 5 }}>• {change}</div>)}<div style={{ display: 'flex', gap: 8, marginTop: 10 }}><input aria-label="还原确认词" value={restorePhrase} onChange={e => setRestorePhrase(e.target.value)} placeholder="输入 RESTORE" style={{ ...field, width: 180 }}/><button type="button" disabled={restorePhrase !== 'RESTORE'} onClick={confirmRestore} className="edge-press edge-btn-primary" style={{ ...btnPrimary, opacity: restorePhrase === 'RESTORE' ? 1 : 0.45 }}><Icon name="history" size={13}/>确认还原</button></div></div>}
+      </Section></div>
+      <div style={{ marginTop: 12 }}><Section title="恢复出厂设置" icon="alertTri">
+        <div style={{ padding: 14, borderBottom: `1px solid ${T.borderSoft}`, fontSize: 11.5, color: '#991b1b', background: T.redSoft, lineHeight: 1.6 }}>仅清除 DevBox 维护配置与密钥并停止 WebDAV；不会重置操作系统、磁盘或已安装服务。</div>
+        <div style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}><Toggle checked={resetChecked} onChange={setResetChecked} label="已阅读影响说明"/><input aria-label="重置确认词" value={resetPhrase} onChange={e => setResetPhrase(e.target.value)} placeholder="输入 RESET DEVBOX" style={{ ...field, width: 190 }}/><button type="button" disabled={!resetChecked || resetPhrase !== 'RESET DEVBOX'} onClick={reset} className="edge-press edge-btn-danger" style={{ ...btnDanger, opacity: resetChecked && resetPhrase === 'RESET DEVBOX' ? 1 : 0.45 }}><Icon name="trash" size={13}/>重置 DevBox</button></div>
+      </Section></div>
+      {action && <div style={{ marginTop: 10, fontSize: 11.5, color: action.error ? T.red : T.green }}>{action.text}</div>}
+      <SaveBar busy={busy} onSave={save} message={message}/>
+    </>
+  )
 }
 
-function AccountTab({ settings, setSettings, reload }) {
-  const [enroll, setEnroll] = useState(null);
-  const [code, setCode] = useState("");
-  const [recovery, setRecovery] = useState([]);
-  const [accessCode, setAccessCode] = useState("");
-  const [settingsPreview, setSettingsPreview] = useState(null);
-  const [error, setError] = useState("");
-  const begin = async () => {
-    try {
-      setError("");
-      setEnroll(
-        await request("/api/v1/security/totp/enroll", {
-          method: "POST",
-          body: "{}",
-        }),
-      );
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const confirm = async () => {
-    try {
-      const d = await request("/api/v1/security/totp/confirm", {
-        method: "POST",
-        body: JSON.stringify({ code }),
-      });
-      setRecovery(d.recoveryCodes);
-      setEnroll(null);
-      reload();
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const save = async () => {
-    try {
-      const payload = settingsUpdatePayload(settings, { accessCode });
-      const preview = await request("/api/v1/security/settings/preview", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      setSettingsPreview({ payload, preview });
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const confirmSave = async () => {
-    try {
-      await request("/api/v1/security/settings", {
-        method: "POST",
-        body: JSON.stringify({ ...settingsPreview.payload, confirm: true }),
-      });
-      setSettingsPreview(null);
-      setAccessCode("");
-      reload();
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <Section
-        title="登录前访问设置"
-        note="访问码是登录密码前的额外共享口令，原值不会回显"
-        actions={
-          <button style={primary} onClick={save}>
-            生成变更预览
-          </button>
-        }
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "end",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <label
-            style={{
-              fontSize: 12,
-              color: T.ink2,
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              height: 34,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={!!settings.accessCodeEnabled}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  accessCodeEnabled: e.target.checked,
-                })
-              }
-            />
-            启用访问码
-          </label>
-          <Field label="新访问码">
-            <input
-              type="password"
-              autoComplete="new-password"
-              style={input}
-              value={accessCode}
-              onChange={(e) => setAccessCode(e.target.value)}
-              placeholder={
-                settings.accessCodeConfigured
-                  ? "已配置（留空不变）"
-                  : "设置访问码"
-              }
-            />
-          </Field>
-        </div>
-        <Preview
-          text={settingsPreview?.preview}
-          onConfirm={settingsPreview ? confirmSave : null}
-          confirmLabel="确认保存"
-        />
-      </Section>
-      <Section
-        title="双重验证"
-        note="启用后登录必须验证 TOTP 或一次性恢复码；TOTP 密钥经 AES-GCM 加密存储"
-        actions={
-          !settings.totpEnabled ? (
-            <button style={primary} onClick={begin}>
-              开始设置
-            </button>
-          ) : (
-            <Badge tone="green">已启用</Badge>
-          )
-        }
-      >
-        {enroll && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(220px,240px) minmax(0,1fr)",
-              gap: 18,
-              marginTop: 14,
-              alignItems: "center",
-            }}
-          >
-            <img
-              src={enroll.qrDataURL}
-              width="220"
-              height="220"
-              alt="TOTP 注册二维码"
-              style={{
-                border: `1px solid ${T.border}`,
-                padding: 8,
-                maxWidth: "100%",
-                height: "auto",
-              }}
-            />
-            <div>
-              <div style={{ fontSize: 11, color: T.ink3 }}>手动密钥</div>
-              <code
-                style={{
-                  display: "block",
-                  margin: "6px 0 14px",
-                  wordBreak: "break-all",
-                  fontSize: 12,
-                }}
-              >
-                {enroll.secret}
-              </code>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <input
-                  style={input}
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="6 位验证码"
-                />
-                <button style={primary} onClick={confirm}>
-                  验证并启用
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        {recovery.length > 0 && (
-          <Preview title="恢复码（仅显示一次）" text={recovery.join("\n")} />
-        )}
-      </Section>
-      <ErrorBox error={error} />
-    </div>
-  );
+function DefaultsPage({ settings, setSettings, save, busy, message }) {
+  const rows = [{ key: 'text/plain', label: '纯文本' }, { key: 'text/markdown', label: 'Markdown' }, { key: 'application/json', label: 'JSON' }]
+  const options = [{ value: 'browser', label: '浏览器' }, { value: 'vscode', label: 'VS Code Server' }, { value: 'files', label: '文件' }, { value: 'terminal', label: '终端' }]
+  const update = (key, value) => setSettings(prev => ({ ...prev, defaultApps: { ...prev.defaultApps, [key]: value } }))
+  return <><div style={{ marginBottom: 12 }}><h1 style={{ margin: 0, fontSize: 18, color: T.ink, letterSpacing: 0 }}>默认应用</h1><div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>桌面文件类型打开方式</div></div><Section title="文件关联" icon="apps">{rows.map(row => <FieldRow key={row.key} label={row.label} hint={row.key}><select aria-label={`${row.label}默认应用`} value={settings.defaultApps[row.key] || 'browser'} onChange={e => update(row.key, e.target.value)} style={{ ...field, width: 220 }}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></FieldRow>)}</Section><SaveBar busy={busy} onSave={save} message={message}/></>
 }
 
-function BansTab({ bans, reload }) {
-  const [rule, setRule] = useState(
-    bans?.rule || { threshold: 5, windowSec: 600, banMinutes: 30 },
-  );
-  const [rulePreview, setRulePreview] = useState(null);
-  const [error, setError] = useState("");
-  const save = async () => {
-    try {
-      setRulePreview(
-        await request("/api/v1/security/ban-rule", {
-          method: "POST",
-          body: JSON.stringify(rule),
-        }),
-      );
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const confirmSave = async () => {
-    try {
-      await request("/api/v1/security/ban-rule", {
-        method: "PUT",
-        body: JSON.stringify({ ...rule, confirm: true }),
-      });
-      setRulePreview(null);
-      reload();
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const unban = async (ip) => {
-    try {
-      await request(`/api/v1/security/bans/${encodeURIComponent(ip)}`, {
-        method: "DELETE",
-      });
-      reload();
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <Section
-        title="自动封禁规则"
-        note="作用于 DevBox 登录；SSH 日志监控当前仅展示状态"
-        actions={
-          <button style={primary} onClick={save}>
-            生成规则预览
-          </button>
-        }
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))",
-            gap: 9,
-          }}
-        >
-          <Field label="失败次数">
-            <input
-              style={input}
-              type="number"
-              value={rule.threshold}
-              onChange={(e) => setRule({ ...rule, threshold: +e.target.value })}
-            />
-          </Field>
-          <Field label="时间窗（秒）">
-            <input
-              style={input}
-              type="number"
-              value={rule.windowSec}
-              onChange={(e) => setRule({ ...rule, windowSec: +e.target.value })}
-            />
-          </Field>
-          <Field label="封禁（分钟）">
-            <input
-              style={input}
-              type="number"
-              value={rule.banMinutes}
-              onChange={(e) =>
-                setRule({ ...rule, banMinutes: +e.target.value })
-              }
-            />
-          </Field>
-          <Field label="保护网段（逗号分隔）">
-            <input
-              style={input}
-              value={(rule.protectedCIDRs || ["10.126.126.0/24"]).join(", ")}
-              onChange={(e) =>
-                setRule({
-                  ...rule,
-                  protectedCIDRs: e.target.value
-                    .split(",")
-                    .map((value) => value.trim())
-                    .filter(Boolean),
-                })
-              }
-            />
-          </Field>
-        </div>
-        <Preview
-          text={rulePreview}
-          onConfirm={rulePreview ? confirmSave : null}
-          confirmLabel="确认保存规则"
-        />
-      </Section>
-      <Section
-        title="封禁列表"
-        note={`SSH 日志监控：${bans?.sshLogMonitoring === "display-only" ? "仅展示，未启用" : "-"}`}
-      >
-        {bans?.items?.length ? (
-          <div style={{ display: "grid", gap: 7 }}>
-            {bans.items.map((b) => (
-              <div
-                key={b.ip}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "9px 10px",
-                  border: `1px solid ${T.borderSoft}`,
-                  borderRadius: 6,
-                  flexWrap: "wrap",
-                  gap: 8,
-                }}
-              >
-                <code>{b.ip}</code>
-                <span style={{ fontSize: 11.5, color: T.ink3 }}>
-                  失败 {b.failures} 次 · 至 {new Date(b.until).toLocaleString()}
-                </span>
-                <div style={{ flex: 1 }} />
-                <button style={danger} onClick={() => unban(b.ip)}>
-                  解封
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <Empty text="当前没有被封禁的 IP" />
-        )}
-      </Section>
-      <ErrorBox error={error} />
-    </div>
-  );
+function AboutPage({ about }) {
+  return <><div style={{ marginBottom: 12 }}><h1 style={{ margin: 0, fontSize: 18, color: T.ink, letterSpacing: 0 }}>关于 DevBox</h1><div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>桌面算力平台</div></div><Section title="产品信息" icon="info"><div style={{ padding: 22, display: 'flex', alignItems: 'center', gap: 16 }}><div style={{ width: 52, height: 52, borderRadius: 8, background: '#172033', color: 'white', display: 'grid', placeItems: 'center' }}><Icon name="cpu" size={27}/></div><div><div style={{ fontSize: 20, fontWeight: 750, color: T.ink, letterSpacing: 0 }}>{about?.name || 'A2D2 DevBox'}</div><div style={{ fontFamily: T.mono, fontSize: 12, color: T.ink3, marginTop: 5 }}>Version {about?.version || 'dev'}</div></div></div><FieldRow label="开源许可证"><a href={about?.license?.url} target="_blank" rel="noreferrer" style={{ color: T.blueDeep, fontSize: 12.5, display: 'inline-flex', alignItems: 'center', gap: 5 }}>{about?.license?.name || 'Apache License 2.0'}<Icon name="external" size={12}/></a></FieldRow><FieldRow label="版权"><span style={{ color: T.ink2, fontSize: 12.5 }}>{about?.license?.copyright}</span></FieldRow><FieldRow label="LICENSE"><div style={{ color: T.ink3, fontSize: 11.5, lineHeight: 1.55 }}>{about?.license?.text}</div></FieldRow></Section><div style={{ marginTop: 12 }}><Section title="依赖 Attribution" icon="book"><div className="maintenance-deps" style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}>{(about?.dependencies || []).map((dep, i) => <div key={dep.name} style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', borderTop: `1px solid ${T.borderSoft}`, borderRight: i % 2 === 0 ? `1px solid ${T.borderSoft}` : 0 }}><span style={{ fontSize: 12.5, color: T.ink2 }}>{dep.name}</span><div style={{ flex: 1 }}/><Chip tone="gray">{dep.license}</Chip></div>)}</div></Section></div></>
 }
 
-function FirewallTab({ firewall, remote }) {
-  const session = remote?.currentSessionIP || "";
-  const initialRules = session
-    ? [
-        {
-          direction: "in",
-          action: "allow",
-          protocol: "any",
-          port: 0,
-          source: "any",
-          interface: "tun0",
-          comment: "保留远程管理隧道",
-        },
-        {
-          direction: "in",
-          action: "allow",
-          protocol: "any",
-          port: 0,
-          source: session,
-          interface: "",
-          comment: "保留当前会话",
-        },
-      ]
-    : [];
-  const [rules, setRules] = useState(initialRules);
-  const [preview, setPreview] = useState("");
-  const [error, setError] = useState("");
-  const add = () =>
-    setRules([
-      ...rules,
-      {
-        direction: "in",
-        action: "allow",
-        protocol: "tcp",
-        port: 443,
-        source: "any",
-        interface: "",
-        comment: "",
-      },
-    ]);
-  const update = (i, k, v) =>
-    setRules(rules.map((r, n) => (n === i ? { ...r, [k]: v } : r)));
-  const run = async (apply = false) => {
-    try {
-      setError("");
-      const d = await request(
-        `/api/v1/security/firewall/${apply ? "apply" : "preview"}`,
-        {
-          method: "POST",
-          body: JSON.stringify({ rules, sessionIP: session, confirm: apply }),
-        },
-      );
-      setPreview(apply ? `${d.preview.ruleset}\n${d.message}` : d.ruleset);
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <Section
-        title="当前系统规则"
-        note={`${firewall?.backend || "unavailable"} · 只读；输出与 nft list ruleset / iptables-save 一致`}
-      >
-        <pre
-          style={{
-            margin: 0,
-            maxHeight: 190,
-            overflow: "auto",
-            background: "#0f172a",
-            color: "#cbd5e1",
-            padding: 11,
-            borderRadius: 6,
-            fontSize: 10.5,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {firewall?.ruleset || firewall?.error || "无可读取规则"}
-        </pre>
-      </Section>
-      <Section
-        title="规则编辑器"
-        note={`防锁死保护：tun0 + 当前会话 ${session || "未知"}；确认后仍为 dry-run`}
-        actions={
-          <>
-            <button style={button} onClick={add}>
-              <Icon name="plus" size={13} />
-              添加
-            </button>
-            <button style={primary} onClick={() => run(false)}>
-              生成预览
-            </button>
-          </>
-        }
-      >
-        <div style={{ display: "grid", gap: 6, overflowX: "auto" }}>
-          {rules.map((r, i) => (
-            <div
-              key={i}
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "90px 90px 90px 100px minmax(150px,1fr) 110px minmax(160px,1.3fr) 30px",
-                gap: 6,
-                minWidth: 850,
-              }}
-            >
-              <select
-                style={input}
-                value={r.direction}
-                onChange={(e) => update(i, "direction", e.target.value)}
-              >
-                <option value="in">入站</option>
-                <option value="out">出站</option>
-              </select>
-              <select
-                style={input}
-                value={r.action}
-                onChange={(e) => update(i, "action", e.target.value)}
-              >
-                <option value="allow">允许</option>
-                <option value="deny">拒绝</option>
-              </select>
-              <select
-                style={input}
-                value={r.protocol}
-                onChange={(e) => update(i, "protocol", e.target.value)}
-              >
-                <option value="any">任意</option>
-                <option value="tcp">TCP</option>
-                <option value="udp">UDP</option>
-              </select>
-              <input
-                style={input}
-                type="number"
-                value={r.port || 0}
-                onChange={(e) => update(i, "port", +e.target.value)}
-              />
-              <input
-                style={input}
-                value={r.source}
-                onChange={(e) => update(i, "source", e.target.value)}
-                placeholder="源地址"
-              />
-              <input
-                style={input}
-                value={r.interface}
-                onChange={(e) => update(i, "interface", e.target.value)}
-                placeholder="接口"
-              />
-              <input
-                style={input}
-                value={r.comment}
-                onChange={(e) => update(i, "comment", e.target.value)}
-                placeholder="说明"
-              />
-              <button
-                title="删除规则"
-                style={{
-                  ...danger,
-                  width: 30,
-                  padding: 0,
-                  justifyContent: "center",
-                }}
-                onClick={() => setRules(rules.filter((_, n) => n !== i))}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-        <Preview
-          text={preview}
-          onConfirm={() => run(true)}
-          confirmLabel="二次确认 dry-run"
-        />
-      </Section>
-      <ErrorBox error={error} />
-    </div>
-  );
-}
+export default function Settings() {
+  const [active, setActive] = useState('webdav')
+  const [settings, setSettings] = useState(null)
+  const [webdavStatus, setWebDAVStatus] = useState(null)
+  const [smbProbe, setSMBProbe] = useState(null)
+  const [about, setAbout] = useState(null)
+  const [smtpPassword, setSMTPPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState(null)
 
-function CertsTab({ certs, reload, settings, setSettings }) {
-  const [form, setForm] = useState({
-    name: "devbox-self",
-    hosts: "devbox.local",
-    validDays: 365,
-  });
-  const [upload, setUpload] = useState({
-    name: "",
-    certificate: "",
-    privateKey: "",
-  });
-  const [preview, setPreview] = useState(null);
-  const [error, setError] = useState("");
-  const selfPayload = () => ({
-    name: form.name,
-    hosts: form.hosts
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean),
-    validDays: +form.validDays,
-  });
-  const generate = async () => {
-    try {
-      const payload = selfPayload();
-      setPreview({
-        kind: "self",
-        payload,
-        data: await request("/api/v1/security/certificates/self-signed", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        }),
-      });
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const send = async () => {
-    try {
-      setPreview({
-        kind: "upload",
-        payload: upload,
-        data: await request("/api/v1/security/certificates/preview", {
-          method: "POST",
-          body: JSON.stringify(upload),
-        }),
-      });
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const bind = async () => {
-    try {
-      const payload = settingsUpdatePayload(settings);
-      setPreview({
-        kind: "bind",
-        payload,
-        data: await request("/api/v1/security/settings/preview", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        }),
-      });
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  const confirm = async () => {
-    try {
-      if (preview.kind === "self")
-        await request("/api/v1/security/certificates/self-signed", {
-          method: "POST",
-          body: JSON.stringify({ ...preview.payload, confirm: true }),
-        });
-      if (preview.kind === "upload")
-        await request("/api/v1/security/certificates", {
-          method: "POST",
-          body: JSON.stringify({ ...preview.payload, confirm: true }),
-        });
-      if (preview.kind === "bind")
-        await request("/api/v1/security/settings", {
-          method: "POST",
-          body: JSON.stringify({ ...preview.payload, confirm: true }),
-        });
-      setPreview(null);
-      if (preview.kind === "upload")
-        setUpload({ name: "", certificate: "", privateKey: "" });
-      reload();
-    } catch (e) {
-      setError(e.message);
-    }
-  };
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <Section
-        title="证书列表"
-        note="私钥永不返回前端；30 天内到期显示告警"
-        actions={
-          <button style={primary} onClick={bind}>
-            预览 HTTPS 绑定
-          </button>
-        }
-      >
-        <div style={{ display: "grid", gap: 7 }}>
-          {certs?.items?.map((c) => (
-            <label
-              key={c.name}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: 10,
-                border: `1px solid ${T.borderSoft}`,
-                borderRadius: 6,
-              }}
-            >
-              <input
-                type="radio"
-                name="cert"
-                checked={settings.httpsCertificate === c.name}
-                onChange={() =>
-                  setSettings({ ...settings, httpsCertificate: c.name })
-                }
-              />
-              <div style={{ marginLeft: 9 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 650 }}>
-                  {c.name} {c.selfSigned && <Badge>自签</Badge>}{" "}
-                  {c.expiring && <Badge tone="amber">临近到期</Badge>}
-                </div>
-                <div style={{ fontSize: 10.5, color: T.ink3, marginTop: 3 }}>
-                  {c.subject} · {new Date(c.notAfter).toLocaleDateString()} ·{" "}
-                  {c.daysLeft} 天
-                </div>
-              </div>
-            </label>
-          ))}
-          {!certs?.items?.length && <Empty text="尚未安装证书" />}
-        </div>
-        <div style={{ fontSize: 11, color: T.ink3, marginTop: 10 }}>
-          ACME 自动续签：占位说明，本期未实现。
-        </div>
-        {preview?.kind === "bind" && (
-          <Preview
-            text={preview.data}
-            onConfirm={confirm}
-            confirmLabel="确认绑定并重启后生效"
-          />
-        )}
-      </Section>
-      <Section
-        title="生成自签证书"
-        actions={
-          <button style={primary} onClick={generate}>
-            生成预览
-          </button>
-        }
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))",
-            gap: 9,
-          }}
-        >
-          <Field label="名称">
-            <input
-              style={input}
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
-          </Field>
-          <Field label="域名/IP（逗号分隔）">
-            <input
-              style={input}
-              value={form.hosts}
-              onChange={(e) => setForm({ ...form, hosts: e.target.value })}
-            />
-          </Field>
-          <Field label="有效天数">
-            <input
-              style={input}
-              type="number"
-              value={form.validDays}
-              onChange={(e) => setForm({ ...form, validDays: e.target.value })}
-            />
-          </Field>
-        </div>
-        {preview?.kind === "self" && (
-          <Preview
-            text={preview.data}
-            onConfirm={confirm}
-            confirmLabel="确认生成"
-          />
-        )}
-      </Section>
-      <Section
-        title="上传 PEM 证书"
-        note="提交前解析有效期并校验证书与 RSA 私钥匹配"
-        actions={
-          <button style={primary} onClick={send}>
-            校验并预览
-          </button>
-        }
-      >
-        <Field label="名称">
-          <input
-            style={{ ...input, width: "min(240px,100%)" }}
-            value={upload.name}
-            onChange={(e) => setUpload({ ...upload, name: e.target.value })}
-          />
-        </Field>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
-            gap: 9,
-            marginTop: 9,
-          }}
-        >
-          <textarea
-            rows={7}
-            style={{
-              ...input,
-              height: "auto",
-              padding: 9,
-              fontFamily: "monospace",
-            }}
-            value={upload.certificate}
-            onChange={(e) =>
-              setUpload({ ...upload, certificate: e.target.value })
-            }
-            placeholder="-----BEGIN CERTIFICATE-----"
-          />
-          <textarea
-            rows={7}
-            style={{
-              ...input,
-              height: "auto",
-              padding: 9,
-              fontFamily: "monospace",
-            }}
-            value={upload.privateKey}
-            onChange={(e) =>
-              setUpload({ ...upload, privateKey: e.target.value })
-            }
-            placeholder="-----BEGIN PRIVATE KEY-----"
-          />
-        </div>
-        {preview?.kind === "upload" && (
-          <Preview
-            text={preview.data}
-            onConfirm={confirm}
-            confirmLabel="确认上传"
-          />
-        )}
-      </Section>
-      <ErrorBox error={error} />
-    </div>
-  );
-}
-
-function DiagnosticsTab() {
-  const [running, setRunning] = useState(null);
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))",
-        gap: 12,
-      }}
-    >
-      {diagnosticsTools.map((tool) => (
-        <button
-          key={tool.id}
-          type="button"
-          onClick={() => setRunning(tool.id)}
-          style={{
-            ...panel,
-            minHeight: 92,
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            textAlign: "left",
-            cursor: "pointer",
-            borderColor: running === tool.id ? tool.color : T.border,
-            boxShadow: running === tool.id ? `0 0 0 2px ${tool.color}22` : "none",
-          }}
-        >
-          <span
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 7,
-              flexShrink: 0,
-              display: "grid",
-              placeItems: "center",
-              color: tool.color,
-              background: `${tool.color}15`,
-            }}
-          >
-            <Icon name={tool.icon} size={18} />
-          </span>
-          <span style={{ minWidth: 0 }}>
-            <span style={{ display: "block", color: T.ink, fontSize: 13, fontWeight: 700 }}>
-              {tool.name}
-            </span>
-            <span style={{ display: "block", color: T.ink3, fontSize: 11.5, marginTop: 4 }}>
-              {tool.desc}
-            </span>
-            {running === tool.id && (
-              <span style={{ display: "block", color: tool.color, fontSize: 11.5, fontWeight: 650, marginTop: 7 }}>
-                正在执行...
-              </span>
-            )}
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-export default function NetworkSecuritySettings() {
-  const [tab, setTab] = useState("network");
-  const [data, setData] = useState({});
-  const [settings, setSettings] = useState({});
-  const [error, setError] = useState("");
-  const load = async () => {
-    try {
-      setError("");
-      const [network, remote, security, ssh, bans, firewall, certs] =
-        await Promise.all(
-          [
-            "/api/v1/network",
-            "/api/v1/network/remote-access",
-            "/api/v1/security/settings",
-            "/api/v1/security/ssh",
-            "/api/v1/security/bans",
-            "/api/v1/security/firewall",
-            "/api/v1/security/certificates",
-          ].map((x) => request(x)),
-        );
-      setData({ network, remote, ssh, bans, firewall, certs });
-      setSettings(security);
-    } catch (e) {
-      setError(e.message);
-    }
-  };
+  const load = useCallback(async () => {
+    const [settingsResponse, aboutResponse] = await Promise.all([authFetch('/api/v1/maintenance/settings'), authFetch('/api/v1/maintenance/about')])
+    if (!settingsResponse.ok) return setMessage({ text: await responseMessage(settingsResponse), error: true })
+    const data = await settingsResponse.json(); setSettings(data.settings); setWebDAVStatus(data.webdavStatus); setSMBProbe(data.smbProbe)
+    if (aboutResponse.ok) setAbout(await aboutResponse.json())
+  }, [])
   useEffect(() => {
-    const first = setTimeout(load, 0);
-    const id = setInterval(() => {
-      if (tab === "network") load();
-    }, 5000);
-    return () => {
-      clearTimeout(first);
-      clearInterval(id);
-    };
-  }, [tab]);
-  const body = {
-    network: <NetworkTab network={data.network} />,
-    remote: (
-      <RemoteTab
-        remote={data.remote}
-        settings={settings}
-        setSettings={setSettings}
-        reload={load}
-      />
-    ),
-    ssh: <SSHTab key={data.ssh?.port || "ssh"} ssh={data.ssh} />,
-    account: (
-      <AccountTab settings={settings} setSettings={setSettings} reload={load} />
-    ),
-    bans: (
-      <BansTab
-        key={JSON.stringify(data.bans?.rule || {})}
-        bans={data.bans}
-        reload={load}
-      />
-    ),
-    firewall: (
-      <FirewallTab
-        key={data.remote?.currentSessionIP || "firewall"}
-        firewall={data.firewall}
-        remote={data.remote}
-      />
-    ),
-    certs: (
-      <CertsTab
-        certs={data.certs}
-        reload={load}
-        settings={settings}
-        setSettings={setSettings}
-      />
-    ),
-    diagnostics: <DiagnosticsTab />,
-  }[tab];
+    // Initial API synchronization belongs to this mount effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load()
+  }, [load])
+
+  const save = async () => {
+    setBusy(true); setMessage(null)
+    const response = await authFetch('/api/v1/maintenance/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...settings, smtpPassword }) })
+    if (!response.ok) setMessage({ text: await responseMessage(response), error: true })
+    else { const data = await response.json(); setSettings(data.settings); setWebDAVStatus(data.webdavStatus); setSMTPPassword(''); setMessage({ text: '设置已保存' }) }
+    setBusy(false)
+  }
+
+  if (!settings) return <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: T.ink3, background: T.surfaceAlt, fontSize: 12 }}>{message?.text || '正在加载系统设置'}</div>
+
   return (
-    <div
-      style={{
-        flex: 1,
-        minWidth: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: T.surfaceAlt,
-        overflow: "hidden",
-      }}
-    >
-      <header
-        style={{
-          background: T.surface,
-          borderBottom: `1px solid ${T.border}`,
-          padding: "14px 20px 0",
-          minWidth: 0,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
-          <div>
-            <div style={{ fontSize: 17, fontWeight: 750, color: T.ink }}>
-              网络与安全
-            </div>
-            <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>
-              实时状态、远程入口与访问保护
-            </div>
-          </div>
-          <div style={{ flex: 1 }} />
-          <div style={{ flexShrink: 0 }}>
-            <Badge tone="green">只读采集已连接</Badge>
-          </div>
-        </div>
-        <nav
-          style={{
-            display: "flex",
-            gap: 2,
-            marginTop: 12,
-            overflowX: "auto",
-            maxWidth: "100%",
-          }}
-        >
-          {tabs.map(([id, label, icon]) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              style={{
-                height: 36,
-                padding: "0 12px",
-                border: 0,
-                borderBottom: `2px solid ${tab === id ? T.blueDeep : "transparent"}`,
-                background: "transparent",
-                color: tab === id ? T.blueDeep : T.ink3,
-                fontSize: 12,
-                fontWeight: tab === id ? 700 : 550,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                flexShrink: 0,
-                whiteSpace: "nowrap",
-              }}
-            >
-              <Icon name={icon} size={13} />
-              {label}
-            </button>
-          ))}
+    <div className="maintenance-shell" style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '178px minmax(0,1fr)', background: T.surfaceAlt }}>
+      <style>{`@media (max-width: 700px) {
+        .maintenance-shell { grid-template-columns: minmax(0,1fr) !important; grid-template-rows: auto minmax(0,1fr); }
+        .maintenance-sidebar { padding: 8px !important; }
+        .maintenance-sidebar-title { display: none; }
+        .maintenance-nav { flex-direction: row !important; overflow-x: auto; }
+        .maintenance-nav button { flex: 0 0 auto; }
+        .maintenance-main { padding: 14px 10px !important; }
+        .maintenance-field-row { grid-template-columns: minmax(0,1fr) !important; gap: 7px !important; }
+        .maintenance-two-col, .maintenance-deps { grid-template-columns: minmax(0,1fr) !important; }
+        .maintenance-smb-row { grid-template-columns: minmax(0,1fr) auto auto 34px !important; }
+        .maintenance-smb-row > input:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+      }`}</style>
+      <aside className="maintenance-sidebar" style={{ background: '#172033', color: 'white', padding: '18px 10px', minHeight: 0 }}>
+        <div className="maintenance-sidebar-title" style={{ padding: '0 10px 14px', fontSize: 12.5, fontWeight: 700, letterSpacing: 0 }}>系统设置</div>
+        <nav className="maintenance-nav" style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {tabs.map(tab => <button key={tab.id} type="button" onClick={() => { setActive(tab.id); setMessage(null) }} style={{ border: 0, borderRadius: 6, height: 36, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', background: active === tab.id ? 'rgba(255,255,255,0.13)' : 'transparent', color: active === tab.id ? 'white' : '#aab5c7', fontSize: 12.5, fontWeight: active === tab.id ? 650 : 500, textAlign: 'left', letterSpacing: 0 }}><Icon name={tab.icon} size={15}/>{tab.label}</button>)}
         </nav>
-      </header>
-      <main style={{ flex: 1, minWidth: 0, overflow: "auto", padding: 16 }}>
-        <ErrorBox error={error} />
-        {body}
+      </aside>
+      <main className="maintenance-main" style={{ minWidth: 0, minHeight: 0, overflow: 'auto', padding: '20px clamp(16px, 3vw, 30px)' }}>
+        <div style={{ maxWidth: 980, margin: '0 auto' }}>
+          {active === 'webdav' && <WebDAVPage settings={settings} setSettings={setSettings} status={webdavStatus} save={save} busy={busy} message={message}/>}
+          {active === 'smb' && <SMBPage settings={settings} setSettings={setSettings} probe={smbProbe} save={save} busy={busy} message={message}/>}
+          {active === 'smtp' && <SMTPPage settings={settings} setSettings={setSettings} password={smtpPassword} setPassword={setSMTPPassword} save={save} busy={busy} message={message}/>}
+          {active === 'maintenance' && <MaintenancePage settings={settings} setSettings={setSettings} currentVersion={about?.version} save={save} busy={busy} message={message}/>}
+          {active === 'defaults' && <DefaultsPage settings={settings} setSettings={setSettings} save={save} busy={busy} message={message}/>}
+          {active === 'about' && <AboutPage about={about}/>}
+        </div>
       </main>
     </div>
-  );
+  )
 }

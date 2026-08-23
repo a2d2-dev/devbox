@@ -13,26 +13,26 @@ import (
 )
 
 func (s *Server) registerNetworkSecurityRoutes() {
-	s.mux.HandleFunc("/api/v1/network/remote-access", s.handleRemoteAccess)
-	s.mux.HandleFunc("/api/v1/network/ddns/preview", s.handleDDNSPreview)
-	s.mux.HandleFunc("/api/v1/network/ddns/update", s.handleDDNSUpdate)
-	s.mux.HandleFunc("/api/v1/security/settings", s.handleSecuritySettings)
-	s.mux.HandleFunc("/api/v1/security/settings/preview", s.handleSecuritySettingsPreview)
-	s.mux.HandleFunc("/api/v1/security/ssh", s.handleSSHStatus)
-	s.mux.HandleFunc("/api/v1/security/ssh/preview", s.handleSSHPreview)
-	s.mux.HandleFunc("/api/v1/security/ssh/apply", s.handleSSHApply)
-	s.mux.HandleFunc("/api/v1/security/firewall", s.handleFirewallStatus)
-	s.mux.HandleFunc("/api/v1/security/firewall/preview", s.handleFirewallPreview)
-	s.mux.HandleFunc("/api/v1/security/firewall/apply", s.handleFirewallApply)
-	s.mux.HandleFunc("/api/v1/security/totp/enroll", s.handleTOTPEnroll)
-	s.mux.HandleFunc("/api/v1/security/totp/confirm", s.handleTOTPConfirm)
-	s.mux.HandleFunc("/api/v1/security/totp/disable", s.handleTOTPDisable)
-	s.mux.HandleFunc("/api/v1/security/bans", s.handleBans)
-	s.mux.HandleFunc("/api/v1/security/bans/", s.handleBan)
-	s.mux.HandleFunc("/api/v1/security/ban-rule", s.handleBanRule)
-	s.mux.HandleFunc("/api/v1/security/certificates", s.handleCertificates)
-	s.mux.HandleFunc("/api/v1/security/certificates/preview", s.handleCertificatePreview)
-	s.mux.HandleFunc("/api/v1/security/certificates/self-signed", s.handleSelfSignedCertificate)
+	s.mux.HandleFunc("/api/v1/network/remote-access", s.requireAdmin(s.handleRemoteAccess))
+	s.mux.HandleFunc("/api/v1/network/ddns/preview", s.requireAdmin(s.handleDDNSPreview))
+	s.mux.HandleFunc("/api/v1/network/ddns/update", s.requireAdmin(s.handleDDNSUpdate))
+	s.mux.HandleFunc("/api/v1/security/settings", s.requireAdmin(s.handleSecuritySettings))
+	s.mux.HandleFunc("/api/v1/security/settings/preview", s.requireAdmin(s.handleSecuritySettingsPreview))
+	s.mux.HandleFunc("/api/v1/security/ssh", s.requireAdmin(s.handleSSHStatus))
+	s.mux.HandleFunc("/api/v1/security/ssh/preview", s.requireAdmin(s.handleSSHPreview))
+	s.mux.HandleFunc("/api/v1/security/ssh/apply", s.requireAdmin(s.handleSSHApply))
+	s.mux.HandleFunc("/api/v1/security/firewall", s.requireAdmin(s.handleFirewallStatus))
+	s.mux.HandleFunc("/api/v1/security/firewall/preview", s.requireAdmin(s.handleFirewallPreview))
+	s.mux.HandleFunc("/api/v1/security/firewall/apply", s.requireAdmin(s.handleFirewallApply))
+	s.mux.HandleFunc("/api/v1/security/totp/enroll", s.requireAdmin(s.handleTOTPEnroll))
+	s.mux.HandleFunc("/api/v1/security/totp/confirm", s.requireAdmin(s.handleTOTPConfirm))
+	s.mux.HandleFunc("/api/v1/security/totp/disable", s.requireAdmin(s.handleTOTPDisable))
+	s.mux.HandleFunc("/api/v1/security/bans", s.requireAdmin(s.handleBans))
+	s.mux.HandleFunc("/api/v1/security/bans/", s.requireAdmin(s.handleBan))
+	s.mux.HandleFunc("/api/v1/security/ban-rule", s.requireAdmin(s.handleBanRule))
+	s.mux.HandleFunc("/api/v1/security/certificates", s.requireAdmin(s.handleCertificates))
+	s.mux.HandleFunc("/api/v1/security/certificates/preview", s.requireAdmin(s.handleCertificatePreview))
+	s.mux.HandleFunc("/api/v1/security/certificates/self-signed", s.requireAdmin(s.handleSelfSignedCertificate))
 }
 
 func (s *Server) handleRemoteAccess(w http.ResponseWriter, r *http.Request) {
@@ -469,15 +469,6 @@ func (s *Server) handleSelfSignedCertificate(w http.ResponseWriter, r *http.Requ
 	s.jsonOK(w, cert)
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(out); err != nil {
-		jsonError(w, fmt.Errorf("invalid request: %w", err), 400)
-		return false
-	}
-	return true
-}
 func jsonError(w http.ResponseWriter, err error, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -3,10 +3,10 @@ import { T } from '../tokens'
 import { Icon } from '../icons'
 import { btnSecondary } from '../components/AppWindow'
 import { getAuthToken } from '../hooks/useApi'
-import { AnimatePresence, PopScale } from '../motion'
 import { useOverlayLayer } from '../overlays/OverlayProvider'
+import { startVisiblePolling } from '../lib/visiblePolling'
 
-// Story 7.1 audit 需要 Bearer token。所有 fetch 调用走 authFetch 自动带 token。
+// 所有日志 API 调用统一携带控制台 Bearer token。
 function authFetch(url, opts = {}) {
   const token = getAuthToken()
   const headers = { ...(opts.headers || {}) }
@@ -14,19 +14,19 @@ function authFetch(url, opts = {}) {
   return fetch(url, { ...opts, headers })
 }
 
-// Story 7.1: 操作日志审计页
-// GET /api/v1/audit/events?limit=N&offset=M&type=...&user=&since=ISO8601&until=ISO8601&outcome=
-// 双 sink 后端：sqlite (本地) + MQTT (云端聚合)；本页查询本地 sqlite
-
-// CR E4: NOT_IMPL 灰显（agent 当前无对应触发点）
 const EVENT_TYPES = [
   { value: 'LOGIN_SUCCESS',  label: '登录成功',   tone: 'green' },
   { value: 'LOGIN_FAILED',   label: '登录失败',   tone: 'red' },
-  { value: 'APP_INSTALL',    label: '应用安装',   tone: 'blue',   notImpl: true },
+  { value: 'APP_INSTALL',    label: '应用安装',   tone: 'blue' },
   { value: 'APP_UNINSTALL',  label: '应用卸载',   tone: 'amber' },
   { value: 'APP_START',      label: '应用启动',   tone: 'blue' },
   { value: 'APP_STOP',       label: '应用停止',   tone: 'slate' },
   { value: 'APP_RESTART',    label: '应用重启',   tone: 'blue' },
+  { value: 'SERVICE_START',  label: '服务启动',   tone: 'green' },
+  { value: 'SERVICE_STOP',   label: '服务停止',   tone: 'amber' },
+  { value: 'SERVICE_RESTART', label: '服务重启',  tone: 'blue' },
+  { value: 'PROCESS_TERMINATE', label: '终止进程', tone: 'red' },
+  { value: 'LOG_CLEAR',      label: '清空日志',   tone: 'red' },
   { value: 'SHELL_OPEN',     label: '打开 Shell', tone: 'violet' },
   { value: 'SHELL_CLOSE',    label: '关闭 Shell', tone: 'slate' },
   { value: 'FILE_LIST',      label: '浏览文件',   tone: 'slate' },
@@ -37,36 +37,33 @@ const EVENT_TYPES = [
 
 const TONE_COLOR = { green: '#059669', red: '#dc2626', blue: '#2563eb', amber: '#d97706', violet: '#7c3aed', slate: '#475569' }
 
-const PAGE_SIZE = 50
+const LEVEL_META = {
+  info: { label: '信息', color: '#2563eb' },
+  warning: { label: '警告', color: '#d97706' },
+  error: { label: '错误', color: '#dc2626' },
+}
+
+const MODULES = [
+  ['auth', '认证'], ['supervisor', '服务'], ['apps', '应用'], ['process', '进程'], ['audit', '审计'], ['system', '系统'],
+]
 
 export default function AuditLog() {
-  // filter state
   const [timeRange, setTimeRange] = useState('24h') // 1h / 6h / 24h / 7d / 30d
-  const [typeFilter, setTypeFilter] = useState([]) // multi
+  const [levelFilter, setLevelFilter] = useState('')
+  const [moduleFilter, setModuleFilter] = useState('')
   const [userFilter, setUserFilter] = useState('')
-  const [outcomeFilter, setOutcomeFilter] = useState('all') // all / success / failure
   const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(25)
+  const [jumpPage, setJumpPage] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [confirmClear, setConfirmClear] = useState(false)
 
   // data state
   const [events, setEvents] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [cloudOnline, setCloudOnline] = useState(null)
   const [expanded, setExpanded] = useState(null)
-
-  // cloud status (一次性 + 偶尔轮询)
-  useEffect(() => {
-    let cancelled = false
-    function poll() {
-      fetch('/api/v1/cloud/status').then(r => r.ok ? r.json() : { cloudOnline: false }).then(d => {
-        if (!cancelled) setCloudOnline(!!d.cloudOnline)
-      }).catch(() => { if (!cancelled) setCloudOnline(false) })
-    }
-    poll()
-    const id = setInterval(poll, 30000)
-    return () => { cancelled = true; clearInterval(id) }
-  }, [])
 
   // build query url
   const since = useMemo(() => {
@@ -78,20 +75,20 @@ export default function AuditLog() {
 
   const queryUrl = useMemo(() => {
     const params = new URLSearchParams()
-    params.set('limit', String(PAGE_SIZE))
-    params.set('offset', String(page * PAGE_SIZE))
+    params.set('limit', String(pageSize))
+    params.set('offset', String(page * pageSize))
     params.set('since', since)
+    params.set('_refresh', String(refreshKey))
     if (userFilter) params.set('user', userFilter)
-    if (outcomeFilter !== 'all') params.append('outcome', outcomeFilter)
-    typeFilter.forEach(t => params.append('type', t))
+    if (levelFilter) params.set('level', levelFilter)
+    if (moduleFilter) params.set('module', moduleFilter)
     return '/api/v1/audit/events?' + params.toString()
-  }, [page, since, userFilter, outcomeFilter, typeFilter])
+  }, [page, pageSize, since, userFilter, levelFilter, moduleFilter, refreshKey])
 
   // fetch (poll 每 30s)
   // CR C8: 后台 tab 暂停轮询；CR E5: 每次 load 开头清 error
   useEffect(() => {
     let cancelled = false
-    let id = null
     function load() {
       setLoading(true)
       setError('')
@@ -111,29 +108,27 @@ export default function AuditLog() {
         if (!cancelled) setLoading(false)
       })
     }
-    function startPolling() {
-      if (id != null) return
-      load()
-      id = setInterval(load, 30000)
-    }
-    function stopPolling() {
-      if (id != null) { clearInterval(id); id = null }
-    }
-    function onVisibility() {
-      if (document.hidden) stopPolling()
-      else startPolling()
-    }
-    if (!document.hidden) startPolling()
-    document.addEventListener('visibilitychange', onVisibility)
+    const stopPolling = startVisiblePolling(load, 30000)
     return () => {
       cancelled = true
       stopPolling()
-      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [queryUrl])
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const eventTypeMeta = (t) => EVENT_TYPES.find(e => e.value === t) || { label: t, tone: 'slate' }
+
+  const clearLogs = async () => {
+    setError('')
+    const response = await authFetch('/api/v1/audit/events', { method: 'DELETE' })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body.error || `清空失败 (${response.status})`)
+    }
+    setPage(0)
+    setConfirmClear(false)
+    setRefreshKey(key => key + 1)
+  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt }}>
@@ -141,14 +136,16 @@ export default function AuditLog() {
       <div style={{ padding: '18px 24px 14px', background: T.surface, borderBottom: `1px solid ${T.border}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
           <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>操作日志</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: T.ink }}>系统日志</div>
             <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 4 }}>
               共 {total} 条 · 当前页 {page + 1}/{totalPages}
-              {cloudOnline === false && <span style={{ color: '#a16207', marginLeft: 8 }}>· 云端聚合不可用（仅本节点）</span>}
             </div>
           </div>
           <div style={{ flex: 1 }}/>
           {loading && <span style={{ fontSize: 11, color: T.ink4 }}>加载中…</span>}
+          <button onClick={() => setConfirmClear(true)} style={{ ...btnSecondary, height: 30, padding: '0 10px', color: T.red }}>
+            <Icon name="trash" size={12}/>清空
+          </button>
         </div>
 
         {/* filter row */}
@@ -177,24 +174,16 @@ export default function AuditLog() {
             }}
           />
 
-          {/* outcome */}
-          <div style={{ display: 'flex', gap: 2, background: T.surfaceAlt, padding: 2, borderRadius: 8 }}>
-            {[['all', '全部'], ['success', '成功'], ['failure', '失败']].map(([v, lbl]) => (
-              <button key={v} onClick={() => { setOutcomeFilter(v); setPage(0) }} style={{
-                padding: '5px 10px', fontSize: 12, fontWeight: 500, border: 'none',
-                background: outcomeFilter === v ? T.surface : 'transparent',
-                color: outcomeFilter === v ? T.blueDeep : T.ink3,
-                borderRadius: 6, cursor: 'pointer',
-              }}>{lbl}</button>
-            ))}
-          </div>
+          <select value={levelFilter} onChange={e => { setLevelFilter(e.target.value); setPage(0) }} style={selectStyle}>
+            <option value="">全部等级</option><option value="info">信息</option><option value="warning">警告</option><option value="error">错误</option>
+          </select>
+          <select value={moduleFilter} onChange={e => { setModuleFilter(e.target.value); setPage(0) }} style={selectStyle}>
+            <option value="">全部模块</option>{MODULES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
 
-          {/* event type multi */}
-          <EventTypeMultiSelect value={typeFilter} onChange={v => { setTypeFilter(v); setPage(0) }}/>
-
-          {(typeFilter.length > 0 || userFilter || outcomeFilter !== 'all' || timeRange !== '24h') && (
+          {(levelFilter || moduleFilter || userFilter || timeRange !== '24h') && (
             <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px' }}
-              onClick={() => { setTypeFilter([]); setUserFilter(''); setOutcomeFilter('all'); setTimeRange('24h'); setPage(0) }}>
+              onClick={() => { setLevelFilter(''); setModuleFilter(''); setUserFilter(''); setTimeRange('24h'); setPage(0) }}>
               <Icon name="x" size={12} stroke={2}/>重置
             </button>
           )}
@@ -212,17 +201,12 @@ export default function AuditLog() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
             <thead>
               <tr style={{ background: T.surfaceAlt, color: T.ink3, fontWeight: 600, fontSize: 11.5 }}>
-                <th style={th}>时间</th>
-                <th style={th}>用户</th>
-                <th style={th}>事件</th>
-                <th style={th}>资源</th>
-                <th style={th}>源 IP</th>
-                <th style={th}>结果</th>
+                <th style={th}>等级</th><th style={th}>模块</th><th style={th}>时间</th><th style={th}>用户</th><th style={th}>事件</th>
               </tr>
             </thead>
             <tbody>
               {events.length === 0 && !loading && (
-                <tr><td colSpan={6} style={{ ...td, textAlign: 'center', padding: 32, color: T.ink4 }}>没有匹配的事件</td></tr>
+                <tr><td colSpan={5} style={{ ...td, textAlign: 'center', padding: 32, color: T.ink4 }}>没有匹配的日志</td></tr>
               )}
               {events.map(ev => {
                 const meta = eventTypeMeta(ev.event_type)
@@ -232,52 +216,41 @@ export default function AuditLog() {
           </table>
         </div>
 
-        {/* pagination */}
-        {totalPages > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 16 }}>
             <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} style={pageBtn(page === 0)}>← 上一页</button>
             <span style={{ fontSize: 12.5, color: T.ink2 }}>第 {page + 1} / {totalPages} 页</span>
             <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} style={pageBtn(page >= totalPages - 1)}>下一页 →</button>
-          </div>
-        )}
+            <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(0) }} style={selectStyle}>
+              {[10, 25, 50, 100].map(size => <option key={size} value={size}>{size} 条/页</option>)}
+            </select>
+            <input value={jumpPage} onChange={e => setJumpPage(e.target.value.replace(/\D/g, ''))} placeholder="页码" style={{ ...selectStyle, width: 58 }}/>
+            <button style={pageBtn(false)} onClick={() => { const target = Math.min(totalPages, Math.max(1, Number(jumpPage) || 1)); setPage(target - 1); setJumpPage('') }}>跳页</button>
+        </div>
       </div>
 
       {/* CR C7: 详情右侧抽屉（替代行内展开） */}
       {expanded && <DetailDrawer ev={expanded} meta={eventTypeMeta(expanded.event_type)} onClose={() => setExpanded(null)}/>}
+      {confirmClear && <ClearDialog onClose={() => setConfirmClear(false)} onConfirm={clearLogs} onError={message => setError(message)}/>}
     </div>
   )
 }
 
 // CR C7: 简化为单行（详情移到右侧 DetailDrawer）
 function EventRow({ ev, meta, onClick }) {
-  const tone = TONE_COLOR[meta.tone] || TONE_COLOR.slate
+  const level = LEVEL_META[ev.level] || { label: ev.level || '信息', color: T.ink3 }
+  const moduleLabel = MODULES.find(([value]) => value === ev.module)?.[1] || ev.module || '系统'
   return (
     <tr onClick={onClick} style={{ cursor: 'pointer', borderTop: `1px solid ${T.border}` }}>
+      <td style={td}><span style={{ padding: '2px 7px', borderRadius: 4, fontWeight: 600, color: level.color, background: level.color + '14' }}>{level.label}</span></td>
+      <td style={td}><span className="mono" style={{ color: T.ink2 }}>{moduleLabel}</span></td>
       <td style={td}>
         <div style={{ fontWeight: 500, color: T.ink }}>{relativeTime(ev.ts)}</div>
         <div style={{ fontSize: 10.5, color: T.ink4 }} title={ev.ts}>{shortTime(ev.ts)}</div>
       </td>
       <td style={td}>{ev.username || '-'}</td>
       <td style={td}>
-        <span style={{
-          padding: '2px 8px', borderRadius: 6, fontSize: 11.5, fontWeight: 600,
-          background: tone + '18', color: tone,
-        }}>{meta.label}</span>
-      </td>
-      <td style={td}>
-        {ev.resource_id ? (
-          <span style={{ color: T.ink2, fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace', fontSize: 11.5 }}>
-            {ev.resource_kind && <span style={{ color: T.ink4 }}>{ev.resource_kind}:</span>}{ev.resource_id}
-          </span>
-        ) : <span style={{ color: T.ink4 }}>-</span>}
-      </td>
-      <td style={td}>{ev.source_ip || '-'}</td>
-      <td style={td}>
-        {ev.outcome === 'success' ? (
-          <span style={{ color: '#059669', fontWeight: 600 }}>● 成功</span>
-        ) : (
-          <span style={{ color: '#dc2626', fontWeight: 600 }}>● 失败</span>
-        )}
+        <div style={{ fontWeight: 600, color: T.ink }}>{ev.event || meta.label}</div>
+        <div style={{ fontSize: 10.5, color: T.ink4, marginTop: 2 }}>{ev.event_type}{ev.resource_id ? ` · ${ev.resource_kind}:${ev.resource_id}` : ''}</div>
       </td>
     </tr>
   )
@@ -320,7 +293,10 @@ function DetailDrawer({ ev, meta, onClose }) {
         <div style={{ flex: 1, overflow: 'auto', padding: 20, fontSize: 12.5, color: T.ink2 }}>
           <DetailField label="时间" value={shortTime(ev.ts)} mono/>
           <DetailField label="UTC" value={ev.ts} mono/>
+          <DetailField label="等级" value={ev.level || '-'}/>
+          <DetailField label="模块" value={ev.module || '-'}/>
           <DetailField label="用户" value={ev.username || '-'}/>
+          <DetailField label="事件" value={ev.event || meta.label}/>
           <DetailField label="资源" value={ev.resource_id ? `${ev.resource_kind || '?'}:${ev.resource_id}` : '-'} mono/>
           <DetailField label="源 IP" value={ev.source_ip || '-'} mono/>
           <DetailField label="结果" value={ev.outcome}
@@ -347,50 +323,22 @@ function DetailField({ label, value, mono, small, valueStyle }) {
   )
 }
 
-function EventTypeMultiSelect({ value, onChange }) {
-  const [open, setOpen] = useState(false)
-  const toggle = (v) => {
-    if (value.includes(v)) onChange(value.filter(x => x !== v))
-    else onChange([...value, v])
+function ClearDialog({ onClose, onConfirm, onError }) {
+  const [busy, setBusy] = useState(false)
+  const confirm = async () => {
+    setBusy(true)
+    try { await onConfirm() } catch (error) { onError(error.message); onClose() } finally { setBusy(false) }
   }
-  return (
-    <div style={{ position: 'relative' }}>
-      <button onClick={() => setOpen(o => !o)} style={{
-        height: 30, padding: '0 10px', border: `1px solid ${T.border}`, borderRadius: 6,
-        background: T.surface, fontSize: 12.5, color: T.ink, cursor: 'pointer',
-        display: 'flex', alignItems: 'center', gap: 6,
-      }}>
-        事件类型{value.length > 0 ? ` (${value.length})` : ''}
-        <Icon name="chevDown" size={12} stroke={2}/>
-      </button>
-      <AnimatePresence>
-      {open && (
-        <PopScale origin="top left" className="edge-material-surface" style={{
-          position: 'absolute', top: 34, left: 0, zIndex: 100,
-          border: `1px solid ${T.border}`, borderRadius: 8,
-          boxShadow: '0 8px 32px -4px rgba(0,0,0,0.12)',
-          minWidth: 200, padding: 6, maxHeight: 320, overflow: 'auto',
-        }}>
-          {EVENT_TYPES.map(et => (
-            <label key={et.value} className="edge-menu-item" title={et.notImpl ? 'NOT_IMPL：当前 sprint 未触发，保留枚举常量' : ''} style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
-              cursor: et.notImpl ? 'not-allowed' : 'pointer', borderRadius: 4, fontSize: 12.5,
-              opacity: et.notImpl ? 0.42 : 1,
-            }} onMouseDown={e => e.preventDefault()}>
-              <input type="checkbox" disabled={et.notImpl}
-                checked={value.includes(et.value)} onChange={() => !et.notImpl && toggle(et.value)}/>
-              <span style={{ color: T.ink2 }}>{et.label}</span>
-              <span style={{ marginLeft: 'auto', fontSize: 10, color: T.ink4, fontFamily: 'ui-monospace' }}>{et.value}</span>
-            </label>
-          ))}
-          <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 4, padding: 6, textAlign: 'right' }}>
-            <button onClick={() => { setOpen(false) }} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>完成</button>
-          </div>
-        </PopScale>
-      )}
-      </AnimatePresence>
+  return <div role="dialog" aria-modal="true" aria-label="确认清空系统日志" onClick={onClose} style={{ position: 'absolute', inset: 0, zIndex: 60, background: 'rgba(15,23,42,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div onClick={e => e.stopPropagation()} style={{ width: 390, padding: 20, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: '0 18px 48px rgba(15,23,42,.2)' }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>清空系统日志？</div>
+      <div style={{ marginTop: 10, fontSize: 12.5, color: T.ink2, lineHeight: 1.7 }}>现有日志将被永久删除。此次清空操作本身会作为新的审计日志保留。</div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+        <button disabled={busy} onClick={onClose} style={dialogBtn}>取消</button>
+        <button disabled={busy} onClick={confirm} style={{ ...dialogBtn, color: '#fff', background: T.red, borderColor: T.red }}>{busy ? '正在清空...' : '确认清空'}</button>
+      </div>
     </div>
-  )
+  </div>
 }
 
 const th = { padding: '10px 14px', textAlign: 'left', borderBottom: `1px solid ${T.border}` }
@@ -400,6 +348,8 @@ const pageBtn = (disabled) => ({
   background: disabled ? T.surfaceAlt : T.surface, fontSize: 12.5,
   color: disabled ? T.ink4 : T.ink2, cursor: disabled ? 'default' : 'pointer',
 })
+const selectStyle = { height: 30, padding: '0 8px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.ink2, fontSize: 12 }
+const dialogBtn = { height: 32, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.ink2, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }
 
 // time helpers
 function relativeTime(iso) {

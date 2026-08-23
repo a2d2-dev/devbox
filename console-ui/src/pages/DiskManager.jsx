@@ -51,6 +51,7 @@ export default function DiskManager() {
   const [io, setIo] = useState(null); // /api/v1/disks/io: {devices, processes, processesAvailable}
   const [selected, setSelected] = useState('avg'); // 'avg'=全部平均 / 磁盘短名（sda）
   const [history, setHistory] = useState([]); // I/O 时间序列，前端累积（后端只给瞬时值）
+	const [hardwareByPath, setHardwareByPath] = useState({});
 
   useEffect(() => {
     let stopped = false;
@@ -58,7 +59,7 @@ export default function DiskManager() {
     // 异常 catch 也要 setError 否则首屏失败会停留在 loading 后误显「未检测到磁盘」
     function safeSetError(msg) { if (!stopped) setError(msg); }
 
-    function load() {
+	function load() {
       authFetch('/api/v1/disks')
         .then(async r => {
           if (r.ok) return r.json();
@@ -73,7 +74,10 @@ export default function DiskManager() {
         })
         .then(d => { if (!stopped && Array.isArray(d)) { setDisks(d); setError(null); } })
         .catch(() => { safeSetError('磁盘信息读取失败（网络错误）'); })
-        .finally(() => { if (!stopped) setLoading(false); });
+		.finally(() => { if (!stopped) setLoading(false); });
+      authFetch('/api/v1/hardware').then(r => r.ok ? r.json() : null).then(h => {
+        if (!stopped && h?.storage) setHardwareByPath(Object.fromEntries(h.storage.map(d => [d.path, d])));
+      }).catch(() => { /* Existing disk data remains usable when enrichment is unavailable. */ });
     }
     load();
     const id = setInterval(load, 30000); // 磁盘变化不频繁，30s 轮询
@@ -130,8 +134,12 @@ export default function DiskManager() {
   };
 
   const activeDev = selected; // 'avg' 或磁盘短名
+	const enrichedDisks = disks.map(d => {
+	  const h = hardwareByPath[d.device] || {};
+	  return { ...d, category: h.category, medium: h.medium, interface: h.interface, health: h.health };
+	});
   const activeDisk = activeDev === 'avg' ? null
-    : disks.find(d => (d.device || '').replace(/^\/dev\//, '') === activeDev);
+	: enrichedDisks.find(d => (d.device || d.path || '').replace(/^\/dev\//, '') === activeDev);
 
   // 选中项的时间序列（read/write），供曲线图渲染
   const series = history.map(s => ({
@@ -151,7 +159,7 @@ export default function DiskManager() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>
-              磁盘管理
+			  磁盘概览
             </div>
             <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>
               本地 lsblk + df + /proc/mounts · 只读 · 离线可用 · 不可分区 / 卸载 / 格式化
@@ -185,8 +193,8 @@ export default function DiskManager() {
           <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
             <DiskStatCard aggregate io={aggIO} count={physIO.length}
               active={activeDev === 'avg'} onClick={() => setSelected('avg')}/>
-            {disks.map(d => {
-              const short = (d.device || '').replace(/^\/dev\//, '');
+			{enrichedDisks.map(d => {
+			  const short = (d.device || d.path || '').replace(/^\/dev\//, '');
               return (
                 <DiskStatCard key={d.device} disk={d} io={ioByDev[short]}
                   active={short === activeDev}
@@ -220,7 +228,7 @@ function DiskStatCard({ disk, io, aggregate, count, active, onClick }) {
   const short = aggregate ? '平均' : (disk.device || '').replace(/^\/dev\//, '');
   const meta = aggregate
     ? `${count} 块物理盘`
-    : `${disk.rotational ? 'HDD' : 'SSD'} · ${fmtBytes(disk.sizeBytes)}`;
+	: `${disk.category === 'external' ? '外接' : '内置'} · ${disk.medium || (disk.rotational ? 'HDD' : 'SSD')} · ${fmtBytes(disk.sizeBytes)}`;
   const utilPct = io?.utilPct ?? 0;
   // 深色选中态 / 白色普通态双配色
   const c = active ? {
@@ -475,6 +483,9 @@ function UtilBadge({ pct }) {
 }
 
 function DiskCard({ disk, io }) {
+	const health = disk.health || { status: 'unsupported', detail: 'SMART 状态不支持' };
+	const healthLabel = { healthy: '健康', warning: '警告', failing: '异常', permission_required: '需要权限', unsupported: '不支持' }[health.status] || '不支持';
+	const healthColor = { healthy: '#047857', warning: '#b45309', failing: '#b91c1c', permission_required: '#b45309', unsupported: T.ink3 }[health.status];
   return (
     <div style={{
       background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
@@ -502,7 +513,7 @@ function DiskCard({ disk, io }) {
               display: 'inline-block', padding: '1px 6px', borderRadius: 3,
               background: T.blueSoft, color: T.blueDeep, fontWeight: 600, marginRight: 6,
             }}>{disk.type}</span>
-            <span>{disk.model || '未知型号'}</span>
+			<span>{disk.model || '未知型号'} · {disk.category === 'external' ? '外接' : '内置'} · {disk.medium || (disk.rotational ? 'HDD' : 'SSD')} · {disk.interface || disk.transport?.toUpperCase() || '接口未知'}</span>
             {disk.serial && (
               <span style={{ marginLeft: 8, color: T.ink4, fontFamily: 'ui-monospace, monospace' }}>
                 S/N: {disk.serial}
@@ -510,7 +521,8 @@ function DiskCard({ disk, io }) {
             )}
           </div>
         </div>
-        <div style={{ flex: 1 }}/>
+		<div style={{ flex: 1 }}/>
+		<div title={health.detail} style={{ marginRight: 14, color: healthColor, fontSize: 11.5, fontWeight: 600 }}><StatusMark status={health.status}/> SMART {healthLabel}<div style={{ color: T.ink4, fontWeight: 400, fontSize: 10, marginTop: 2 }}>{health.detail}</div></div>
         {io && (
           <div style={{ textAlign: 'right', marginRight: 18 }}>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -559,6 +571,8 @@ function DiskCard({ disk, io }) {
     </div>
   );
 }
+
+function StatusMark({ status }) { return <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', marginRight: 5, background: status === 'healthy' ? T.green : status === 'failing' ? T.red : status === 'warning' || status === 'permission_required' ? T.amber : T.ink4 }}/> }
 
 // containerFSType "中介"分区的 fstype → 用途标签 + tooltip。
 // 这些分区物理上不直接挂载，而是承载上层映射设备（LVM LV / LUKS 解密设备 / md raid 阵列）。

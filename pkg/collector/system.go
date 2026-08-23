@@ -3,6 +3,7 @@ package collector
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -292,13 +293,18 @@ func calcDiskIO(prev, cur map[string]diskIOSample, seconds float64) []DiskIOInfo
 	out := make([]DiskIOInfo, 0, len(cur))
 	for name, s := range cur {
 		info := DiskIOInfo{
-			Name:       name,
-			Path:       "/dev/" + name,
-			Model:      readBlockDeviceModel(name),
-			Rotational: isRotationalDisk(name),
-			ReadBytes:  s.readSectors * 512,
-			WriteBytes: s.writeSectors * 512,
-			InFlight:   s.inFlight,
+			Name:              name,
+			Path:              "/dev/" + name,
+			Model:             readBlockDeviceModel(name),
+			Rotational:        isRotationalDisk(name),
+			ReadBytes:         s.readSectors * 512,
+			WriteBytes:        s.writeSectors * 512,
+			InFlight:          s.inFlight,
+			TemperatureStatus: "unsupported",
+		}
+		if temp, ok := readBlockDeviceTemperature(name); ok {
+			info.TemperatureC = &temp
+			info.TemperatureStatus = "available"
 		}
 		if info.Rotational {
 			info.Kind = "HDD"
@@ -336,6 +342,35 @@ func calcDiskIO(prev, cur map[string]diskIOSample, seconds float64) []DiskIOInfo
 		out = append(out, info)
 	}
 	return out
+}
+
+func readBlockDeviceTemperature(name string) (float64, bool) {
+	return readBlockDeviceTemperatureAt("/sys/block", name)
+}
+
+func readBlockDeviceTemperatureAt(sysBlockRoot, name string) (float64, bool) {
+	patterns := []string{
+		filepath.Join(sysBlockRoot, name, "device", "hwmon", "hwmon*", "temp*_input"),
+		filepath.Join(sysBlockRoot, name, "device", "device", "hwmon", "hwmon*", "temp*_input"),
+	}
+	for _, pattern := range patterns {
+		paths, _ := filepath.Glob(pattern)
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			milliC, err := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
+			if err != nil {
+				continue
+			}
+			temp := milliC / 1000
+			if temp >= -50 && temp <= 200 {
+				return temp, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func deltaUint64(prev, cur uint64) uint64 {

@@ -201,7 +201,7 @@ function LogModal({ name, onClose }) {
   );
 }
 
-export default function SupervisorFace() {
+export default function SupervisorFace({ onOpenApp }) {
   const { data, loading } = useSupervisor(5000);
   const [filter, setFilter] = useState('ALL');
   const [logTarget, setLogTarget] = useState(null);
@@ -257,6 +257,9 @@ export default function SupervisorFace() {
           </span>
         )}
         <div style={{ flex: 1 }}/>
+        <button onClick={() => onOpenApp?.({ id: 'processes' })} title="打开服务资源视图" style={{ ...actionBtn, width: 'auto', padding: '0 9px', gap: 5, color: T.blueDeep }}>
+          <Icon name="cpu" size={12}/>资源
+        </button>
         <div style={{ display: 'flex', gap: 6 }}>
           {FILTERS.map(f => (
             <StatusPill
