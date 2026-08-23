@@ -15,6 +15,7 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/apps"
 	"github.com/a2d2-dev/devbox/pkg/auth"
 	"github.com/a2d2-dev/devbox/pkg/collector"
+	"github.com/a2d2-dev/devbox/pkg/downloads"
 	"github.com/a2d2-dev/devbox/pkg/files"
 	"github.com/a2d2-dev/devbox/pkg/gpuhistory"
 	"github.com/a2d2-dev/devbox/pkg/hardware"
@@ -70,6 +71,8 @@ type Server struct {
 	vmManager            *vms.Manager
 	browser              *browserStore // 浏览器应用的书签/历史持久化
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
+	downloadEngine       *downloads.Engine
+	downloadEngineError  string
 }
 
 // NewServer 创建控制台服务器
@@ -97,6 +100,13 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		vmManager:     vms.NewManager(),
 		browser:       newBrowserStore(cfg.BrowserDataPath),
 		browserClient: newBrowserClient(cfg.BrowserInsecureTLS),
+	}
+	downloadEngine, err := downloads.New(downloads.Config{RootDir: cfg.WorkDir, MaxConcurrent: 3})
+	if err != nil {
+		s.downloadEngineError = err.Error()
+		logger.Warn("Download engine unavailable", zap.Error(err))
+	} else {
+		s.downloadEngine = downloadEngine
 	}
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
@@ -137,6 +147,9 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 
 // Start 启动 HTTP 服务器（阻塞，应在 goroutine 中调用）
 func (s *Server) Start(ctx context.Context) error {
+	if s.downloadEngine != nil {
+		s.downloadEngine.Start(ctx)
+	}
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	srv := &http.Server{
 		Addr:              addr,
@@ -247,6 +260,9 @@ func (s *Server) registerRoutes() {
 
 	// 浏览器应用（代理 + 书签/历史）
 	s.registerBrowserRoutes()
+
+	// 下载任务中心
+	s.registerDownloadRoutes()
 
 	// 静态文件兜底
 	fileServer := http.FileServer(staticFS)

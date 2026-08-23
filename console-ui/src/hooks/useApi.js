@@ -5,9 +5,11 @@ const API = '/api/v1';
 // ─── Auth token management ──────────────────────────────────────
 
 let _token = localStorage.getItem('edge_token') || '';
+let _authenticated = !!_token;
 
 export function setAuthToken(t) {
   _token = t || '';
+  _authenticated = true;
   if (t) localStorage.setItem('edge_token', t);
   else localStorage.removeItem('edge_token');
 }
@@ -16,6 +18,7 @@ export function getAuthToken() { return _token; }
 
 export function clearAuth() {
   _token = '';
+  _authenticated = false;
   localStorage.removeItem('edge_token');
 }
 
@@ -39,7 +42,7 @@ export async function authFetch(url, opts = {}) {
   // 未登录短路：App.jsx 里的 hooks (useMetrics/useApps/…) 写在 early-return 之前，
   // 登录前会先跑一遍。这时不发网络，返合成 401 让 usePoll 走 error 分支即可，
   // 避免登录页/初始加载在 devtool 里堆一片 401 噪音。
-  if (!_token) {
+  if (!_authenticated) {
     return new Response(null, { status: 401, statusText: 'no token (pre-login)' });
   }
   const resp = await fetch(url, { ...opts, headers: { ...authHeaders(), ...opts.headers } });
@@ -54,6 +57,46 @@ export async function authFetch(url, opts = {}) {
     _consecutive401 = 0;
   }
   return resp;
+}
+
+export async function downloadRequest(path = '', opts = {}) {
+  const response = await authFetch(API + '/downloads' + path, opts);
+  const contentType = response.headers.get('content-type') || '';
+  const body = contentType.includes('application/json') ? await response.json() : await response.text();
+  if (!response.ok) {
+    const error = new Error(body?.error || body || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+export function useDownloads(interval = 1000) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick(value => value + 1), []);
+
+  useEffect(() => {
+    let active = true;
+    let timer;
+    const load = async () => {
+      try {
+        const next = await downloadRequest();
+        if (active) { setData(next); setError(null); }
+      } catch (requestError) {
+        if (active) setError(requestError);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    if (interval > 0) timer = setInterval(load, interval);
+    return () => { active = false; if (timer) clearInterval(timer); };
+  }, [interval, tick]);
+
+  return { data, loading, error, refresh };
 }
 
 // ─── Internal helpers ────────────────────────────────────────────
