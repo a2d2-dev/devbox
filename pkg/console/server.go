@@ -41,6 +41,8 @@ type Config struct {
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
+	// AllowPrivateNetworks 显式允许下载访问私网、回环和链路本地地址。
+	AllowPrivateNetworks bool `mapstructure:"allow_private_networks"`
 	// AppsDir 是 Compose 受管应用文件根，由 compose.data_dir 派生。
 	AppsDir string `mapstructure:"-"`
 	// BrowserDataPath 浏览器应用的书签/历史 JSON 路径；空 = /etc/devbox/browser.json。
@@ -106,7 +108,9 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		browserClient: newBrowserClient(cfg.BrowserInsecureTLS),
 		onboarding:    newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
 	}
-	downloadEngine, err := downloads.New(downloads.Config{RootDir: cfg.WorkDir, MaxConcurrent: 3})
+	downloadEngine, err := downloads.New(downloads.Config{
+		RootDir: cfg.WorkDir, MaxConcurrent: 3, AllowPrivateNetworks: cfg.AllowPrivateNetworks,
+	})
 	if err != nil {
 		s.downloadEngineError = err.Error()
 		logger.Warn("Download engine unavailable", zap.Error(err))

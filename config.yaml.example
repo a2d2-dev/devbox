@@ -19,6 +19,8 @@ console:
   # 外接存储和远程文件系统从 /proc/mounts 自动发现并只读展示。
   # 下载任务也以此为根目录；状态保存到 <work_dir>/.devbox/downloads.json。
   work_dir: "/data"
+  # 下载默认拒绝私网、回环、链路本地及组播地址；仅可信内网场景显式开启。
+  allow_private_networks: false
 
 # 可选的 Kubernetes 集成；不设置则禁用 K8s 应用管理与应用市场。
 kubernetes:

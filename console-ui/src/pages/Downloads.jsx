@@ -7,6 +7,7 @@ import './Downloads.css'
 
 const FILTERS = [
   ['all', '全部'],
+  ['waiting', '等待'],
   ['downloading', '下载中'],
   ['completed', '完成'],
   ['paused', '暂停'],

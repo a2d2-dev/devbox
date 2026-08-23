@@ -9,9 +9,12 @@ DevBox 下载任务中心提供本机 HTTP(S) 直链下载、暂停恢复、任�
 - 包含 `..` 的路径、根目录外路径和通过符号链接逃逸根目录的路径均会被拒绝。
 - 任务状态保存在 `<console.work_dir>/.devbox/downloads.json`。状态文件使用临时文件加原子重命名更新。
 - 未完成内容保存在目标文件旁的 `<文件名>.part`。完成后原子重命名为目标文件名。
+- 下载文件的打开、最终重命名和删除都相对启动时持有的下载根目录句柄执行；父目录后来被替换为符号链接时不会逃逸根目录，`.part` 最后一级符号链接也不会被跟随。
 - 进程重启时，`waiting` 和 `downloading` 任务恢复为 `paused`，保留已下载字节；用户需要手动开始。
 
 DevBox 进程必须对下载根目录、目标目录和 `.devbox` 状态目录具有读写权限。初始化失败时列表 API 返回 `503`；目标目录无权限时创建任务返回 `403`。
+
+下载默认拒绝解析到回环、RFC1918、链路本地、组播、未指定地址和 IPv6 ULA 的目标，并在每次重定向后重新执行限制；HTTPS 任务不能降级重定向到 HTTP。可信内网场景可显式设置 `console.allow_private_networks: true` 放开地址限制，协议降级仍保持禁用。
 
 ## 状态机
 
@@ -68,9 +71,9 @@ DevBox 进程必须对下载根目录、目标目录和 `.devbox` 状态目录�
 
 `POST /api/v1/downloads/{id}/start`
 
-适用于 `waiting`、`paused` 和 `error`。服务端存在 `.part` 文件时发送 `Range: bytes=<size>-`；若已记录 ETag 或 Last-Modified，同时发送 `If-Range`。
+适用于 `waiting`、`paused` 和 `error`。仅当 `.part` 存在且已记录 ETag 或 Last-Modified 时发送 `Range: bytes=<size>-` 与 `If-Range`；没有资源 validator 时从头下载。
 
-远端返回 `206 Partial Content` 时追加写入；远端忽略 Range 并返回 `200` 时，从头覆盖 `.part`，因此断点续传属于尽力而为。
+远端返回 `206 Partial Content` 时必须同时匹配保存的 validator 和 Content-Range 起点才会追加写入。validator 变化或不安全的 `416` 响应会丢弃旧进度并从头下载；远端忽略 Range 并返回 `200` 时也会从头覆盖 `.part`。
 
 ### 暂停
 
@@ -78,10 +81,14 @@ DevBox 进程必须对下载根目录、目标目录和 `.devbox` 状态目录�
 
 适用于 `waiting` 和 `downloading`。已接收数据和最新进度会持久化，临时文件保留。
 
+暂停会取消当前 worker；再次开始前，引擎会等待旧 worker 完整退出，避免两个 generation 同时写入 `.part`。关键状态持久化失败时操作返回错误，任务转为 `error` 并保留原因。
+
 ### 删除
 
 - `DELETE /api/v1/downloads/{id}?deleteFile=false`：仅删除任务记录，保留目标文件和 `.part`。
 - `DELETE /api/v1/downloads/{id}?deleteFile=true`：删除任务记录，同时删除目标文件和 `.part`。
+
+选择同时删除文件时，引擎先删除文件，再删除并持久化任务记录；文件删除失败时任务保留为 `error`，可修复权限或目录问题后重试。
 
 桌面应用在发出删除请求前提供二次确认和明确的删除模式选择。批量开始、暂停和删除只遍历当前勾选的任务，并显示成功/失败数量。
 
