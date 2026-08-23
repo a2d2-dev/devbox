@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
+
+	"go.uber.org/zap"
 )
 
 var ErrNotFound = errors.New("backup record not found")
@@ -17,7 +20,7 @@ type store struct {
 	data state
 }
 
-func openStore(dataDir string) (*store, error) {
+func openStore(dataDir string, logger *zap.Logger) (*store, error) {
 	if dataDir == "" {
 		dataDir = "/var/lib/devbox/backup"
 	}
@@ -31,7 +34,13 @@ func openStore(dataDir string) (*store, error) {
 	}
 	if err == nil {
 		if err := json.Unmarshal(b, &s.data); err != nil {
-			return nil, fmt.Errorf("decode backup state: %w", err)
+			backupPath := s.path + ".corrupt-" + fmt.Sprintf("%d", time.Now().UTC().UnixNano())
+			if renameErr := os.Rename(s.path, backupPath); renameErr != nil {
+				return nil, fmt.Errorf("backup corrupt backup state: %w (decode error: %v)", renameErr, err)
+			}
+			logger.Warn("Backup state was corrupt; moved aside and starting empty",
+				zap.String("path", s.path), zap.String("corrupt_backup", backupPath), zap.Error(err))
+			s.data = state{Tasks: []Task{}, Histories: []History{}}
 		}
 		if s.data.Tasks == nil {
 			s.data.Tasks = []Task{}
@@ -181,6 +190,7 @@ func (s *store) recoverInterrupted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	changed := false
+	finished := time.Now()
 	for i := range s.data.Tasks {
 		if s.data.Tasks[i].Status == StatusQueued || s.data.Tasks[i].Status == StatusRunning {
 			s.data.Tasks[i].Status = StatusFailed
@@ -193,6 +203,7 @@ func (s *store) recoverInterrupted() error {
 			s.data.Histories[i].Status = StatusFailed
 			s.data.Histories[i].Phase = "interrupted"
 			s.data.Histories[i].Error = "进程重启，运行已中断"
+			s.data.Histories[i].FinishedAt = &finished
 			changed = true
 		}
 	}

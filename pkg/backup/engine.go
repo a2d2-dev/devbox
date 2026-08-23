@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,13 +32,14 @@ func (e *runFailure) Error() string { return fmt.Sprintf("%s: %v", e.phase, e.er
 func (e *runFailure) Unwrap() error { return e.err }
 
 type engine struct {
-	now func() time.Time
+	now    func() time.Time
+	policy pathPolicy
 }
 
-func newEngine() *engine { return &engine{now: time.Now} }
+func newEngine(policy pathPolicy) *engine { return &engine{now: time.Now, policy: policy} }
 
 func (e *engine) runBackup(ctx context.Context, task Task) (version string, transferred int64, log string, err error) {
-	check := preflight(ctx, task)
+	check := preflight(ctx, task, e.policy)
 	if !check.OK {
 		return "", 0, "", &runFailure{phase: "preflight", err: fmt.Errorf("%s", failedChecks(check))}
 	}
@@ -45,11 +47,15 @@ func (e *engine) runBackup(ctx context.Context, task Task) (version string, tran
 	var destination Endpoint
 	var finalDestination Endpoint
 	var previous string
+	target := taskTarget(task)
+	if prepErr := ensureEndpointDir(ctx, target); prepErr != nil {
+		return "", 0, "", &runFailure{phase: "prepare", err: prepErr}
+	}
 	if task.Mode == ModeVersioned {
-		if cleanupErr := cleanupIncomplete(ctx, task.Target, task.ID); cleanupErr != nil {
+		if cleanupErr := cleanupIncomplete(ctx, target, task.ID); cleanupErr != nil {
 			return "", 0, "", &runFailure{phase: "prepare", err: cleanupErr}
 		}
-		versions, listErr := listVersions(ctx, task.Target)
+		versions, listErr := listVersions(ctx, target)
 		if listErr != nil {
 			return "", 0, "", &runFailure{phase: "prepare", err: listErr}
 		}
@@ -60,14 +66,14 @@ func (e *engine) runBackup(ctx context.Context, task Task) (version string, tran
 		for suffix := 1; containsString(versions, version); suffix++ {
 			version = e.now().UTC().Format("20060102T150405Z") + "-" + strconv.Itoa(suffix)
 		}
-		finalDestination = childEndpoint(task.Target, version)
-		destination = childEndpoint(task.Target, ".devbox-incomplete-"+task.ID+"-"+version)
+		finalDestination = childEndpoint(target, version)
+		destination = childEndpoint(target, ".devbox-incomplete-"+task.ID+"-"+version)
 		if prepErr := makeEndpointDir(ctx, destination); prepErr != nil {
 			return "", 0, "", &runFailure{phase: "prepare", err: prepErr}
 		}
 	} else {
 		version = "mirror"
-		destination = task.Target
+		destination = target
 	}
 
 	args := []string{"--archive", "--stats", "--itemize-changes"}
@@ -96,11 +102,15 @@ func (e *engine) runBackup(ctx context.Context, task Task) (version string, tran
 			_ = removeEndpointDir(ctx, destination)
 			return version, transferred, log, &runFailure{phase: "finalize", log: log, err: finalizeErr}
 		}
-		if retentionErr := applyRetention(ctx, task.Target, task.Retention.KeepLast); retentionErr != nil {
+		if retentionErr := applyRetention(ctx, target, task.Retention.KeepLast); retentionErr != nil {
 			return version, transferred, log, &runFailure{phase: "retention", log: log, err: retentionErr}
 		}
 	}
 	return version, transferred, log, nil
+}
+
+func taskTarget(task Task) Endpoint {
+	return childEndpoint(task.Target, task.ID)
 }
 
 func cleanupIncomplete(ctx context.Context, target Endpoint, taskID string) error {
@@ -184,7 +194,7 @@ func command(ctx context.Context, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
+	text := strings.TrimRight(string(out), "\r\n")
 	if err != nil {
 		if text == "" {
 			return text, err
@@ -215,7 +225,8 @@ func containsString(values []string, wanted string) bool {
 func listVersions(ctx context.Context, target Endpoint) ([]string, error) {
 	var names []string
 	if target.Type == EndpointSSH {
-		args := append(sshArgs(target), target.Host, "find "+shellQuote(target.Path)+" -mindepth 1 -maxdepth 1 -type d -printf '%f\\n'")
+		remoteCommand := "if test -d " + shellQuote(target.Path) + "; then find " + shellQuote(target.Path) + " -mindepth 1 -maxdepth 1 -type d -printf '%f\\n'; fi"
+		args := append(sshArgs(target), target.Host, remoteCommand)
 		out, err := command(ctx, "ssh", args...)
 		if err != nil {
 			return nil, err
@@ -223,6 +234,9 @@ func listVersions(ctx context.Context, target Endpoint) ([]string, error) {
 		names = strings.Fields(out)
 	} else {
 		entries, err := os.ReadDir(target.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			return []string{}, nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -247,6 +261,13 @@ func makeEndpointDir(ctx context.Context, endpoint Endpoint) error {
 		return remoteTest(ctx, endpoint, "mkdir -- "+shellQuote(endpoint.Path))
 	}
 	return os.Mkdir(endpoint.Path, 0o750)
+}
+
+func ensureEndpointDir(ctx context.Context, endpoint Endpoint) error {
+	if endpoint.Type == EndpointSSH {
+		return remoteTest(ctx, endpoint, "mkdir -p -- "+shellQuote(endpoint.Path))
+	}
+	return os.MkdirAll(endpoint.Path, 0o750)
 }
 
 func applyRetention(ctx context.Context, target Endpoint, keep int) error {
@@ -274,7 +295,7 @@ func applyRetention(ctx context.Context, target Endpoint, keep int) error {
 }
 
 func (e *engine) previewRestore(ctx context.Context, task Task, request RestoreRequest) (RestorePreview, error) {
-	source, destination, err := restoreEndpoints(ctx, task, request)
+	source, destination, err := restoreEndpoints(ctx, task, request, e.policy)
 	if err != nil {
 		return RestorePreview{}, err
 	}
@@ -304,7 +325,7 @@ func (e *engine) previewRestore(ctx context.Context, task Task, request RestoreR
 	return preview, nil
 }
 
-func restoreEndpoints(ctx context.Context, task Task, request RestoreRequest) (Endpoint, Endpoint, error) {
+func restoreEndpoints(ctx context.Context, task Task, request RestoreRequest, policy pathPolicy) (Endpoint, Endpoint, error) {
 	version := request.Version
 	if task.Mode == ModeMirror {
 		if version != "" && version != "mirror" {
@@ -314,15 +335,29 @@ func restoreEndpoints(ctx context.Context, task Task, request RestoreRequest) (E
 	} else if !versionPattern.MatchString(version) {
 		return Endpoint{}, Endpoint{}, fmt.Errorf("invalid backup version")
 	}
-	source := task.Target
+	source := taskTarget(task)
 	if task.Mode == ModeVersioned {
 		source = childEndpoint(source, version)
 	}
 	destination := task.Source
 	if request.Destination != "" {
 		destination = Endpoint{Type: EndpointLocal, Path: request.Destination}
-		if err := validateEndpoint(destination); err != nil {
+		if err := validateEndpoint(destination, policy); err != nil {
 			return Endpoint{}, Endpoint{}, err
+		}
+		originalSource := false
+		resolvedDestination, destinationErr := resolveExistingPath(destination.Path)
+		if destinationErr == nil {
+			destination.Path = resolvedDestination
+		}
+		if task.Source.Type != EndpointSSH {
+			resolvedSource, sourceErr := resolveExistingPath(task.Source.Path)
+			originalSource = destinationErr == nil && sourceErr == nil && resolvedDestination == resolvedSource
+		}
+		if !originalSource {
+			if err := policy.validateLocalTarget(destination.Path); err != nil {
+				return Endpoint{}, Endpoint{}, fmt.Errorf("restore destination: %w", err)
+			}
 		}
 	}
 	if source.Type == EndpointSSH && destination.Type == EndpointSSH {
@@ -337,7 +372,7 @@ func restoreEndpoints(ctx context.Context, task Task, request RestoreRequest) (E
 		if err := checkLocalTarget(destination.Path); err != nil {
 			return Endpoint{}, Endpoint{}, fmt.Errorf("restore destination: %w", err)
 		}
-	} else if err := remoteTest(ctx, destination, "test -d "+shellQuote(destination.Path)+" && test -w "+shellQuote(destination.Path)); err != nil {
+	} else if err := checkRemoteTargetWritable(ctx, destination); err != nil {
 		return Endpoint{}, Endpoint{}, err
 	}
 	return source, destination, nil
@@ -346,11 +381,11 @@ func restoreEndpoints(ctx context.Context, task Task, request RestoreRequest) (E
 func parseChanges(output string) []string {
 	changes := []string{}
 	for _, line := range strings.Split(output, "\n") {
-		parts := strings.SplitN(strings.TrimSpace(line), "|", 2)
+		parts := strings.SplitN(strings.TrimSuffix(line, "\r"), "|", 2)
 		if len(parts) != 2 || len(parts[0]) < 2 || parts[0][1] == 'd' {
 			continue
 		}
-		name := strings.TrimSuffix(strings.TrimSpace(parts[1]), "/")
+		name := strings.TrimSuffix(parts[1], "/")
 		clean := filepath.Clean(filepath.FromSlash(name))
 		if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			continue
@@ -381,9 +416,12 @@ func (e *engine) runRestore(ctx context.Context, task Task, request RestoreReque
 		return 0, "", err
 	}
 	if preview.Token != request.PreviewToken {
-		return 0, "", fmt.Errorf("restore preview changed; preview again before confirming")
+		return 0, "", &runFailure{
+			phase: "restore-preview",
+			err:   fmt.Errorf("restore preview changed; preview again before confirming"),
+		}
 	}
-	source, destination, err := restoreEndpoints(ctx, task, request)
+	source, destination, err := restoreEndpoints(ctx, task, request, e.policy)
 	if err != nil {
 		return 0, "", err
 	}

@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -19,24 +21,42 @@ type Manager struct {
 	store  *store
 	engine *engine
 	logger *zap.Logger
+	policy pathPolicy
 	slots  chan struct{}
 	now    func() time.Time
 
 	mu       sync.Mutex
-	running  map[string]bool
+	running  map[string]runningEntry
+	targets  map[string]chan struct{}
 	ctx      context.Context
 	start    sync.Once
 	tickRate time.Duration
 }
 
-func NewManager(dataDir string, concurrency int, logger *zap.Logger) (*Manager, error) {
+type runningEntry struct {
+	target   chan struct{}
+	acquired bool
+}
+
+func NewManager(dataDir string, concurrency int, logger *zap.Logger, options ...ManagerOption) (*Manager, error) {
 	if concurrency < 1 {
 		concurrency = 2
 	}
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	repo, err := openStore(dataDir)
+	if dataDir == "" {
+		dataDir = "/var/lib/devbox/backup"
+	}
+	config := managerConfig{workDir: "/data"}
+	for _, option := range options {
+		option(&config)
+	}
+	policy, err := newPathPolicy(config.workDir, dataDir, config.allowedTargetRoots)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := openStore(dataDir, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -44,8 +64,8 @@ func NewManager(dataDir string, concurrency int, logger *zap.Logger) (*Manager, 
 		return nil, err
 	}
 	return &Manager{
-		store: repo, engine: newEngine(), logger: logger, slots: make(chan struct{}, concurrency),
-		now: time.Now, running: map[string]bool{}, ctx: context.Background(), tickRate: 5 * time.Second,
+		store: repo, engine: newEngine(policy), logger: logger, policy: policy, slots: make(chan struct{}, concurrency),
+		now: time.Now, running: map[string]runningEntry{}, targets: map[string]chan struct{}{}, ctx: context.Background(), tickRate: 5 * time.Second,
 	}, nil
 }
 
@@ -92,13 +112,17 @@ func (m *Manager) runDue() {
 }
 
 func (m *Manager) Preflight(ctx context.Context, task Task) PreflightResult {
-	return preflight(ctx, task)
+	return preflight(ctx, task, m.policy)
 }
 
 func (m *Manager) Create(ctx context.Context, task Task) (Task, PreflightResult, error) {
-	check := preflight(ctx, task)
+	check := preflight(ctx, task, m.policy)
 	if !check.OK {
 		return Task{}, check, fmt.Errorf("backup preflight failed: %s", failedChecks(check))
+	}
+	task, err := normalizeTaskPaths(task)
+	if err != nil {
+		return Task{}, check, fmt.Errorf("normalize backup paths: %w", err)
 	}
 	now := m.now()
 	next, err := nextSchedule(task.Schedule, now)
@@ -178,7 +202,7 @@ func (m *Manager) Versions(ctx context.Context, taskID string) ([]string, error)
 	if task.Mode == ModeMirror {
 		return []string{"mirror"}, nil
 	}
-	return listVersions(ctx, task.Target)
+	return listVersions(ctx, taskTarget(task))
 }
 
 func (m *Manager) RunNow(taskID string) (History, error) {
@@ -236,11 +260,21 @@ func (m *Manager) Restore(ctx context.Context, taskID string, request RestoreReq
 
 func (m *Manager) reserve(task Task, kind RunKind, restoreTarget string) (History, error) {
 	m.mu.Lock()
-	if m.running[task.ID] {
+	if _, exists := m.running[task.ID]; exists {
 		m.mu.Unlock()
 		return History{}, ErrConflict
 	}
-	m.running[task.ID] = true
+	targetKey, err := normalizedTargetKey(task.Target)
+	if err != nil {
+		m.mu.Unlock()
+		return History{}, err
+	}
+	targetSlot := m.targets[targetKey]
+	if targetSlot == nil {
+		targetSlot = make(chan struct{}, 1)
+		m.targets[targetKey] = targetSlot
+	}
+	m.running[task.ID] = runningEntry{target: targetSlot}
 	m.mu.Unlock()
 
 	now := m.now()
@@ -264,7 +298,7 @@ func (m *Manager) reserve(task Task, kind RunKind, restoreTarget string) (Histor
 }
 
 func (m *Manager) executeBackup(task Task, history History) {
-	if !m.acquire(task.ID, &history) {
+	if !m.acquire(task, &history) {
 		return
 	}
 	version, bytes, log, err := m.engine.runBackup(m.ctx, task)
@@ -275,7 +309,7 @@ func (m *Manager) executeBackup(task Task, history History) {
 }
 
 func (m *Manager) executeRestore(task Task, request RestoreRequest, history History) {
-	if !m.acquire(task.ID, &history) {
+	if !m.acquire(task, &history) {
 		return
 	}
 	bytes, log, err := m.engine.runRestore(m.ctx, task, request)
@@ -284,21 +318,37 @@ func (m *Manager) executeRestore(task Task, request RestoreRequest, history Hist
 	m.finish(task.ID, history, err)
 }
 
-func (m *Manager) acquire(taskID string, history *History) bool {
+func (m *Manager) acquire(task Task, history *History) bool {
+	m.mu.Lock()
+	entry, exists := m.running[task.ID]
+	m.mu.Unlock()
+	if !exists {
+		return false
+	}
+	select {
+	case entry.target <- struct{}{}:
+		m.mu.Lock()
+		entry.acquired = true
+		m.running[task.ID] = entry
+		m.mu.Unlock()
+	case <-m.ctx.Done():
+		m.finish(task.ID, *history, m.ctx.Err())
+		return false
+	}
 	select {
 	case m.slots <- struct{}{}:
 		history.Status = StatusRunning
 		history.Phase = "transfer"
 		history.StartedAt = m.now()
 		_ = m.store.putHistory(*history)
-		_, _ = m.store.updateTask(taskID, func(task *Task) {
+		_, _ = m.store.updateTask(task.ID, func(task *Task) {
 			task.Status = StatusRunning
 			task.LastResult = "执行中"
 			task.UpdatedAt = m.now()
 		})
 		return true
 	case <-m.ctx.Done():
-		m.finish(taskID, *history, m.ctx.Err())
+		m.finish(task.ID, *history, m.ctx.Err())
 		return false
 	}
 }
@@ -345,8 +395,27 @@ func (m *Manager) finish(taskID string, history History, runErr error) {
 
 func (m *Manager) release(taskID string) {
 	m.mu.Lock()
+	entry, exists := m.running[taskID]
 	delete(m.running, taskID)
 	m.mu.Unlock()
+	if exists && entry.acquired {
+		<-entry.target
+	}
+}
+
+func normalizedTargetKey(target Endpoint) (string, error) {
+	if target.Type == EndpointSSH {
+		port := target.Port
+		if port == 0 {
+			port = 22
+		}
+		return "ssh://" + target.Host + ":" + strconv.Itoa(port) + filepath.Clean(target.Path), nil
+	}
+	resolved, err := resolveExistingPath(target.Path)
+	if err != nil {
+		return "", fmt.Errorf("resolve backup target lock: %w", err)
+	}
+	return "local:" + resolved, nil
 }
 
 func capLog(log string) string {

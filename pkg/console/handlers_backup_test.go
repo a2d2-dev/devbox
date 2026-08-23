@@ -27,7 +27,7 @@ func TestBackupRoutesCreateRunHistoryAndLog(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, "file.txt"), []byte("backup route"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := backup.NewManager(filepath.Join(root, "state"), 1, nil)
+	manager, err := backup.NewManager(filepath.Join(root, "state"), 1, nil, backup.WithWorkDir(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestBackupPreflightRouteRejectsPathLoop(t *testing.T) {
 	if err := os.MkdirAll(target, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := backup.NewManager(filepath.Join(root, "state"), 1, nil)
+	manager, err := backup.NewManager(filepath.Join(root, "state"), 1, nil, backup.WithWorkDir(root))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,15 +14,20 @@ import (
 	"time"
 )
 
-func validateTask(task Task) error {
+func validateTask(task Task, policy pathPolicy) error {
 	if strings.TrimSpace(task.Name) == "" {
 		return fmt.Errorf("task name is required")
 	}
-	if err := validateEndpoint(task.Source); err != nil {
+	if err := validateEndpoint(task.Source, policy); err != nil {
 		return fmt.Errorf("source: %w", err)
 	}
-	if err := validateEndpoint(task.Target); err != nil {
+	if err := validateEndpoint(task.Target, policy); err != nil {
 		return fmt.Errorf("target: %w", err)
+	}
+	if task.Target.Type != EndpointSSH {
+		if err := policy.validateLocalTarget(task.Target.Path); err != nil {
+			return fmt.Errorf("target: %w", err)
+		}
 	}
 	if task.Source.Type == EndpointSSH && task.Target.Type == EndpointSSH {
 		return fmt.Errorf("rsync does not support a remote source and remote target in one task")
@@ -46,7 +51,7 @@ func validateTask(task Task) error {
 
 var timeNow = func() time.Time { return time.Now() }
 
-func validateEndpoint(endpoint Endpoint) error {
+func validateEndpoint(endpoint Endpoint, policy pathPolicy) error {
 	if endpoint.Type != EndpointLocal && endpoint.Type != EndpointMount && endpoint.Type != EndpointSSH {
 		return fmt.Errorf("type must be local, mount, or ssh")
 	}
@@ -72,15 +77,14 @@ func validateEndpoint(endpoint Endpoint) error {
 		if !filepath.IsAbs(endpoint.IdentityFile) || strings.ContainsAny(endpoint.IdentityFile, "\x00\r\n") {
 			return fmt.Errorf("identity file must be an absolute single-line path")
 		}
-		info, err := os.Stat(endpoint.IdentityFile)
-		if err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("identity file is not a readable regular file")
+		if err := policy.validateIdentityFile(endpoint.IdentityFile); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func preflight(ctx context.Context, task Task) PreflightResult {
+func preflight(ctx context.Context, task Task, policy pathPolicy) PreflightResult {
 	result := PreflightResult{OK: true, Checks: []Check{}}
 	add := func(name string, err error) {
 		check := Check{Name: name, OK: err == nil, Message: "通过"}
@@ -91,7 +95,11 @@ func preflight(ctx context.Context, task Task) PreflightResult {
 		result.Checks = append(result.Checks, check)
 	}
 
-	add("配置", validateTask(task))
+	configErr := validateTask(task, policy)
+	add("配置", configErr)
+	if configErr != nil {
+		return result
+	}
 	if task.Source.Type == EndpointSSH {
 		add("源可达性与读取权限", remoteTest(ctx, task.Source, "test -d "+shellQuote(task.Source.Path)+" && test -r "+shellQuote(task.Source.Path)))
 	} else {
@@ -102,7 +110,7 @@ func preflight(ctx context.Context, task Task) PreflightResult {
 		add("源可达性与读取权限", err)
 	}
 	if task.Target.Type == EndpointSSH {
-		add("目标可达性与写入权限", remoteTest(ctx, task.Target, "test -d "+shellQuote(task.Target.Path)+" && test -w "+shellQuote(task.Target.Path)))
+		add("目标可达性与写入权限", checkRemoteTargetWritable(ctx, task.Target))
 	} else {
 		err := checkLocalTarget(task.Target.Path)
 		if err == nil && task.Target.Type == EndpointMount {
@@ -110,7 +118,13 @@ func preflight(ctx context.Context, task Task) PreflightResult {
 		}
 		add("目标可达性与写入权限", err)
 	}
-	add("路径循环", checkPathLoop(task.Source, task.Target))
+	if task.Source.Type == EndpointSSH || task.Target.Type == EndpointSSH {
+		warning := "SSH 端点未能检查路径循环，请确认远端路径与本地路径不指向同一存储"
+		result.Warnings = append(result.Warnings, warning)
+		result.Checks = append(result.Checks, Check{Name: "路径循环", OK: true, Message: warning})
+	} else {
+		add("路径循环", checkPathLoop(task.Source, task.Target))
+	}
 
 	var estimateErr, availableErr error
 	if task.Source.Type == EndpointSSH {
@@ -133,6 +147,14 @@ func preflight(ctx context.Context, task Task) PreflightResult {
 		add("容量", nil)
 	}
 	return result
+}
+
+func checkRemoteTargetWritable(ctx context.Context, endpoint Endpoint) error {
+	template := strings.TrimSuffix(endpoint.Path, "/") + "/.devbox-backup-preflight.XXXXXX"
+	command := "test -d " + shellQuote(endpoint.Path) +
+		" && tmp=$(mktemp " + shellQuote(template) + ")" +
+		" && rm -f -- \"$tmp\""
+	return remoteTest(ctx, endpoint, command)
 }
 
 func checkMountpoint(path string) error {
@@ -211,12 +233,11 @@ func checkPathLoop(source, target Endpoint) error {
 	if err != nil {
 		return fmt.Errorf("解析目标路径: %w", err)
 	}
-	rel, err := filepath.Rel(src, dst)
-	if err != nil {
-		return err
-	}
-	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+	if pathWithin(src, dst, true) {
 		return fmt.Errorf("目标路径不得等于或嵌套在源路径内")
+	}
+	if pathWithin(dst, src, true) {
+		return fmt.Errorf("目标路径不得是源路径的祖先")
 	}
 	return nil
 }

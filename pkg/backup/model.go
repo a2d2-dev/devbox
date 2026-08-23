@@ -90,10 +90,11 @@ type History struct {
 }
 
 type PreflightResult struct {
-	OK             bool    `json:"ok"`
-	Checks         []Check `json:"checks"`
-	EstimatedBytes int64   `json:"estimatedBytes"`
-	AvailableBytes int64   `json:"availableBytes"`
+	OK             bool     `json:"ok"`
+	Checks         []Check  `json:"checks"`
+	Warnings       []string `json:"warnings,omitempty"`
+	EstimatedBytes int64    `json:"estimatedBytes"`
+	AvailableBytes int64    `json:"availableBytes"`
 }
 
 type Check struct {

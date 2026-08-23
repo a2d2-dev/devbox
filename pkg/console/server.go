@@ -48,6 +48,8 @@ type Config struct {
 	BackupDataDir string `mapstructure:"backup_data_dir"`
 	// BackupConcurrency 是备份与恢复共享的进程内并发上限；小于 1 时为 2。
 	BackupConcurrency int `mapstructure:"backup_concurrency"`
+	// BackupAllowedRoots 扩展本地备份/恢复目标允许根；WorkDir 与 /data 始终包含。
+	BackupAllowedRoots []string `mapstructure:"backup_allowed_roots"`
 	// Catalogs 第三方 HTTP/Git catalog source 聚合器（Issue #2 阶段4 扩展）。
 	// 为 nil 表示未配置 catalog（UI 隐藏 catalog 区）。
 	Catalogs             *apps.CatalogSet           `mapstructure:"-"`
@@ -80,7 +82,8 @@ type Server struct {
 
 // NewServer 创建控制台服务器
 func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, controller apps.Controller, storeMgr *apps.StoreManager) *Server {
-	backupManager, backupErr := backup.NewManager(cfg.BackupDataDir, cfg.BackupConcurrency, logger)
+	backupManager, backupErr := backup.NewManager(cfg.BackupDataDir, cfg.BackupConcurrency, logger,
+		backup.WithWorkDir(cfg.WorkDir), backup.WithAllowedTargetRoots(cfg.BackupAllowedRoots...))
 	if backupErr != nil {
 		logger.Warn("Backup manager unavailable; backup management disabled", zap.Error(backupErr))
 	}
