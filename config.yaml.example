@@ -27,6 +27,36 @@ kubernetes:
   # 应用市场 API 地址；留空则禁用应用市场
   apiserver_url: ""
 
+# Docker Compose 应用管理；Docker 不可用时仅该运行时降级。
+compose:
+  enabled: true
+  data_dir: "/var/lib/devbox"
+  # 仅允许本机绝对 Unix socket；不支持 tcp/http/远程 Docker endpoint。
+  # devbox 会固定 CLI 到这个 socket，不继承 DOCKER_HOST/DOCKER_CONTEXT。
+  docker_socket: "/var/run/docker.sock"
+  # 第三方 catalog 刷新间隔（秒）；0 表示仅启动/手动刷新。
+  catalog_poll: 300
+  catalogs:
+    # HTTP 文件源：读取 <url>/catalog.json 及其相对 compose 文件。生产应使用 HTTPS。
+    # - id: "team-http"
+    #   name: "团队应用"
+    #   kind: "http"
+    #   url: "https://apps.example.com/devbox"
+    # Git 仓库源：HTTPS shallow clone；不接受 SSH、file:// 或本地路径。
+    # - id: "community"
+    #   name: "社区 Compose"
+    #   kind: "git"
+    #   url: "https://github.com/example/devbox-catalog.git"
+    #   ref: "v1"
+    #   path: "catalog"
+    # 原生 1Panel 开源应用商店；ref 留空使用远端默认分支（官方源当前为 dev）。
+    # - id: "onepanel-official"
+    #   name: "1Panel 官方商店"
+    #   kind: "1panel"
+    #   url: "https://github.com/1Panel-dev/appstore"
+    # 私有源可配置只读 token；建议通过受控配置文件注入并限制文件权限。
+    #   token: ""
+
 logging:
   # debug / info / warn / error
   level: "info"

@@ -1,16 +1,21 @@
-import { useState, useEffect, useRef, useMemo, useLayoutEffect, useCallback } from 'react'
+import { useState, useEffect, useRef, useMemo, useLayoutEffect, useCallback, useId } from 'react'
 import { useAnimationControls, useDragControls, useMotionValue, useTransform } from 'motion/react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
-import { StatusDot, Chip, Sparkline } from '../components/ui'
-import { useAppLogs, useAppVersions, switchAppVersion, appOp, deleteApp, useAppDetail } from '../hooks/useApi'
+import { StatusDot, Chip } from '../components/ui'
+import { useAppLogs, useAppVersions, switchAppVersion, appOp, deleteApp, useAppDetail, appActionAsync, useTask } from '../hooks/useApi'
 import { motion, project, springs, useMotionPref } from '../motion'
 import { btnSecondary, btnPrimary, btnDanger } from './AppWindow'
 import TabBar from './TabBar'
+import UninstallDialog from './UninstallDialog'
+import {
+  ComposeOverview, ComposeServices, ComposeLogs, ComposeEditor, ComposeEnv,
+  ComposeStorage, ComposeRevisions, ComposeOperations,
+} from './ComposeMgmtPanels'
 // Story 4.7：「容器 Shell」tab + 渲染分支在 merge commit 693efd5 中被吞，2026-06-22 恢复
 import ContainerShellFace from './ContainerShellFace'
 
-function KpiCell({ label, value, unit, tone, mono }) {
+function KpiCell({ label, value, tone, mono }) {
   return (
     <div style={{
       padding: '8px 10px', borderRadius: 7,
@@ -142,8 +147,7 @@ function MgmtOverview({ app, cpu, gpu }) {
 // ─── Reusable metric panel: collapsible line chart with axes ────
 function MetricPanel({ open, onToggle, icon, title, valueLabel, series, max,
                        timeLabels, color, avg, peak, emptyHint }) {
-  const gradId = useMemo(() =>
-    'mgrad-' + Math.random().toString(36).slice(2, 9), []);
+  const gradId = 'mgrad-' + useId().replaceAll(':', '');
   const chartH = 96;
   const padL = 32, padR = 6, padT = 8, padB = 18;
 
@@ -304,8 +308,8 @@ function MgmtMetrics({ app, metricsData, historyData }) {
     return rates;
   }, [historyData.netBytesRecv, historyData.timestamps]);
 
-  const timestamps = historyData.timestamps || [];
   const timeLabels = useMemo(() => {
+    const timestamps = historyData.timestamps || [];
     if (!timestamps.length) return ['', '', '', '', ''];
     const step = Math.max(1, Math.floor((timestamps.length - 1) / 5));
     const labels = [];
@@ -314,7 +318,7 @@ function MgmtMetrics({ app, metricsData, historyData }) {
       labels.push(`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`);
     }
     return labels;
-  }, [timestamps]);
+  }, [historyData.timestamps]);
 
   const safeArr = (s) => s && s.length > 0 ? s : [0];
   const last = (s) => { const a = safeArr(s); return a[a.length - 1]; };
@@ -511,7 +515,7 @@ resources: ${appSummary.resources}`;
         fontSize: 11, lineHeight: 1.65, whiteSpace: 'pre',
         overflow: 'auto', maxHeight: 360,
       }}>{configText.split('\n').map((line, i) => {
-        const m = line.match(/^(\s*)([\w\.\/-]+)(:.*)$/);
+        const m = line.match(/^(\s*)([\w./-]+)(:.*)$/);
         if (m) return <div key={i}>
           <span>{m[1]}</span>
           <span style={{ color: '#7dd3fc' }}>{m[2]}</span>
@@ -1011,9 +1015,11 @@ function UninstallProgress({ app }) {
   );
 }
 
-export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAuth, onUninstall, metricsData, historyData }) {
+export default function AppMgmtDrawer({ app, open, onClose, onUninstall, metricsData, historyData }) {
   const [tab, setTab] = useState('overview');
   const [uninstall, setUninstall] = useState(null); // null | 'confirm' | 'running' | 'done'
+  const [operationTaskId, setOperationTaskId] = useState(null);
+  const { task: operationTask } = useTask(operationTaskId);
   const pref = useMotionPref();
   const drawerRef = useRef(null);
   const drawerWidthRef = useRef(980);
@@ -1093,12 +1099,33 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
 
   if (!app) return null;
 
-  const isError = app.state === 'error';
-  const stateCfg = isError
-    ? { tone: 'red',   label: '运行异常', dot: 'red',   pulse: true }
-    : { tone: 'green', label: '运行中',   dot: 'green', pulse: false };
+  const isCompose = app.runtime === 'compose';
+  const phase = isCompose ? (app.observed?.phase || 'unknown') : (app.state === 'error' ? 'failed' : 'running');
+  const isError = phase === 'failed' || phase === 'degraded';
+  const composeState = {
+    running: { tone: 'green', label: '运行中', dot: 'green', pulse: false },
+    degraded: { tone: 'amber', label: '运行降级', dot: 'yellow', pulse: true },
+    failed: { tone: 'red', label: '运行异常', dot: 'red', pulse: true },
+    stopped: { tone: 'gray', label: '已停止', dot: 'gray', pulse: false },
+    pending: { tone: 'blue', label: '等待中', dot: 'blue', pulse: true },
+    deploying: { tone: 'blue', label: '部署中', dot: 'blue', pulse: true },
+    removing: { tone: 'amber', label: '卸载中', dot: 'yellow', pulse: true },
+    unknown: { tone: 'gray', label: '未知', dot: 'gray', pulse: false },
+  };
+  const stateCfg = isCompose ? (composeState[phase] || composeState.unknown) : isError
+    ? { tone: 'red', label: '运行异常', dot: 'red', pulse: true }
+    : { tone: 'green', label: '运行中', dot: 'green', pulse: false };
 
-  const tabs = [
+  const tabs = isCompose ? [
+    { id: 'overview', label: '概览', icon: 'info' },
+    { id: 'services', label: '服务', icon: 'apps' },
+    { id: 'logs', label: '日志', icon: 'terminal' },
+    { id: 'compose', label: 'Compose', icon: 'code' },
+    { id: 'env', label: '环境变量', icon: 'gear' },
+    { id: 'storage', label: '存储', icon: 'database' },
+    { id: 'revisions', label: '版本', icon: 'refresh' },
+    { id: 'operations', label: '操作记录', icon: 'clock' },
+  ] : [
     { id: 'overview', label: '概览',  icon: 'info'      },
     { id: 'metrics',  label: '指标',  icon: 'dashboard' },
     { id: 'logs',     label: '日志',  icon: 'terminal'  },
@@ -1106,6 +1133,7 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
     { id: 'versions', label: '版本',  icon: 'refresh'   },
     { id: 'config',   label: '配置',  icon: 'gear'      },
   ];
+  const activeTab = tabs.some((item) => item.id === tab) ? tab : 'overview';
 
   return (
     <>
@@ -1192,7 +1220,7 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
               </div>
               <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3,
                 display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="mono">{app.version}</span>
+                <span className="mono">{isCompose ? `Docker Compose · r${app.revision || 0}` : app.version}</span>
                 <span style={{ color: '#cbd5e1' }}>·</span>
                 <span>{app.category || '应用'}</span>
                 <span style={{ color: '#cbd5e1' }}>·</span>
@@ -1211,10 +1239,10 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
           {/* Tabs */}
           <TabBar
             tabs={tabs}
-            active={tab}
+            active={activeTab}
             onChange={setTab}
-            style={{ gap: 2 }}
-            itemStyle={{ padding: '8px 12px 10px', fontSize: 12.5, marginBottom: -1, gap: 5 }}
+            style={{ gap: 2, overflowX: 'auto', scrollbarWidth: 'thin' }}
+            itemStyle={{ padding: '8px 12px 10px', fontSize: 12.5, marginBottom: -1, gap: 5, flexShrink: 0 }}
             renderLabel={(t2) => (
               <>
                 <Icon name={t2.icon} size={12} stroke={1.8}/>{t2.label}
@@ -1225,12 +1253,32 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {tab === 'overview' && <MgmtOverview app={app} cpu={cpu} gpu={gpu}/>}
-          {tab === 'metrics'  && <MgmtMetrics  app={app} metricsData={safeMetrics} historyData={safeHistory}/>}
-          {tab === 'logs'     && <MgmtLogs     app={app}/>}
-          {tab === 'shell'    && <ContainerShellFace appId={app.id} app={app}/>}
-          {tab === 'versions' && <MgmtVersions app={app}/>}
-          {tab === 'config'   && <MgmtConfig   app={appWithDetail} onUninstallClick={() => setUninstall('confirm')}/>}
+          {isCompose && operationTask && (
+            <div style={{ margin: '10px 14px 0', padding: '8px 10px', borderRadius: 7, background: operationTask.status === 'failed' ? '#fef2f2' : '#eff6ff', border: `1px solid ${operationTask.status === 'failed' ? '#fecaca' : '#bfdbfe'}`, color: operationTask.status === 'failed' ? '#b91c1c' : '#1e40af', fontSize: 11.5 }}>
+              操作任务 {operationTask.status || 'queued'} · {operationTask.phase || 'queued'}{operationTask.message ? ` · ${operationTask.message}` : ''}
+            </div>
+          )}
+          {isCompose ? (
+            <>
+              {activeTab === 'overview' && <ComposeOverview app={app}/>}
+              {activeTab === 'services' && <ComposeServices app={app}/>}
+              {activeTab === 'logs' && <ComposeLogs app={app}/>}
+              {activeTab === 'compose' && <ComposeEditor app={app}/>}
+              {activeTab === 'env' && <ComposeEnv app={app}/>}
+              {activeTab === 'storage' && <ComposeStorage app={app}/>}
+              {activeTab === 'revisions' && <ComposeRevisions app={app}/>}
+              {activeTab === 'operations' && <ComposeOperations app={app}/>}
+            </>
+          ) : (
+            <>
+              {activeTab === 'overview' && <MgmtOverview app={app} cpu={cpu} gpu={gpu}/>}
+              {activeTab === 'metrics'  && <MgmtMetrics app={app} metricsData={safeMetrics} historyData={safeHistory}/>}
+              {activeTab === 'logs' && <MgmtLogs app={app}/>}
+              {activeTab === 'shell' && <ContainerShellFace appId={app.id} app={app}/>}
+              {activeTab === 'versions' && <MgmtVersions app={app}/>}
+              {activeTab === 'config' && <MgmtConfig app={appWithDetail} onUninstallClick={() => setUninstall('confirm')}/>}
+            </>
+          )}
         </div>
 
         {/* Footer actions */}
@@ -1240,14 +1288,24 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
           display: 'flex', gap: 6, alignItems: 'center',
         }}>
           <div style={{ flex: 1 }}/>
-          {!isError ? (
+          {isCompose && (
+            <button className="edge-press edge-btn-danger" style={{ ...btnDanger, height: 30, padding: '0 10px', fontSize: 11.5 }} onClick={() => setUninstall('confirm')}>
+              <Icon name="trash" size={12} stroke={1.8}/>卸载
+            </button>
+          )}
+          {isCompose && phase === 'stopped' ? (
+            <button className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 30, padding: '0 12px', fontSize: 11.5 }}
+              onClick={() => appActionAsync(app.id, 'start').then(t => setOperationTaskId(t.id)).catch(e => console.error('Start failed:', e))}>
+              <Icon name="play" size={12} stroke={2}/>启动
+            </button>
+          ) : !isError ? (
             <>
               <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px', fontSize: 11.5 }}
-                onClick={() => appOp(app.id, 'restart').catch(e => console.error('Restart failed:', e))}>
+                onClick={() => appActionAsync(app.id, 'restart').then(t => setOperationTaskId(t.id)).catch(e => console.error('Restart failed:', e))}>
                 <Icon name="refresh" size={12} stroke={1.8}/>重启
               </button>
               <button className="edge-press edge-btn-danger" style={{ ...btnDanger, height: 30, padding: '0 10px', fontSize: 11.5 }}
-                onClick={() => appOp(app.id, 'stop').catch(e => console.error('Stop failed:', e))}>
+                onClick={() => appActionAsync(app.id, 'stop').then(t => setOperationTaskId(t.id)).catch(e => console.error('Stop failed:', e))}>
                 <Icon name="stop" size={12} stroke={1.8}/>停止
               </button>
             </>
@@ -1262,7 +1320,10 @@ export default function AppMgmtDrawer({ app, open, onClose, authed, onRequireAut
       </motion.div>
 
       {/* Uninstall confirm dialog */}
-      {uninstall === 'confirm' && (
+      {uninstall === 'confirm' && isCompose && (
+        <UninstallDialog app={app} trackTask onClose={() => setUninstall(null)} onDone={() => { setUninstall(null); onClose(); onUninstall && onUninstall(app); }}/>
+      )}
+      {uninstall === 'confirm' && !isCompose && (
         <UninstallConfirm app={app}
           onCancel={() => setUninstall(null)}
           onConfirm={async () => {
