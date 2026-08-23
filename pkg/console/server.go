@@ -30,15 +30,16 @@ import (
 
 // Config 控制台 HTTP 服务器配置
 type Config struct {
-	Enabled           bool   `mapstructure:"enabled"`
-	Port              int    `mapstructure:"port"`
-	StaticDir         string `mapstructure:"static_dir"`
-	SupervisorSocket  string `mapstructure:"supervisor_socket"`
-	SupervisorConfDir string `mapstructure:"supervisor_conf_dir"`
-	ConsoleURL        string `mapstructure:"console_url"`
-	AuthPassword      string `mapstructure:"auth_password"`
-	AuthSessionTTL    int    `mapstructure:"auth_session_ttl"`
-	LinksPath         string `mapstructure:"links_path"`
+	Enabled           bool     `mapstructure:"enabled"`
+	Port              int      `mapstructure:"port"`
+	StaticDir         string   `mapstructure:"static_dir"`
+	SupervisorSocket  string   `mapstructure:"supervisor_socket"`
+	SupervisorConfDir string   `mapstructure:"supervisor_conf_dir"`
+	ConsoleURL        string   `mapstructure:"console_url"`
+	AuthPassword      string   `mapstructure:"auth_password"`
+	AuthSessionTTL    int      `mapstructure:"auth_session_ttl"`
+	TrustedProxies    []string `mapstructure:"trusted_proxies"`
+	LinksPath         string   `mapstructure:"links_path"`
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
@@ -126,6 +127,8 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		sessionUsers:     make(map[string]string),
 		onboarding:       newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
 	}
+	s.installAuthSessionCleanup()
+	s.installTaskAuditObserver()
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
 	if s.auth.Enabled() {

@@ -3,7 +3,6 @@ package console
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
 )
@@ -12,6 +11,33 @@ import (
 func (s *Server) registerAuthRoutes() {
 	s.mux.HandleFunc("/api/v1/auth/verify", s.handleAuthVerify)
 	s.mux.HandleFunc("/api/v1/auth/status", s.handleAuthStatus)
+	s.mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout)
+}
+
+func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.auth == nil || !s.auth.RevokeToken(r.Header.Get("Authorization")) {
+		writeJSONErrStatus(w, http.StatusUnauthorized, map[string]any{"error": "身份验证失败", "reason": "unauthorized"})
+		return
+	}
+	s.recordEvent(r, eventlog.Input{
+		Level: "info", Module: "auth", Username: "admin", Event: "退出本地会话", EventType: "LOGOUT", Outcome: "success",
+	})
+	s.jsonOK(w, map[string]any{"authenticated": false})
+}
+
+func (s *Server) installAuthSessionCleanup() {
+	if s.auth == nil {
+		return
+	}
+	s.auth.SetSessionRemovedHook(func(token string) {
+		s.sessionUsersMu.Lock()
+		delete(s.sessionUsers, token)
+		s.sessionUsersMu.Unlock()
+	})
 }
 
 func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
@@ -31,12 +57,13 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 
 	if s.auth == nil || !s.auth.Enabled() {
 		s.recordEvent(r, eventlog.Input{
-			Level: "info", Module: "auth", Username: strings.TrimSpace(req.Username),
+			Level: "info", Module: "auth", Username: "admin",
 			Event: "本地登录成功", EventType: "LOGIN_SUCCESS", Outcome: "success",
 		})
 		s.jsonOK(w, map[string]interface{}{
 			"authenticated": true,
 			"token":         "",
+			"username":      "admin",
 			"message":       "认证未启用",
 		})
 		return
@@ -45,7 +72,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	token, ok := s.auth.Verify(req.Password)
 	if !ok {
 		s.recordEvent(r, eventlog.Input{
-			Level: "warning", Module: "auth", Username: strings.TrimSpace(req.Username),
+			Level: "warning", Module: "auth", Username: "anonymous",
 			Event: "本地登录失败", EventType: "LOGIN_FAILED", Outcome: "failure",
 		})
 		w.Header().Set("Content-Type", "application/json")
@@ -56,21 +83,18 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	username := strings.TrimSpace(req.Username)
-	if username == "" {
-		username = "console"
-	}
 	s.sessionUsersMu.Lock()
-	s.sessionUsers[token] = username
+	s.sessionUsers[token] = "admin"
 	s.sessionUsersMu.Unlock()
 	s.recordEvent(r, eventlog.Input{
-		Level: "info", Module: "auth", Username: username,
+		Level: "info", Module: "auth", Username: "admin",
 		Event: "本地登录成功", EventType: "LOGIN_SUCCESS", Outcome: "success",
 	})
 
 	s.jsonOK(w, map[string]interface{}{
 		"authenticated": true,
 		"token":         token,
+		"username":      "admin",
 		"message":       "验证成功",
 	})
 }

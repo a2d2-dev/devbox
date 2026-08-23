@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -169,22 +170,32 @@ func (s *Store) Query(query Query) Page {
 	return page
 }
 
-// Clear removes all previous events and atomically replaces the file with the
-// LOG_CLEAR audit event. The clear action is therefore never invisible.
-func (s *Store) Clear(actor, sourceIP, userAgent string) (int, Event, error) {
+// Clear removes all events that predate a durable intent and atomically keeps
+// both that intent and the successful result.
+func (s *Store) Clear(intent Event, actor, sourceIP, userAgent string) (int, Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cleared := len(s.events)
+	foundIntent := false
+	for _, event := range s.events {
+		if event.ID == intent.ID && event.EventType == "LOG_CLEAR" && event.Outcome == "intent" {
+			foundIntent = true
+			break
+		}
+	}
+	if !foundIntent {
+		return 0, Event{}, errors.New("durable log clear intent is required")
+	}
+	cleared := len(s.events) - 1
 	event := s.makeEvent(Input{
 		Level: "warning", Module: "audit", Username: actor,
 		Event: "清空系统日志", EventType: "LOG_CLEAR", Outcome: "success",
 		ResourceKind: "system_log", ResourceID: "all", SourceIP: sourceIP, UserAgent: userAgent,
 		Payload: map[string]any{"cleared_count": cleared},
 	})
-	if err := rewriteEvents(s.path, []Event{event}); err != nil {
+	if err := rewriteEvents(s.path, []Event{intent, event}); err != nil {
 		return 0, Event{}, err
 	}
-	s.events = []Event{event}
+	s.events = []Event{intent, event}
 	return cleared, event, nil
 }
 
@@ -248,6 +259,7 @@ func rewriteEvents(path string, events []Event) error {
 
 var secretKey = regexp.MustCompile(`(?i)(password|passwd|secret|token|authorization|cookie|api[_-]?key|credential)`)
 var inlineSecret = regexp.MustCompile(`(?i)(password|passwd|secret|token|authorization|cookie|api[_-]?key)=([^\s&]+)`)
+var headerSecret = regexp.MustCompile(`(?im)\b(authorization|cookie|set-cookie)\s*:\s*[^\r\n]+`)
 
 func redactMap(input map[string]any) map[string]any {
 	if len(input) == 0 {
@@ -270,19 +282,70 @@ func redactMap(input map[string]any) map[string]any {
 }
 
 func redactValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return redactMap(typed)
-	case []any:
-		out := make([]any, len(typed))
-		for i := range typed {
-			out[i] = redactValue(typed[i])
+	return redactReflect(reflect.ValueOf(value), 0)
+}
+
+func redactReflect(value reflect.Value, depth int) any {
+	if !value.IsValid() || depth > 64 {
+		return nil
+	}
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	switch value.Kind() {
+	case reflect.Map:
+		if value.IsNil() {
+			return nil
+		}
+		out := make(map[string]any, value.Len())
+		iter := value.MapRange()
+		for iter.Next() {
+			key := fmt.Sprint(iter.Key().Interface())
+			if secretKey.MatchString(key) {
+				out[key] = "[REDACTED]"
+			} else {
+				out[key] = redactReflect(iter.Value(), depth+1)
+			}
 		}
 		return out
-	case string:
-		return inlineSecret.ReplaceAllString(typed, "$1=[REDACTED]")
+	case reflect.Struct:
+		out := make(map[string]any, value.NumField())
+		typeInfo := value.Type()
+		for i := 0; i < value.NumField(); i++ {
+			field := typeInfo.Field(i)
+			if field.PkgPath != "" {
+				continue
+			}
+			name := field.Name
+			if tag := strings.Split(field.Tag.Get("json"), ",")[0]; tag == "-" {
+				continue
+			} else if tag != "" {
+				name = tag
+			}
+			if secretKey.MatchString(name) {
+				out[name] = "[REDACTED]"
+			} else {
+				out[name] = redactReflect(value.Field(i), depth+1)
+			}
+		}
+		return out
+	case reflect.Slice, reflect.Array:
+		if value.Kind() == reflect.Slice && value.IsNil() {
+			return nil
+		}
+		out := make([]any, value.Len())
+		for i := 0; i < value.Len(); i++ {
+			out[i] = redactReflect(value.Index(i), depth+1)
+		}
+		return out
+	case reflect.String:
+		redacted := inlineSecret.ReplaceAllString(value.String(), "$1=[REDACTED]")
+		return headerSecret.ReplaceAllString(redacted, "$1: [REDACTED]")
 	default:
-		return value
+		return value.Interface()
 	}
 }
 

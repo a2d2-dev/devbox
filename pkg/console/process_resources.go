@@ -18,6 +18,7 @@ const linuxClockTicks = 100.0
 
 type processResourceInfo struct {
 	system.ProcessBasic
+	StartTicks     uint64   `json:"startTicks"`
 	CPUPercent     *float64 `json:"cpuPercent"`
 	CPUTimeSeconds float64  `json:"cpuTimeSeconds"`
 	RuntimeSeconds int64    `json:"runtimeSeconds"`
@@ -30,11 +31,18 @@ type processResourceInfo struct {
 
 type processCounter struct {
 	name       string
+	startTicks uint64
 	cpuTicks   uint64
 	readBytes  uint64
 	writeBytes uint64
 	ioOK       bool
 	at         time.Time
+}
+
+type processIdentity struct {
+	ppid       int
+	flags      uint64
+	startTicks uint64
 }
 
 type processResourceSampler struct {
@@ -58,17 +66,17 @@ func (s *processResourceSampler) sample(ctx context.Context, basics []system.Pro
 	out := make([]processResourceInfo, 0, len(basics))
 	next := make(map[int]processCounter, len(basics))
 	for _, basic := range basics {
-		cpuTicks, _, err := readProcessStat(s.procRoot, basic.PID)
+		cpuTicks, startTicks, err := readProcessStat(s.procRoot, basic.PID)
 		if err != nil {
 			continue
 		}
 		readBytes, writeBytes, ioOK := readProcessIO(s.procRoot, basic.PID)
 		current := processCounter{
-			name: basic.Name, cpuTicks: cpuTicks, readBytes: readBytes,
+			name: basic.Name, startTicks: startTicks, cpuTicks: cpuTicks, readBytes: readBytes,
 			writeBytes: writeBytes, ioOK: ioOK, at: now,
 		}
 		info := processResourceInfo{
-			ProcessBasic: basic, CPUTimeSeconds: float64(cpuTicks) / linuxClockTicks,
+			ProcessBasic: basic, StartTicks: startTicks, CPUTimeSeconds: float64(cpuTicks) / linuxClockTicks,
 			IOStatus: "unavailable", Ports: ports[basic.PID], PortsStatus: "available",
 		}
 		if basic.StartTime != "" {
@@ -82,7 +90,7 @@ func (s *processResourceSampler) sample(ctx context.Context, basics []system.Pro
 		if ioOK {
 			info.IOStatus = "available"
 		}
-		if prev, ok := s.previous[basic.PID]; ok && prev.name == basic.Name {
+		if prev, ok := s.previous[basic.PID]; ok && prev.name == basic.Name && prev.startTicks == startTicks {
 			if total > s.prevTotal && cpuTicks >= prev.cpuTicks {
 				value := float64(cpuTicks-prev.cpuTicks) / float64(total-s.prevTotal) * float64(runtime.NumCPU()) * 100
 				info.CPUPercent = &value
@@ -125,29 +133,42 @@ func readGlobalCPUTicks(procRoot string) (uint64, error) {
 }
 
 func readProcessStat(procRoot string, pid int) (cpuTicks, startTicks uint64, err error) {
+	cpuTicks, identity, err := readProcessIdentity(procRoot, pid)
+	return cpuTicks, identity.startTicks, err
+}
+
+func readProcessIdentity(procRoot string, pid int) (cpuTicks uint64, identity processIdentity, err error) {
 	data, err := os.ReadFile(fmt.Sprintf("%s/%d/stat", procRoot, pid))
 	if err != nil {
-		return 0, 0, err
+		return 0, processIdentity{}, err
 	}
 	text := string(data)
 	closeIdx := strings.LastIndexByte(text, ')')
 	if closeIdx < 0 || closeIdx+2 >= len(text) {
-		return 0, 0, fmt.Errorf("malformed process stat")
+		return 0, processIdentity{}, fmt.Errorf("malformed process stat")
 	}
 	fields := strings.Fields(text[closeIdx+2:])
 	if len(fields) < 20 {
-		return 0, 0, fmt.Errorf("short process stat")
+		return 0, processIdentity{}, fmt.Errorf("short process stat")
+	}
+	identity.ppid, err = strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, processIdentity{}, err
+	}
+	identity.flags, err = strconv.ParseUint(fields[6], 10, 64)
+	if err != nil {
+		return 0, processIdentity{}, err
 	}
 	userTicks, err := strconv.ParseUint(fields[11], 10, 64)
 	if err != nil {
-		return 0, 0, err
+		return 0, processIdentity{}, err
 	}
 	systemTicks, err := strconv.ParseUint(fields[12], 10, 64)
 	if err != nil {
-		return 0, 0, err
+		return 0, processIdentity{}, err
 	}
-	startTicks, err = strconv.ParseUint(fields[19], 10, 64)
-	return userTicks + systemTicks, startTicks, err
+	identity.startTicks, err = strconv.ParseUint(fields[19], 10, 64)
+	return userTicks + systemTicks, identity, err
 }
 
 func readProcessIO(procRoot string, pid int) (readBytes, writeBytes uint64, ok bool) {
@@ -155,6 +176,7 @@ func readProcessIO(procRoot string, pid int) (readBytes, writeBytes uint64, ok b
 	if err != nil {
 		return 0, 0, false
 	}
+	readFound, writeFound := false, false
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 2 {
@@ -162,12 +184,17 @@ func readProcessIO(procRoot string, pid int) (readBytes, writeBytes uint64, ok b
 		}
 		switch fields[0] {
 		case "read_bytes:":
-			readBytes, _ = strconv.ParseUint(fields[1], 10, 64)
+			readBytes, err = strconv.ParseUint(fields[1], 10, 64)
+			readFound = err == nil
 		case "write_bytes:":
-			writeBytes, _ = strconv.ParseUint(fields[1], 10, 64)
+			writeBytes, err = strconv.ParseUint(fields[1], 10, 64)
+			writeFound = err == nil
+		}
+		if err != nil {
+			return 0, 0, false
 		}
 	}
-	return readBytes, writeBytes, true
+	return readBytes, writeBytes, readFound && writeFound
 }
 
 func processListeningPorts(ctx context.Context) (map[int][]int, bool) {

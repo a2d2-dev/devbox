@@ -18,6 +18,8 @@ console:
   # 回收站位于此目录的 .trash，收藏/最近/外链/审计位于 .devbox-files；两者不在列表展示。
   # 外接存储和远程文件系统从 /proc/mounts 自动发现并只读展示。
   work_dir: "/data"
+  # 仅来自这些 IP/CIDR 的请求会解析 X-Forwarded-For；默认空列表。
+  trusted_proxies: []
 
 # 可选的 Kubernetes 集成；不设置则禁用 K8s 应用管理与应用市场。
 kubernetes:

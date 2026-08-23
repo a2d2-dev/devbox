@@ -141,8 +141,8 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordEvent(r, eventlog.Input{
-		Level: "info", Module: "apps", Event: "创建应用", EventType: "APP_INSTALL", Outcome: "success",
-		ResourceKind: "application", ResourceID: desired.ID, Payload: map[string]any{"source": desired.Source.Kind},
+		Level: "info", Module: "apps", Event: "创建应用", EventType: "APP_INSTALL", Outcome: "accepted",
+		ResourceKind: "application", ResourceID: desired.ID, Payload: map[string]any{"source": desired.Source.Kind, "task_id": task.ID},
 	})
 	s.jsonStatus(w, http.StatusAccepted, task)
 }
@@ -396,7 +396,7 @@ func (s *Server) operateAsync(w http.ResponseWriter, r *http.Request, id, action
 	}
 	s.recordEvent(r, eventlog.Input{
 		Level: "info", Module: "apps", Event: "应用" + action,
-		EventType: "APP_" + strings.ToUpper(action), Outcome: "success",
+		EventType: "APP_" + strings.ToUpper(action), Outcome: "accepted",
 		ResourceKind: "application", ResourceID: id, Payload: map[string]any{"task_id": task.ID},
 	})
 	s.jsonStatus(w, http.StatusAccepted, task)

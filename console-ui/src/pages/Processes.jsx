@@ -280,7 +280,7 @@ function TerminateDialog({ target, onClose, onDone, onError }) {
   const terminate = async () => {
     setBusy(true)
     try {
-      const response = await authFetch(`/api/v1/processes/${target.pid}/terminate`, { method: 'POST' })
+	  const response = await authFetch(`/api/v1/processes/${target.pid}/terminate`, terminateRequestOptions(target.startTicks))
       if (!response.ok) {
         const body = await response.json().catch(() => ({}))
         throw new Error(body.error || `终止失败 (${response.status})`)
@@ -303,6 +303,14 @@ function TerminateDialog({ target, onClose, onDone, onError }) {
       </div>
     </div>
   </div>
+}
+
+export function terminateRequestOptions(startTicks) {
+  return {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startTicks }),
+  }
 }
 
 const navBtn = { height: 30, padding: '0 9px', display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.ink2, cursor: 'pointer', fontSize: 11.5 }

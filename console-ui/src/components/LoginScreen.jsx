@@ -103,7 +103,7 @@ export function LoginScreen({ onLogin, deviceName }) {
         return
       }
       setPhase('success')
-		setTimeout(() => onLogin(data.token || '', username, persistence), 600)
+		setTimeout(() => onLogin(data.token || '', data.username || 'admin', persistence), 600)
     } catch {
       setError('无法连接到服务器')
       setPhase('idle')

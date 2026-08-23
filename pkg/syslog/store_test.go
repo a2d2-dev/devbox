@@ -6,6 +6,12 @@ import (
 	"testing"
 )
 
+type typedAuditPayload struct {
+	Authorization string            `json:"authorization"`
+	Metadata      map[string]string `json:"metadata"`
+	Headers       []string          `json:"headers"`
+}
+
 func TestStoreQueryPaginationAndFilters(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "events.jsonl"))
 	if err != nil {
@@ -61,6 +67,46 @@ func TestStoreRedactsSensitivePayloadAndPersists(t *testing.T) {
 	}
 }
 
+func TestStoreRedactsTypedPayloadsAndHeaderValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	store, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Append(Input{Payload: map[string]any{
+		"typed": typedAuditPayload{
+			Authorization: "Bearer struct-secret",
+			Metadata:      map[string]string{"api_key": "typed-secret", "safe": "visible"},
+			Headers: []string{
+				"Authorization: Bearer header-secret",
+				"Cookie: session=header-secret",
+				"Set-Cookie: session=header-secret; HttpOnly",
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed := reloaded.Query(Query{}).Events[0].Payload["typed"].(map[string]any)
+	if typed["authorization"] != "[REDACTED]" {
+		t.Fatalf("struct authorization was not redacted: %#v", typed)
+	}
+	metadata := typed["metadata"].(map[string]any)
+	if metadata["api_key"] != "[REDACTED]" || metadata["safe"] != "visible" {
+		t.Fatalf("typed map was not recursively redacted: %#v", metadata)
+	}
+	for _, header := range typed["headers"].([]any) {
+		if header != "Authorization: [REDACTED]" && header != "Cookie: [REDACTED]" && header != "Set-Cookie: [REDACTED]" {
+			t.Fatalf("header was not redacted: %q", header)
+		}
+	}
+}
+
 func TestClearKeepsItsOwnAuditEvent(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "events.jsonl"))
 	if err != nil {
@@ -68,7 +114,14 @@ func TestClearKeepsItsOwnAuditEvent(t *testing.T) {
 	}
 	_, _ = store.Append(Input{Event: "one"})
 	_, _ = store.Append(Input{Event: "two"})
-	cleared, event, err := store.Clear("admin", "10.0.0.1", "test")
+	intent, err := store.Append(Input{
+		Level: "warning", Module: "audit", Username: "admin", Event: "请求清空系统日志",
+		EventType: "LOG_CLEAR", Outcome: "intent", ResourceKind: "system_log", ResourceID: "all",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared, event, err := store.Clear(intent, "admin", "10.0.0.1", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +129,7 @@ func TestClearKeepsItsOwnAuditEvent(t *testing.T) {
 		t.Fatalf("cleared=%d event=%#v", cleared, event)
 	}
 	page := store.Query(Query{})
-	if page.Total != 1 || page.Events[0].EventType != "LOG_CLEAR" || page.Events[0].Username != "admin" {
+	if page.Total != 2 || page.Events[0].Outcome != "success" || page.Events[1].Outcome != "intent" || page.Events[0].Username != "admin" {
 		t.Fatalf("unexpected events after clear: %#v", page)
 	}
 }

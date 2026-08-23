@@ -8,12 +8,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/a2d2-dev/devbox/pkg/aiactivity"
 	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
 	"github.com/a2d2-dev/devbox/pkg/system"
+	"golang.org/x/sys/unix"
 )
 
 // registerSystemRoutes 注册系统级查询路由。
@@ -84,16 +84,19 @@ func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) {
 	s.jsonOK(w, d)
 }
 
-var processExists = func(pid int) bool {
-	_, err := os.Stat("/proc/" + strconv.Itoa(pid))
-	return err == nil
-}
+var openProcessPIDFD = unix.PidfdOpen
+var signalProcessPIDFD = unix.PidfdSendSignal
+var closeProcessPIDFD = unix.Close
 
-var terminateProcess = func(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
+const processFlagKernelThread = 0x00200000
 
 func (s *Server) handleTerminateProcess(w http.ResponseWriter, r *http.Request, pid int) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.systemLog == nil {
+		writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "审计日志不可用，终止进程已禁用", "reason": "audit_unavailable"})
 		return
 	}
 	if s.auth == nil || !s.auth.Enabled() {
@@ -106,37 +109,93 @@ func (s *Server) handleTerminateProcess(w http.ResponseWriter, r *http.Request, 
 		writeJSONErrStatus(w, http.StatusUnauthorized, map[string]any{"error": "身份验证失败", "reason": "unauthorized"})
 		return
 	}
-	if pid <= 1 || pid == os.Getpid() {
+	if _, err := s.recordEvent(r, eventlog.Input{
+		Level: "warning", Module: "process", Event: "请求终止进程", EventType: "PROCESS_TERMINATE",
+		Outcome: "intent", ResourceKind: "process", ResourceID: strconv.Itoa(pid), Payload: map[string]any{"signal": "SIGTERM"},
+	}); err != nil {
+		writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "审计日志不可用，已拒绝终止进程", "reason": "audit_unavailable"})
+		return
+	}
+	if pid <= 1 || pid == os.Getpid() || pid == os.Getppid() {
+		s.recordProcessTerminationResult(r, pid, "failure", "protected_process")
 		writeJSONErrStatus(w, http.StatusForbidden, map[string]any{
 			"error": "不允许终止系统关键进程或 DevBox 自身", "reason": "protected_process",
 		})
 		return
 	}
-	if !processExists(pid) {
-		writeJSONErrStatus(w, http.StatusNotFound, map[string]any{"error": "进程不存在或已退出", "reason": "process_not_found"})
+	var request struct {
+		StartTicks uint64 `json:"startTicks"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.StartTicks == 0 {
+		s.recordProcessTerminationResult(r, pid, "failure", "process_identity_required")
+		writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{"error": "缺少进程启动身份", "reason": "process_identity_required"})
 		return
 	}
-	err := terminateProcess(pid)
+	pidfd, err := openProcessPIDFD(pid, 0)
 	if err != nil {
-		status := http.StatusInternalServerError
-		reason := "signal_failed"
-		if errors.Is(err, syscall.ESRCH) {
-			status, reason = http.StatusNotFound, "process_not_found"
-		} else if errors.Is(err, syscall.EPERM) {
-			status, reason = http.StatusForbidden, "permission_denied"
+		status, reason := processSignalError(err)
+		s.recordProcessTerminationResult(r, pid, "failure", reason)
+		writeJSONErrStatus(w, status, map[string]any{"error": "无法打开进程句柄", "reason": reason})
+		return
+	}
+	defer closeProcessPIDFD(pidfd)
+	procRoot := "/proc"
+	if s.processResources != nil && s.processResources.procRoot != "" {
+		procRoot = s.processResources.procRoot
+	}
+	_, identity, err := readProcessIdentity(procRoot, pid)
+	if err != nil {
+		reason := "process_identity_unavailable"
+		status := http.StatusConflict
+		if errors.Is(err, os.ErrNotExist) {
+			reason, status = "process_not_found", http.StatusNotFound
 		}
-		s.recordEvent(r, eventlog.Input{
-			Level: "error", Module: "process", Event: "终止进程失败", EventType: "PROCESS_TERMINATE",
-			Outcome: "failure", ResourceKind: "process", ResourceID: strconv.Itoa(pid), Payload: map[string]any{"reason": reason},
-		})
+		s.recordProcessTerminationResult(r, pid, "failure", reason)
+		writeJSONErrStatus(w, status, map[string]any{"error": "无法确认进程身份", "reason": reason})
+		return
+	}
+	if identity.startTicks != request.StartTicks {
+		s.recordProcessTerminationResult(r, pid, "failure", "process_identity_changed")
+		writeJSONErrStatus(w, http.StatusConflict, map[string]any{"error": "进程身份已变化，已拒绝发送信号", "reason": "process_identity_changed"})
+		return
+	}
+	if identity.flags&processFlagKernelThread != 0 {
+		s.recordProcessTerminationResult(r, pid, "failure", "protected_process")
+		writeJSONErrStatus(w, http.StatusForbidden, map[string]any{"error": "不允许终止内核线程", "reason": "protected_process"})
+		return
+	}
+	err = signalProcessPIDFD(pidfd, unix.SIGTERM, nil, 0)
+	if err != nil {
+		status, reason := processSignalError(err)
+		s.recordProcessTerminationResult(r, pid, "failure", reason)
 		writeJSONErrStatus(w, status, map[string]any{"error": "终止进程失败", "reason": reason})
 		return
 	}
-	s.recordEvent(r, eventlog.Input{
-		Level: "warning", Module: "process", Event: "终止进程", EventType: "PROCESS_TERMINATE",
-		Outcome: "success", ResourceKind: "process", ResourceID: strconv.Itoa(pid), Payload: map[string]any{"signal": "SIGTERM"},
-	})
+	s.recordProcessTerminationResult(r, pid, "success", "")
 	s.jsonStatus(w, http.StatusAccepted, map[string]any{"status": "terminating", "pid": pid, "signal": "SIGTERM"})
+}
+
+func processSignalError(err error) (int, string) {
+	if errors.Is(err, unix.ESRCH) {
+		return http.StatusNotFound, "process_not_found"
+	}
+	if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) {
+		return http.StatusForbidden, "permission_denied"
+	}
+	return http.StatusInternalServerError, "signal_failed"
+}
+
+func (s *Server) recordProcessTerminationResult(r *http.Request, pid int, outcome, reason string) {
+	level, event := "warning", "终止进程"
+	payload := map[string]any{"signal": "SIGTERM"}
+	if outcome == "failure" {
+		level, event = "error", "终止进程失败"
+		payload["reason"] = reason
+	}
+	_, _ = s.recordEvent(r, eventlog.Input{
+		Level: level, Module: "process", Event: event, EventType: "PROCESS_TERMINATE", Outcome: outcome,
+		ResourceKind: "process", ResourceID: strconv.Itoa(pid), Payload: payload,
+	})
 }
 
 func (s *Server) handleDisks(w http.ResponseWriter, r *http.Request) {
@@ -243,9 +302,21 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 			writeJSONErrStatus(w, http.StatusForbidden, map[string]any{"error": "清空日志需要已启用的控制台认证", "reason": "permission_required"})
 			return
 		}
-		cleared, event, err := s.systemLog.Clear(s.actorFromRequest(r), requestIP(r), r.UserAgent())
+		intent, err := s.recordEvent(r, eventlog.Input{
+			Level: "warning", Module: "audit", Event: "请求清空系统日志", EventType: "LOG_CLEAR", Outcome: "intent",
+			ResourceKind: "system_log", ResourceID: "all",
+		})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "审计日志不可用，已拒绝清空日志", "reason": "audit_unavailable"})
+			return
+		}
+		cleared, event, err := s.systemLog.Clear(intent, s.actorFromRequest(r), s.requestIP(r), r.UserAgent())
+		if err != nil {
+			_, _ = s.recordEvent(r, eventlog.Input{
+				Level: "error", Module: "audit", Event: "清空系统日志失败", EventType: "LOG_CLEAR", Outcome: "failure",
+				ResourceKind: "system_log", ResourceID: "all", Payload: map[string]any{"reason": "storage_failure"},
+			})
+			writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "清空日志失败", "reason": "audit_unavailable"})
 			return
 		}
 		s.jsonOK(w, map[string]any{"cleared": cleared, "auditEvent": event})

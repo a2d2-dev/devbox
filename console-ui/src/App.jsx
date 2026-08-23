@@ -160,6 +160,13 @@ export default function App() {
   };
 
   const handleLogout = () => {
+		const token = getAuthToken();
+		if (token) {
+			fetch('/api/v1/auth/logout', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}` },
+			}).catch(() => {});
+		}
 		clearAuth();
 		setAuthRequired(true);
     setLoggedIn(false);
@@ -355,6 +362,14 @@ export default function App() {
     setMgmtOpen(false);
   };
 
+  const minimizeWindow = () => {
+    if (activeId) minimizeApp(activeId);
+  };
+
+  const closeWindow = () => {
+    if (activeId) closeApp(activeId);
+  };
+
   // Live data from API hooks
   const metricsHook = useMetrics();
   const { data: metricsHistoryData } = useMetricsHistory();
@@ -418,9 +433,9 @@ export default function App() {
     actions: {
       'toggle-shortcut-help': () => setShortcutHelpOpen(open => !open),
       'show-desktop': showDesktop,
-      'minimize-window': () => activeId && minimizeApp(activeId),
+      'minimize-window': minimizeWindow,
       'toggle-maximized': () => setMaximized(current => !current),
-      'close-window': () => activeId && closeApp(activeId),
+      'close-window': closeWindow,
       'focus-dock-app': (index) => {
         const app = shortcutDockApps[index];
         if (app) focusApp(app.id);

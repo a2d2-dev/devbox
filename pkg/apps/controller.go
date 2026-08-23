@@ -50,6 +50,17 @@ type Controller interface {
 	RemovePreview(ctx context.Context, id string, purge bool) (RemovePreview, error)
 }
 
+// TaskObserverRegistrar is implemented by controllers with asynchronous task workers.
+type TaskObserverRegistrar interface {
+	RegisterTaskObserver(func(Task))
+}
+
+func (s *service) RegisterTaskObserver(observer func(Task)) {
+	if registrar, ok := s.runner.(interface{ RegisterTaskObserver(func(Task)) }); ok {
+		registrar.RegisterTaskObserver(observer)
+	}
+}
+
 // runtimeAdapter 是内部 seam：Compose 与 K8s 两个实现，不暴露给 HTTP。
 //
 // Observe 返回该运行时下所有（受管）应用的运行态，keyed by app ID。

@@ -31,6 +31,7 @@ Issue #18 在现有监控、进程、Supervisor 和审计页面上补齐资源�
 | `cpuPercent` | 两次 API 采样间的 CPU 使用率；第一次为 `null`（采样中） |
 | `cpuTimeSeconds` | 进程累计 CPU 时间 |
 | `runtimeSeconds` | 进程运行时间 |
+| `startTicks` | Linux `/proc/<pid>/stat` 启动 tick；终止请求必须原样回传，用于确认 PID 身份 |
 | `readBps` / `writeBps` | `/proc/<pid>/io` 可读时的磁盘速率；首次为 `null` |
 | `ioStatus` | `available` 或 `unavailable` |
 | `ports` | 该 PID 的监听端口 |
@@ -38,16 +39,21 @@ Issue #18 在现有监控、进程、Supervisor 和审计页面上补齐资源�
 
 ### `POST /api/v1/processes/{pid}/terminate`
 
-向进程发送 `SIGTERM`。此危险操作有独立于全局中间件的权限校验：必须启用控制台密码认证并携带有效 Bearer token。PID 1 和 DevBox 自身受保护。
+向进程发送 `SIGTERM`。请求 JSON 为 `{ "startTicks": 12345 }`，其中值来自最近一次进程列表。此危险操作有独立于全局中间件的权限校验：必须启用控制台密码认证并携带有效 Bearer token。
+
+服务端先持久化 `outcome: "intent"`，再用 `pidfd_open` 打开稳定进程句柄，并校验句柄打开后的 `/proc/<pid>/stat` starttime 与请求身份一致，最后通过 `pidfd_send_signal` 发送信号。PID 1、DevBox 自身及父进程、内核线程受保护。
 
 - `202`: 已发送 `SIGTERM`。
 - `401`: token 无效。
 - `403 permission_required`: 未启用控制台密码认证。
 - `403 protected_process`: 系统关键进程。
+- `409 process_identity_changed`: PID 已复用或请求身份已过期，未发送信号。
+- `400 process_identity_required`: 请求未携带有效 `startTicks`。
 - `404 process_not_found`: PID 不存在或在操作前退出。
 - `403 permission_denied`: OS 拒绝发信号。
+- `503 audit_unavailable`: 审计 intent 无法持久化，危险操作未执行。
 
-成功或失败的终止尝试都会写入结构化日志。UI 在请求前显示二次确认。
+认证失败不写终止审计，避免未认证请求刷日志。token 验证成功后，受保护 PID、PID 不存在、身份变化、信号成功或失败等所有路径都保留 intent 与结果事件。UI 在请求前显示二次确认。
 
 ### `GET /api/v1/supervisor/resources`
 
@@ -57,7 +63,11 @@ Issue #18 在现有监控、进程、Supervisor 和审计页面上补齐资源�
 
 ## 系统日志
 
-系统事件和操作审计统一存储为 `/var/lib/devbox/system-events.jsonl`，文件权限为 `0600`；开发和测试环境可用 `DEVBOX_SYSTEM_LOG_PATH` 覆盖路径。登录成功/失败、Supervisor 服务控制、应用安装/启停/卸载、终止进程和清空日志都写入该存储。payload 在写入前按敏感 key 和内联 `key=value` 模式脱敏。
+系统事件和操作审计统一存储为 `/var/lib/devbox/system-events.jsonl`，文件权限为 `0600`；开发和测试环境可用 `DEVBOX_SYSTEM_LOG_PATH` 覆盖路径。存储初始化失败时，终止进程和清空日志端点返回 503 并保持禁用。登录成功/失败、Supervisor 服务控制、应用安装/启停/卸载、终止进程和清空日志都写入该存储。
+
+payload 会递归处理任意 map、struct、slice 和 pointer，敏感 key 与内联 `key=value` 均会脱敏；`Authorization:`、`Cookie:`、`Set-Cookie:` header 的完整值会替换为 `[REDACTED]`。当前认证模型为单管理员共享密码，成功 session 的审计身份由服务端固定为 `admin`，不接受客户端 username 作为可信身份。
+
+应用异步写操作被 controller 接受时记录 `outcome: "accepted"` 和 `task_id`；worker 将任务写入 `succeeded` 或 `failed` 终态后，再分别记录 `success` 或 `failure` 事件。
 
 ### `GET /api/v1/audit/events`
 
@@ -76,7 +86,11 @@ Issue #18 在现有监控、进程、Supervisor 和审计页面上补齐资源�
 
 ### `DELETE /api/v1/audit/events`
 
-清空现有日志。要求已启用密码认证和有效 Bearer token。清空使用同目录原子替换，完成后立即写入唯一的 `LOG_CLEAR` 审计事件，因此清空动作本身不会消失。
+清空现有日志。要求已启用密码认证和有效 Bearer token。服务端先同步落盘 `outcome: "intent"`；失败时返回 503 且不清空。成功时使用同目录原子替换，并保留 intent 与 `outcome: "success"` 两条 `LOG_CLEAR` 事件，因此清空动作及其结果都不会消失。
+
+## 审计来源与会话
+
+来源 IP 默认取 TCP peer 的 `RemoteAddr`，不信任 `X-Forwarded-For`。只有 peer 命中 `console.trusted_proxies` 配置的 IP/CIDR 时，才从 XFF 链右向左剥离可信代理并记录首个不可信 hop。token 过期或调用 `POST /api/v1/auth/logout` 时，服务器同步删除 token 对应的审计身份绑定。
 
 ## 前端采样策略
 
