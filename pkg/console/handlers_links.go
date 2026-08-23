@@ -7,11 +7,12 @@ import (
 )
 
 // registerLinksRoutes 注册"服务导航"路由。
-//   GET  /api/v1/links         返回清单 + supervisor 关联状态
-//   POST /api/v1/links/reload  强制重读磁盘 YAML（不用重启进程）
+//
+//	GET  /api/v1/links         返回清单 + supervisor 关联状态
+//	POST /api/v1/links/reload  强制重读磁盘 YAML（不用重启进程）
 func (s *Server) registerLinksRoutes() {
 	s.mux.HandleFunc("/api/v1/links", s.handleLinks)
-	s.mux.HandleFunc("/api/v1/links/reload", s.handleLinksReload)
+	s.mux.HandleFunc("/api/v1/links/reload", s.requireAdmin(s.handleLinksReload))
 }
 
 // handleLinks 返回 links 清单。对于 kind=="supervisor" 的 section，

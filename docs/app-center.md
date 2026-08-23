@@ -61,6 +61,9 @@ Compose 最终都进入同一个 `apps.Controller`、revision、Task 和风险�
 商店/catalog 的 `latest`、`main` 等可变镜像标签在预检时即升格为 blocked，与 Apply
 策略一致。
 
+应用列表、版本详情和 preflight 由控制台统一登录保护，普通登录用户可以执行只读预检；
+store/catalog 安装、更新、卸载以及 catalog 来源写操作必须由管理员执行。
+
 ## 手动安装
 
 “手动安装”复用 Compose 管理器已有的新建向导，支持粘贴或上传 `.yml/.yaml`。链路为：

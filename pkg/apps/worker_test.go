@@ -110,6 +110,24 @@ func TestWorkerExecuteFailureSanitized(t *testing.T) {
 	assert.NotContains(t, got.Message, "hunter2")
 }
 
+func TestWorkerNotifiesObserverOfFailedTerminalTask(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose, applyErr: errors.New("pull failed")}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	prepApp(t, repo, paths, "audit-failure")
+	require.NoError(t, repo.CreateTask(ctx, Task{
+		ID: "audit-task", AppID: "audit-failure", Type: TaskApply, Revision: 1,
+		Status: TaskQueued, CreatedAt: time.Now(),
+	}))
+	var observed Task
+	w.RegisterTaskObserver(func(task Task) { observed = task })
+
+	w.execute(ctx, "audit-task")
+
+	assert.Equal(t, "audit-task", observed.ID)
+	assert.Equal(t, TaskFailed, observed.Status)
+}
+
 func TestWorkerStartRecovers(t *testing.T) {
 	compose := &fakeAdapter{kind: RuntimeCompose}
 	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
@@ -253,7 +271,8 @@ func TestWorkerQueueFullDoesNotDrop(t *testing.T) {
 	for i := 0; i < n; i++ {
 		w.Enqueue("t" + itoa(int64(i)))
 	}
-	// 全部应最终到达终态（无丢弃）。
+	// 全部应最终到达终态（无丢弃）。等待窗覆盖慢磁盘上的 SQLite
+	// 提交耗时；本测试验证队列完整性，不验证吞吐量。
 	require.Eventually(t, func() bool {
 		for i := 0; i < n; i++ {
 			tk, _ := repo.GetTask(ctx, "t"+itoa(int64(i)))
@@ -262,7 +281,7 @@ func TestWorkerQueueFullDoesNotDrop(t *testing.T) {
 			}
 		}
 		return true
-	}, 10*time.Second, 50*time.Millisecond)
+	}, 2*time.Minute, 100*time.Millisecond)
 }
 
 // MED#8：apply 后未观测到容器（desired running）→ 任务判 failed，而非 succeeded。

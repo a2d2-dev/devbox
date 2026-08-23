@@ -72,6 +72,7 @@ export const ICONS = {
   bolt:        (p) => <Svg {...p}><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></Svg>,
   refresh:     (p) => <Svg {...p}><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></Svg>,
   stop:        (p) => <Svg {...p}><rect x="6" y="6" width="12" height="12" rx="1.5"/></Svg>,
+  pause:       (p) => <Svg {...p}><path d="M8 5v14M16 5v14"/></Svg>,
   play:        (p) => <Svg {...p}><path d="M6 4v16l14-8Z"/></Svg>,
   chevDown:    (p) => <Svg {...p}><path d="m6 9 6 6 6-6"/></Svg>,
   chevRight:   (p) => <Svg {...p}><path d="m9 6 6 6-6 6"/></Svg>,

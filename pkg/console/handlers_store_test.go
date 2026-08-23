@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/a2d2-dev/devbox/pkg/apps"
+	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -104,6 +106,9 @@ func TestHandleStoreInstall_Success(t *testing.T) {
 	s := newStoreTestServer(t, ctrl, func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, composeCatalogJSON)
 	})
+	var err error
+	s.systemLog, err = eventlog.New(filepath.Join(t.TempDir(), "events.jsonl"))
+	require.NoError(t, err)
 
 	body := map[string]any{
 		"appId": "ghost", "version": "1.0.0",
@@ -130,6 +135,10 @@ func TestHandleStoreInstall_Success(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
 	assert.Equal(t, "task-1", res.TaskID)
 	assert.Equal(t, int64(7), res.Revision)
+	audit := s.systemLog.Query(eventlog.Query{Modules: []string{"apps"}})
+	require.Equal(t, 1, audit.Total)
+	assert.Equal(t, "accepted", audit.Events[0].Outcome)
+	assert.Equal(t, "task-1", audit.Events[0].Payload["task_id"])
 }
 
 func TestHandleStoreInstall_PreservesExplicitIdempotencyKey(t *testing.T) {
