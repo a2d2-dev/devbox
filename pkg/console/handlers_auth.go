@@ -1,10 +1,14 @@
 package console
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/a2d2-dev/devbox/pkg/maintenance"
 	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
+	"go.uber.org/zap"
 )
 
 // registerAuthRoutes 注册认证路由
@@ -75,6 +79,19 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 			Level: "warning", Module: "auth", Username: "anonymous",
 			Event: "本地登录失败", EventType: "LOGIN_FAILED", Outcome: "failure",
 		})
+		if s.notifier != nil {
+			remote := r.RemoteAddr
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if err := s.notifier.Notify(ctx, maintenance.Notification{
+					Subject: "DevBox 登录失败告警",
+					Body:    "控制台检测到一次登录失败。来源：" + remote + "，时间：" + time.Now().Format(time.RFC3339),
+				}); err != nil {
+					s.logger.Warn("Login failure notification failed", zap.Error(err))
+				}
+			}()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]interface{}{

@@ -22,7 +22,9 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/gpuhistory"
 	"github.com/a2d2-dev/devbox/pkg/hardware"
 	"github.com/a2d2-dev/devbox/pkg/links"
+	"github.com/a2d2-dev/devbox/pkg/maintenance"
 	"github.com/a2d2-dev/devbox/pkg/models"
+	"github.com/a2d2-dev/devbox/pkg/shares"
 	"github.com/a2d2-dev/devbox/pkg/supervisor"
 	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
 	"github.com/a2d2-dev/devbox/pkg/vms"
@@ -86,6 +88,11 @@ type Server struct {
 	processResources     *processResourceSampler
 	sessionUsersMu       sync.RWMutex
 	sessionUsers         map[string]string
+	maintenanceStore     *maintenance.Store
+	webdav               *shares.WebDAVService
+	notifier             maintenance.Notifier
+	restoreMu            sync.Mutex
+	pendingRestores      map[string]pendingRestore
 	downloadEngine       *downloads.Engine
 	downloadEngineError  string
 	onboarding           *onboardingStore
@@ -130,7 +137,17 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		systemLog:        systemLog,
 		processResources: newProcessResourceSampler(),
 		sessionUsers:     make(map[string]string),
+		webdav:           shares.NewWebDAVService(),
+		pendingRestores:  make(map[string]pendingRestore),
 		onboarding:       newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
+	}
+	if store, err := maintenance.NewStore("", cfg.WorkDir); err != nil {
+		logger.Error("Maintenance settings unavailable", zap.Error(err))
+	} else {
+		s.maintenanceStore = store
+		s.notifier = maintenance.SMTPNotifier{Config: func() maintenance.SMTPConfig {
+			return store.Get().SMTP
+		}}
 	}
 	s.installAuthSessionCleanup()
 	s.installTaskAuditObserver()
@@ -199,6 +216,9 @@ func (s *Server) Start(ctx context.Context) error {
 		s.logger.Info("Shutting down console HTTP server...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if s.webdav != nil {
+			_ = s.webdav.Stop(shutdownCtx)
+		}
 		srv.Shutdown(shutdownCtx)
 	}()
 
@@ -209,6 +229,14 @@ func (s *Server) Start(ctx context.Context) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+	if s.maintenanceStore != nil {
+		settings := s.maintenanceStore.Get()
+		if settings.WebDAV.Enabled {
+			if err := s.webdav.Start(s.config.WorkDir, settings.WebDAV, s.config.AuthPassword); err != nil {
+				s.logger.Warn("Configured WebDAV service could not start", zap.Error(err))
+			}
+		}
 	}
 
 	// 打印实际监听地址（端口 0 时有用）
@@ -297,6 +325,9 @@ func (s *Server) registerRoutes() {
 
 	// 浏览器应用（代理 + 书签/历史）
 	s.registerBrowserRoutes()
+
+	// 文件访问服务与系统维护（Issue #14）
+	s.registerMaintenanceRoutes()
 
 	// 下载任务中心
 	s.registerDownloadRoutes()
