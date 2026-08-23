@@ -110,6 +110,24 @@ func TestWorkerExecuteFailureSanitized(t *testing.T) {
 	assert.NotContains(t, got.Message, "hunter2")
 }
 
+func TestWorkerNotifiesObserverOfFailedTerminalTask(t *testing.T) {
+	compose := &fakeAdapter{kind: RuntimeCompose, applyErr: errors.New("pull failed")}
+	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})
+	ctx := context.Background()
+	prepApp(t, repo, paths, "audit-failure")
+	require.NoError(t, repo.CreateTask(ctx, Task{
+		ID: "audit-task", AppID: "audit-failure", Type: TaskApply, Revision: 1,
+		Status: TaskQueued, CreatedAt: time.Now(),
+	}))
+	var observed Task
+	w.RegisterTaskObserver(func(task Task) { observed = task })
+
+	w.execute(ctx, "audit-task")
+
+	assert.Equal(t, "audit-task", observed.ID)
+	assert.Equal(t, TaskFailed, observed.Status)
+}
+
 func TestWorkerStartRecovers(t *testing.T) {
 	compose := &fakeAdapter{kind: RuntimeCompose}
 	w, repo, paths := newTestWorker(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: compose})

@@ -55,7 +55,12 @@ type stubController struct {
 	restoreTask apps.Task
 	restoreErr  error
 
-	takeoverErr error
+	takeoverErr  error
+	taskObserver func(apps.Task)
+}
+
+func (s *stubController) RegisterTaskObserver(observer func(apps.Task)) {
+	s.taskObserver = observer
 }
 
 func (s *stubController) Capability(context.Context) (apps.CapabilityReport, error) {

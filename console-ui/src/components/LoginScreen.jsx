@@ -81,7 +81,7 @@ export function LoginScreen({ onLogin, deviceName }) {
   }, [])
 
   // devbox 本地认证：单密码 + session token。
-  // 后端 /api/v1/auth/verify 只校验 password，username 只做前端展示。
+  // 后端校验 password，并把 username 绑定到本次 session 供审计记录使用。
   // 未启用密码 (config auth.password 为空) 时后端会直接返 {authenticated:true, token:""}
   const submit = async (e) => {
     if (e) e.preventDefault()
@@ -94,7 +94,7 @@ export function LoginScreen({ onLogin, deviceName }) {
       const r = await fetch('/api/v1/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: cleanPassword }),
+        body: JSON.stringify({ username: username.trim(), password: cleanPassword }),
       })
       const data = await r.json().catch(() => ({}))
       if (!r.ok || !data.authenticated) {
@@ -103,7 +103,7 @@ export function LoginScreen({ onLogin, deviceName }) {
         return
       }
       setPhase('success')
-		setTimeout(() => onLogin(data.token || '', username, persistence), 600)
+		setTimeout(() => onLogin(data.token || '', data.username || 'admin', persistence), 600)
     } catch {
       setError('无法连接到服务器')
       setPhase('idle')

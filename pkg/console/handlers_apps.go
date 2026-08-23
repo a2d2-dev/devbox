@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/a2d2-dev/devbox/pkg/apps"
+	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
 )
 
 // 应用管理路由（Issue #2）。
@@ -139,6 +140,10 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		writeAppErr(w, err)
 		return
 	}
+	s.recordEvent(r, eventlog.Input{
+		Level: "info", Module: "apps", Event: "创建应用", EventType: "APP_INSTALL", Outcome: "accepted",
+		ResourceKind: "application", ResourceID: desired.ID, Payload: map[string]any{"source": desired.Source.Kind, "task_id": task.ID},
+	})
 	s.jsonStatus(w, http.StatusAccepted, task)
 }
 
@@ -389,6 +394,11 @@ func (s *Server) operateAsync(w http.ResponseWriter, r *http.Request, id, action
 		writeAppErr(w, err)
 		return
 	}
+	s.recordEvent(r, eventlog.Input{
+		Level: "info", Module: "apps", Event: "应用" + action,
+		EventType: "APP_" + strings.ToUpper(action), Outcome: "accepted",
+		ResourceKind: "application", ResourceID: id, Payload: map[string]any{"task_id": task.ID},
+	})
 	s.jsonStatus(w, http.StatusAccepted, task)
 }
 
@@ -419,6 +429,11 @@ func (s *Server) operateCompat(w http.ResponseWriter, r *http.Request, id, actio
 		writeJSONErrStatus(w, http.StatusInternalServerError, map[string]any{"error": "operation failed: " + task.Message})
 		return
 	}
+	s.recordEvent(r, eventlog.Input{
+		Level: "info", Module: "apps", Event: "应用" + action,
+		EventType: "APP_" + strings.ToUpper(action), Outcome: "success",
+		ResourceKind: "application", ResourceID: id, Payload: map[string]any{"task_id": task.ID},
+	})
 	s.jsonOK(w, body)
 }
 
@@ -441,6 +456,10 @@ func (s *Server) deleteAppCompat(w http.ResponseWriter, r *http.Request, id stri
 		writeJSONErrStatus(w, http.StatusInternalServerError, map[string]any{"error": "delete failed: " + task.Message})
 		return
 	}
+	s.recordEvent(r, eventlog.Input{
+		Level: "warning", Module: "apps", Event: "卸载应用", EventType: "APP_UNINSTALL", Outcome: "success",
+		ResourceKind: "application", ResourceID: id, Payload: map[string]any{"purge": purge, "task_id": task.ID},
+	})
 	s.jsonOK(w, body)
 }
 
