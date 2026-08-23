@@ -34,8 +34,32 @@ func newStoreTestServer(t *testing.T, ctrl apps.Controller, catalog http.Handler
 		&http.Client{Timeout: 5 * time.Second}, zap.NewNop())
 	s := &Server{controller: ctrl, storeManager: storeMgr, logger: zap.NewNop(), mux: http.NewServeMux()}
 	s.mux.HandleFunc("/api/v1/store/version", s.handleStoreVersion)
+	s.mux.HandleFunc("/api/v1/store/preflight", s.handleStorePreflight)
 	s.mux.HandleFunc("/api/v1/store/install", s.handleStoreInstall)
 	return s
+}
+
+func TestHandleStorePreflight_UsesTrustedTemplateWithoutApply(t *testing.T) {
+	ctrl := &stubController{validateResult: apps.ValidateResult{OK: true, Services: []apps.ServicePreview{{
+		Name: "web", Image: "nginx:1.25", Ports: []string{"18081:80"},
+	}}}}
+	s := newStoreTestServer(t, ctrl, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, composeCatalogJSON)
+	})
+	w := do(s, http.MethodPost, "/api/v1/store/preflight", map[string]any{
+		"appId": "ghost", "version": "1.0.0", "values": map[string]any{"tag": "1.25", "pw": "secret"},
+	})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 0, ctrl.lastApplyCt)
+	assert.Equal(t, apps.SourceStore, ctrl.lastValidate.Source.Kind)
+	assert.Contains(t, ctrl.lastValidate.ComposeContent, "nginx:1.25")
+	assert.NotContains(t, ctrl.lastValidate.ComposeContent, "secret")
+	assert.Equal(t, "secret", ctrl.lastValidate.Secrets["pw"])
+
+	var got apps.ValidateResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got.Services, 1)
+	assert.Equal(t, []string{"18081:80"}, got.Services[0].Ports)
 }
 
 func TestHandleStoreVersion_Success(t *testing.T) {

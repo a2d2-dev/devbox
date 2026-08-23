@@ -87,3 +87,39 @@ func TestRegularUserCannotCallPrivilegedWriteEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestPreflightEndpointsRequireLoginButNotAdmin(t *testing.T) {
+	store, err := users.Open(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	_, err = store.CreateUser(context.Background(), users.CreateUser{
+		Username: "developer", Password: "Developer-2026", Role: users.RoleUser, Enabled: true,
+	})
+	require.NoError(t, err)
+
+	a := auth.New(auth.Config{Users: store, SessionTTL: 60})
+	token, _, ok := a.VerifyCredentials("developer", "Developer-2026")
+	require.True(t, ok)
+
+	s := &Server{mux: http.NewServeMux(), auth: a, logger: zap.NewNop()}
+	s.mux.HandleFunc("/api/v1/store/preflight", s.handleStorePreflight)
+	s.mux.HandleFunc("/api/v1/catalogs/preflight", s.handleCatalogPreflight)
+	h := s.authGate(s.mux)
+
+	for _, path := range []string{"/api/v1/store/preflight", "/api/v1/catalogs/preflight"} {
+		t.Run(path+" rejects anonymous requests", func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(`{}`))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+		})
+
+		t.Run(path+" allows regular users through authorization", func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(`{}`))
+			r.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+		})
+	}
+}

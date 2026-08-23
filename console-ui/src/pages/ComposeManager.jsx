@@ -370,7 +370,7 @@ const SAMPLE = `services:
     ports: ["8080:80"]
 `;
 
-function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
+export function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
   const [source, setSource] = useState('paste'); // 'paste' | 'upload'
   const [name, setName] = useState('');
   const [compose, setCompose] = useState(SAMPLE);
@@ -381,7 +381,7 @@ function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
   const [secrets, setSecrets] = useState(''); // KEY=VALUE 每行（仅写，不回传）
   const [parameters, setParameters] = useState(''); // 非敏感 KEY=VALUE（进 revision）
   const [dataPath, setDataPath] = useState('');
-  const [dataTarget, setDataTarget] = useState('/data');
+  const [dataTarget, setDataTarget] = useState('');
   const [cpuLimit, setCpuLimit] = useState('');
   const [memoryLimit, setMemoryLimit] = useState('');
   const [autoStart, setAutoStart] = useState(true);

@@ -987,6 +987,15 @@ export async function installStoreApp({ appId, version, values, idempotencyKey, 
   return r.json();
 }
 
+export async function preflightStoreApp({ appId, version, values }) {
+  const r = await authFetch(`${API}/store/preflight`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ appId, version, values }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
 // ─── 第三方 catalog（HTTP/Git 文件原生 source）──────────────────────
 //
 // 走 /catalogs/*。多 source 聚合，单 source 不可用仅影响该 source（用上次缓存）。
@@ -1084,6 +1093,15 @@ export async function installCatalogApp({ sourceId, appId, version, values, idem
   const r = await authFetch(`${API}/catalogs/install`, {
     method: 'POST', headers,
     body: JSON.stringify({ sourceId, appId, version, values, idempotencyKey, confirmRisky }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+export async function preflightCatalogApp({ sourceId, appId, version, values }) {
+  const r = await authFetch(`${API}/catalogs/preflight`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceId, appId, version, values }),
   });
   if (!r.ok) throw await readErr(r);
   return r.json();

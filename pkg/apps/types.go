@@ -61,6 +61,12 @@ type StoreApp struct {
 	Installable          bool        `json:"installable"`
 	NotInstallableReason string      `json:"notInstallableReason,omitempty"`
 	Pinned               bool        `json:"pinned,omitempty"`
+	// PublishedAt 来自 catalog 元数据；为空表示上游没有提供发布时间，UI 的
+	// “最新发布”视图会明确降级为版本号、名称排序。
+	PublishedAt string `json:"publishedAt,omitempty"`
+	// SourceType/TrustLevel 让 UI 不必根据文案猜来源信任边界。
+	SourceType string `json:"sourceType"` // official | community
+	TrustLevel string `json:"trustLevel"` // reviewed | unverified
 
 	// Catalog 来源标识（第三方 HTTP/Git catalog source，Issue #2 阶段4 扩展）。
 	//   - CatalogID    catalog source id（来源筛选与 install 路由）。

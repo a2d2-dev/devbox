@@ -35,9 +35,27 @@ func newCatalogTestServer(t *testing.T, ctrl apps.Controller, cs *apps.CatalogSe
 	s.mux.HandleFunc("/api/v1/catalogs", s.handleCatalogs)
 	s.mux.HandleFunc("/api/v1/catalogs/apps", s.handleCatalogApps)
 	s.mux.HandleFunc("/api/v1/catalogs/version", s.handleCatalogVersion)
+	s.mux.HandleFunc("/api/v1/catalogs/preflight", s.handleCatalogPreflight)
 	s.mux.HandleFunc("/api/v1/catalogs/install", s.handleCatalogInstall)
 	s.registerAppRoutes()
 	return s
+}
+
+func TestHandleCatalogPreflight_UsesSelectedCommunitySource(t *testing.T) {
+	cat := &fakeCatalog{id: "src1", kind: "http", version: apps.StoreAppVersion{
+		AppID: "web", Version: "1.2.3", Runtime: apps.RuntimeCompose, Installable: true,
+		ComposeTemplate: "services:\n  web:\n    image: nginx:1.25\n    ports: [\"18082:80\"]\n",
+	}}
+	ctrl := &stubController{validateResult: apps.ValidateResult{OK: true}}
+	s := newCatalogTestServer(t, ctrl, catalogSetWith(t, cat))
+	w := do(s, http.MethodPost, "/api/v1/catalogs/preflight", map[string]any{
+		"sourceId": "src1", "appId": "web", "version": "1.2.3",
+	})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 0, ctrl.lastApplyCt)
+	assert.Equal(t, apps.SourceCatalog, ctrl.lastValidate.Source.Kind)
+	assert.Equal(t, "src1", ctrl.lastValidate.Source.CatalogID)
+	assert.Contains(t, ctrl.lastValidate.ComposeContent, "18082:80")
 }
 
 func catalogSetWith(t *testing.T, cats ...apps.Catalog) *apps.CatalogSet {

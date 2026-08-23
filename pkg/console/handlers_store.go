@@ -97,6 +97,61 @@ func (s *Server) handleStoreInstall(w http.ResponseWriter, r *http.Request) {
 	s.installResolvedVersion(w, r, req.AppID, ver, req.Values, req.IdempotencyKey, req.ConfirmRisky, source)
 }
 
+// handleStorePreflight 从官方可信源重取并渲染 Compose，再复用 Controller.Validate。
+// 请求不接受 Compose 原文，返回服务、端口、卷、网络和风险摘要且不落盘。
+func (s *Server) handleStorePreflight(w http.ResponseWriter, r *http.Request) {
+	if s.controller == nil || s.storeManager == nil {
+		writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "store preflight unavailable"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req apps.StoreInstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.AppID == "" {
+		writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{"error": "appId is required"})
+		return
+	}
+	ver, err := s.storeManager.GetStoreAppVersion(r.Context(), req.AppID, req.Version)
+	if err != nil {
+		writeJSONErrStatus(w, http.StatusBadGateway, map[string]any{"error": "获取商店版本失败", "reason": "catalog_unreachable"})
+		return
+	}
+	s.preflightResolvedVersion(w, r, req.AppID, ver, req.Values, apps.ApplicationSource{
+		Kind: apps.SourceStore, StoreID: req.AppID, Version: ver.Version,
+	})
+}
+
+// preflightResolvedVersion 是 store/catalog 的可信模板预检共享流程。
+func (s *Server) preflightResolvedVersion(w http.ResponseWriter, r *http.Request, appID string,
+	ver apps.StoreAppVersion, values map[string]any, source apps.ApplicationSource) {
+	if !ver.Installable || ver.Runtime != apps.RuntimeCompose {
+		writeJSONErrStatus(w, http.StatusUnprocessableEntity, map[string]any{
+			"error": "该应用不可在本机安装", "reason": "not_installable", "detail": ver.NotInstallableReason,
+		})
+		return
+	}
+	compose, params, secrets, err := apps.RenderStoreCompose(ver, values)
+	if err != nil {
+		writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "reason": "validation_failed"})
+		return
+	}
+	res, err := s.controller.Validate(r.Context(), apps.ValidateRequest{
+		Name: appID, ComposeContent: compose, Parameters: params, Secrets: secrets, Source: source,
+	})
+	if err != nil {
+		writeAppErr(w, err)
+		return
+	}
+	s.jsonOK(w, res)
+}
+
 // installResolvedVersion store/catalog 安装的共享流程（要求 3/5）：
 // 已从可信 source 取到版本 → 校验+安全渲染 → 复用同源已装 ID → Controller.Apply。
 //   - compose 原文一律后端持有（ver），不来自前端。

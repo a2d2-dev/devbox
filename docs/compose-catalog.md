@@ -1,10 +1,13 @@
 # Docker Compose Catalog 接入规范
 
+应用中心的视图、分类、来源信任、安装前影响预检、手动安装和状态规则见
+[`app-center.md`](app-center.md)。本文件继续描述 catalog 协议与 Compose 安全约束。
+
 devbox 可以聚合 edge-apiserver 应用市场、`devbox/v1` HTTP/Git catalog，以及原生 1Panel 开源应用商店。第三方包安装时，后端会按 `sourceId + appId + version` 从可信 source 重新读取定义，前端不能提交 Compose 模板原文。
 
 ## 添加 1Panel 应用市场
 
-推荐在「应用商店」左侧的「Catalog 数据源」点击 `+`：
+推荐在「应用中心 → 设置 → Catalog 来源」点击 `+`：
 
 1. 填写 Git 仓库地址，例如官方源 `https://github.com/1Panel-dev/appstore`。
 2. 格式选择「自动识别」或「1Panel」；分支留空读取远端默认分支（官方源当前为 `dev`）。

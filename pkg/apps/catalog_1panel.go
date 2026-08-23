@@ -1015,5 +1015,7 @@ func onePanelAppToStoreApp(srcID, srcName string, pa *onepanelParsedApp, v onepa
 		Installable:  true,
 		CatalogID:    srcID,
 		CatalogName:  srcName,
+		SourceType:   "community",
+		TrustLevel:   "unverified",
 	}
 }

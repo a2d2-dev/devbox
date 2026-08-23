@@ -145,6 +145,33 @@ func TestAnalyzeComposeSafe(t *testing.T) {
 	assert.False(t, NeedsConfirmation(f, false))
 }
 
+func TestExtractServicePreviewsPreservesLongSyntaxImpact(t *testing.T) {
+	raw := `services:
+  web:
+    image: nginx:1.27.5-alpine
+    ports:
+      - target: 80
+        published: "19112"
+        protocol: tcp
+      - target: 53
+        published: "19153"
+        protocol: udp
+    volumes:
+      - type: volume
+        source: hello-data
+        target: /usr/share/nginx/html
+      - type: bind
+        source: /srv/readonly
+        target: /data
+        read_only: true
+`
+	previews, err := ExtractServicePreviews(raw)
+	require.NoError(t, err)
+	require.Len(t, previews, 1)
+	assert.Equal(t, []string{"19112:80", "19153:53/udp"}, previews[0].Ports)
+	assert.Equal(t, []string{"hello-data:/usr/share/nginx/html", "/srv/readonly:/data:ro"}, previews[0].Volumes)
+}
+
 func TestAnalyzeLiteralSecretsBlocked(t *testing.T) {
 	for _, raw := range []string{
 		"services:\n  app:\n    image: nginx:1.27\n    environment:\n      PASSWORD: hunter2\n",

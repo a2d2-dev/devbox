@@ -145,6 +145,37 @@ func (s *Server) handleCatalogInstall(w http.ResponseWriter, r *http.Request) {
 	s.installResolvedVersion(w, r, req.AppID, ver, req.Values, req.IdempotencyKey, req.ConfirmRisky, source)
 }
 
+// handleCatalogPreflight 与安装使用相同的 sourceId+appId+version 可信重取路径，
+// 仅执行渲染和 Controller.Validate，不创建 revision/task。
+func (s *Server) handleCatalogPreflight(w http.ResponseWriter, r *http.Request) {
+	if s.controller == nil || s.catalogs == nil || !s.catalogs.Configured() {
+		writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "catalog preflight unavailable"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req apps.CatalogInstallRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.SourceID == "" || req.AppID == "" {
+		writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{"error": "sourceId and appId are required"})
+		return
+	}
+	ver, err := s.catalogs.GetVersion(r.Context(), req.SourceID, req.AppID, req.Version)
+	if err != nil {
+		writeJSONErrStatus(w, http.StatusBadGateway, map[string]any{"error": "获取 catalog 版本失败", "reason": "catalog_unreachable"})
+		return
+	}
+	s.preflightResolvedVersion(w, r, req.AppID, ver, req.Values, apps.ApplicationSource{
+		Kind: apps.SourceCatalog, StoreID: req.AppID, Version: ver.Version, CatalogID: req.SourceID,
+	})
+}
+
 // --- catalog 辅助 ---
 
 // composeAvailable 本机 Docker/Compose 运行时是否可用（catalog 列表标记 installable 用）。
