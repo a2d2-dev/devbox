@@ -130,7 +130,9 @@ func (c *Collector) Snapshot() (Status, error) {
 			}
 		}
 		item.Duplex = strings.ToLower(readText(filepath.Join(c.SysClassNet, item.Name, "duplex")))
-		item.LinkMbps, _ = strconv.Atoi(readText(filepath.Join(c.SysClassNet, item.Name, "speed")))
+		if speed, err := strconv.Atoi(readText(filepath.Join(c.SysClassNet, item.Name, "speed"))); err == nil && speed > 0 {
+			item.LinkMbps = speed
+		}
 		item.RxBytes, _ = strconv.ParseUint(readText(filepath.Join(c.SysClassNet, item.Name, "statistics/rx_bytes")), 10, 64)
 		item.TxBytes, _ = strconv.ParseUint(readText(filepath.Join(c.SysClassNet, item.Name, "statistics/tx_bytes")), 10, 64)
 		item.RxBytesSec, item.TxBytesSec = c.rate(item.Name, item.RxBytes, item.TxBytes)

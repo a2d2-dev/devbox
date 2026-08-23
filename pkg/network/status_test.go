@@ -61,6 +61,14 @@ func TestCollectorSnapshotAndRate(t *testing.T) {
 	if second.Interfaces[0].RxBytesSec != 1000 || second.Interfaces[0].TxBytesSec != 1500 {
 		t.Fatalf("unexpected rates: %#v", second.Interfaces[0])
 	}
+	write("speed", "-1\n")
+	third, err := c.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Interfaces[0].LinkMbps != 0 {
+		t.Fatalf("invalid sysfs speed should be reported as unknown: %#v", third.Interfaces[0])
+	}
 }
 
 func TestRenderFirewallLockoutProtection(t *testing.T) {
