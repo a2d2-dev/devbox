@@ -45,6 +45,9 @@ func writeAppErr(w http.ResponseWriter, err error) {
 		if ae.Reason != "" {
 			body["reason"] = ae.Reason
 		}
+		if ae.Detail != "" {
+			body["detail"] = ae.Detail
+		}
 		if ae.Kind == apps.ErrKindRiskBlocked && len(ae.Findings) > 0 {
 			body["findings"] = ae.Findings
 		}

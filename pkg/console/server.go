@@ -223,6 +223,8 @@ func (s *Server) registerRoutes() {
 
 	// 应用管理路由
 	s.registerAppRoutes()
+	// Docker 服务概览与主机运行配置（与应用管理共用 controller）。
+	s.registerDockerRoutes()
 
 	// 文件/模型/告警/端口路由
 	s.registerExtraRoutes()

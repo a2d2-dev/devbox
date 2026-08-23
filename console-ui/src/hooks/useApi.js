@@ -95,24 +95,28 @@ function usePoll(url, { interval = 0, fallback = null, transform } = {}) {
   useEffect(() => {
     mountedRef.current = true;
     let timer = null;
+    let inFlight = false;
 
     if (!url) {
       return () => { mountedRef.current = false; };
     }
 
     async function doFetch() {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const r = await authFetch(API + url);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const json = await r.json();
         if (!mountedRef.current) return;
-        setData(transform ? transform(json) : json);
+        setData((previous) => transform ? transform(json, previous) : json);
         setError(null);
       } catch (err) {
         if (!mountedRef.current) return;
         setError(err);
         // keep previous data (or fallback) on error
       } finally {
+        inFlight = false;
         if (mountedRef.current) setLoading(false);
       }
     }
@@ -348,6 +352,67 @@ export function useApps(interval = 10000) {
       }));
     },
   });
+}
+
+// ─── Docker overview / host runtime settings ───────────────────
+
+export function useDockerOverview(interval = 5000) {
+  return usePoll('/docker/overview', { interval, fallback: null });
+}
+
+export function useDockerStats(interval = 3000) {
+  const empty = { available: false, cpuPercent: 0, memoryUsageBytes: 0, memoryLimitBytes: 0,
+    networkRxBytes: 0, networkTxBytes: 0, containers: 0 };
+  return usePoll('/docker/stats', {
+    interval,
+    fallback: { current: empty, history: { cpu: [], memory: [], rx: [], tx: [], times: [] } },
+    transform: (sample, previous) => {
+      const prior = previous?.history || { cpu: [], memory: [], rx: [], tx: [], times: [] };
+      if (!sample?.available || !sample.sampledAt || prior.times.at(-1) === sample.sampledAt) {
+        return { current: sample || empty, history: prior };
+      }
+      const trim = (values, value) => [...values, value].slice(-24);
+      const memory = sample.memoryLimitBytes > 0 ? sample.memoryUsageBytes / sample.memoryLimitBytes * 100 : 0;
+      return { current: sample, history: {
+        cpu: trim(prior.cpu, sample.cpuPercent || 0), memory: trim(prior.memory, memory),
+        rx: trim(prior.rx, sample.networkRxBytes || 0), tx: trim(prior.tx, sample.networkTxBytes || 0),
+        times: trim(prior.times, sample.sampledAt),
+      } };
+    },
+  });
+}
+
+export async function dockerServiceAction(action) {
+  const r = await authFetch(`${API}/docker/service`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+export async function setDockerAutostart(enabled) {
+  const r = await authFetch(`${API}/docker/autostart`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !!enabled }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+export async function planDockerMigration(targetPath) {
+  const r = await authFetch(`${API}/docker/storage/plan`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetPath }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+export async function executeDockerMigration(targetPath, planId) {
+  const r = await authFetch(`${API}/docker/storage/execute`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetPath, planId, confirm: true }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
 }
 
 // ─── App detail (含 env + deployValues，AppMgmtDrawer 打开时拉一次) ───

@@ -16,6 +16,7 @@ export const SYSTEM_APPS = [
   { id: 'monitoring',          kind: 'system', name: '监控',     icon: 'sparkle',   color: T.indigo,  bg: 'linear-gradient(160deg,#6366f1,#4f46e5)' },
   { id: 'ai-activity',         kind: 'system', name: 'AI 活动',  icon: 'brain',     color: T.violet,  bg: 'linear-gradient(160deg,#a855f7,#6d28d9)' },
   { id: 'store',               kind: 'system', name: '应用商店', icon: 'store',     color: T.green,   bg: 'linear-gradient(160deg,#34d399,#059669)' },
+  { id: 'docker',              kind: 'system', name: 'Docker',   icon: 'server',    color: '#2563eb', bg: 'linear-gradient(160deg,#3b82f6,#0f766e)' },
   { id: 'compose-manager',     kind: 'system', name: 'Compose 应用', icon: 'apps', color: '#0891b2', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
   { id: 'files',               kind: 'system', name: '文件',     icon: 'folder',    color: '#0891b2', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
   { id: 'processes',           kind: 'system', name: '进程',     icon: 'cpu',       color: '#475569', bg: 'linear-gradient(160deg,#64748b,#1e293b)' },

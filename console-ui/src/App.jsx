@@ -42,6 +42,7 @@ import AppWindow, { btnSecondary, btnPrimary } from './components/AppWindow'
 import DashboardApp from './pages/Dashboard'
 import AppStore from './pages/AppStore'
 import { ComposeManager } from './pages/ComposeManager'
+import DockerOverview from './pages/DockerOverview'
 import AlertCenter from './pages/AlertCenter'
 import AuditLog from './pages/AuditLog'
 import Supervisor from './pages/Supervisor'
@@ -383,9 +384,11 @@ export default function App() {
     actions: {
       'toggle-shortcut-help': () => setShortcutHelpOpen(open => !open),
       'show-desktop': showDesktop,
-      'minimize-window': minimizeWindow,
-      'toggle-maximized': () => setMaximized(current => !current),
-      'close-window': closeWindow,
+      'minimize-window': () => { if (activeId) minimizeApp(activeId); },
+      'toggle-maximized': () => {
+        if (activeId) setMaxByApp(current => ({ ...current, [activeId]: !(current[activeId] ?? true) }));
+      },
+      'close-window': () => { if (activeId) closeApp(activeId); },
       'focus-dock-app': (index) => {
         const app = shortcutDockApps[index];
         if (app) focusApp(app.id);
@@ -529,6 +532,8 @@ export default function App() {
                 {appId === 'store'     && <AppStore onOpenApp={launchApp} authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'compose-manager' && <ComposeManager authed={authed} onRequireAuth={requireAuth}
                   onOpenStore={() => launchApp({ id: 'store' })} onOpenApp={launchApp}/>}
+                {appId === 'docker' && <DockerOverview authed={authed} onRequireAuth={requireAuth}
+                  onOpenCompose={() => launchApp({ id: 'compose-manager' })}/>}
                 {appId === 'alerts'    && <AlertCenter authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'audit'     && <AuditLog/>}
                 {appId === 'supervisor'&& <Supervisor/>}
@@ -536,7 +541,7 @@ export default function App() {
                 {appId === 'hardware'  && <Hardware/>}
                 {appId === 'links'     && <Links/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','compose-manager','alerts','audit','supervisor','virtual-machines','hardware','links','diag','settings'].includes(appId)
+                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','links','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)}/>}
 

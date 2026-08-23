@@ -62,12 +62,16 @@ func AssembleController(ctx context.Context, cfg ControllerConfig, logger *zap.L
 
 	var prechecker composePrechecker
 	var takeoverRenderer takeoverPrechecker
+	dockerManager := NewDockerManager(cfg.DockerSocket)
 	if cr, ok := adapters[RuntimeCompose].(*composeRuntime); ok {
 		prechecker = cr
 		takeoverRenderer = cr
+		runner := realDockerCommandRunner{}
+		dockerManager = newDockerManagerWithDeps(cr.engine, &systemDockerServiceHost{runner: runner}, &osDockerStorage{daemonPath: defaultDaemonJSON}, runner)
 	}
 	controller := NewController(repo, paths, adapters, worker, logger,
-		WithPrechecker(prechecker), WithTakeoverPrechecker(takeoverRenderer))
+		WithPrechecker(prechecker), WithTakeoverPrechecker(takeoverRenderer),
+		WithDockerManager(dockerManager))
 	cleanup := func() { _ = repo.Close() }
 	return controller, cleanup, nil
 }
