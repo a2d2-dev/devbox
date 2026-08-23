@@ -41,10 +41,16 @@ func NewBrowser(cfg Config) *Browser {
 	if root == "" {
 		root = "/data"
 	}
-	root = filepath.Clean(root)
+	root = cleanAbsolute(root)
 	allowed := cfg.AllowedDirs
 	if len(allowed) == 0 {
 		allowed = []string{root}
+	}
+	for i, dir := range allowed {
+		allowed[i] = cleanAbsolute(dir)
+		if real, err := filepath.EvalSymlinks(allowed[i]); err == nil {
+			allowed[i] = real
+		}
 	}
 	return &Browser{rootDir: root, allowedDirs: allowed}
 }
@@ -65,11 +71,15 @@ func (b *Browser) List(path string) ([]FileEntry, error) {
 		return nil, fmt.Errorf("invalid path: %w", err)
 	}
 
-	if !b.isAllowed(absPath) {
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path: %w", err)
+	}
+	if !b.isAllowed(realPath) {
 		return nil, fmt.Errorf("access denied: %s", absPath)
 	}
 
-	entries, err := os.ReadDir(absPath)
+	entries, err := os.ReadDir(realPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
@@ -90,7 +100,7 @@ func (b *Browser) List(path string) ([]FileEntry, error) {
 
 		if e.IsDir() {
 			entry.Type = "dir"
-			if sub, err := os.ReadDir(filepath.Join(absPath, e.Name())); err == nil {
+			if sub, err := os.ReadDir(filepath.Join(realPath, e.Name())); err == nil {
 				entry.Count = len(sub)
 			}
 		} else {
@@ -122,11 +132,15 @@ func (b *Browser) Save(dirPath, name string, data []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
-	if !b.isAllowed(absDir) {
+	realDir, err := filepath.EvalSymlinks(absDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat directory: %w", err)
+	}
+	if !b.isAllowed(realDir) {
 		return "", fmt.Errorf("access denied: %s", absDir)
 	}
 
-	info, err := os.Stat(absDir)
+	info, err := os.Stat(realDir)
 	if err != nil {
 		return "", fmt.Errorf("failed to stat directory: %w", err)
 	}
@@ -146,7 +160,7 @@ func (b *Browser) Save(dirPath, name string, data []byte) (string, error) {
 	final := clean
 	var f *os.File
 	for i := 0; i < 1000; i++ {
-		full := filepath.Join(absDir, final)
+		full := filepath.Join(realDir, final)
 		f, err = os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 		if err == nil {
 			break
@@ -182,25 +196,29 @@ func (b *Browser) ResolveFile(dirPath, name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
-	if !b.isAllowed(absDir) {
-		return "", fmt.Errorf("access denied: %s", absDir)
-	}
 	clean := filepath.Base(name)
 	if clean == "" || clean == "." || clean == ".." || clean == "/" || strings.ContainsAny(clean, "/\\") {
 		return "", fmt.Errorf("invalid filename")
 	}
 	full := filepath.Join(absDir, clean)
-	info, err := os.Stat(full)
+	real, err := filepath.EvalSymlinks(full)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", fmt.Errorf("file not found")
 		}
 		return "", fmt.Errorf("failed to stat file: %w", err)
 	}
+	if !b.isAllowed(real) {
+		return "", fmt.Errorf("access denied: %s", full)
+	}
+	info, err := os.Stat(real)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat file: %w", err)
+	}
 	if info.IsDir() {
 		return "", fmt.Errorf("not a regular file")
 	}
-	return full, nil
+	return real, nil
 }
 
 // isAllowed 收紧成 "等于白名单目录" 或 "以 <白名单>/ 开头"，
@@ -212,4 +230,12 @@ func (b *Browser) isAllowed(path string) bool {
 		}
 	}
 	return false
+}
+
+func cleanAbsolute(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return abs
 }

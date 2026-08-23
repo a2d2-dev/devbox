@@ -13,9 +13,10 @@ import (
 )
 
 type Config struct {
-	Password   string `mapstructure:"password"`
-	SessionTTL int    `mapstructure:"session_ttl"`
-	Users      *users.Store
+	Password        string `mapstructure:"password"`
+	SessionTTL      int    `mapstructure:"session_ttl"`
+	Users           *users.Store
+	UsersConfigured bool
 }
 
 type Principal struct {
@@ -34,11 +35,12 @@ type session struct {
 }
 
 type Auth struct {
-	password   string
-	sessionTTL time.Duration
-	users      *users.Store
-	mu         sync.RWMutex
-	sessions   map[string]session
+	password        string
+	sessionTTL      time.Duration
+	users           *users.Store
+	usersConfigured bool
+	mu              sync.RWMutex
+	sessions        map[string]session
 }
 
 func New(cfg Config) *Auth {
@@ -46,18 +48,31 @@ func New(cfg Config) *Auth {
 	if ttl == 0 {
 		ttl = time.Hour
 	}
-	return &Auth{password: strings.TrimSpace(cfg.Password), sessionTTL: ttl, users: cfg.Users, sessions: make(map[string]session)}
+	return &Auth{password: strings.TrimSpace(cfg.Password), sessionTTL: ttl, users: cfg.Users, usersConfigured: cfg.UsersConfigured || cfg.Users != nil, sessions: make(map[string]session)}
 }
 
 func (a *Auth) Enabled() bool {
-	if a.password != "" {
-		return true
-	}
+	enabled, _ := a.state()
+	return enabled
+}
+
+func (a *Auth) Available() bool {
+	_, available := a.state()
+	return available
+}
+
+func (a *Auth) state() (enabled, available bool) {
 	if a.users == nil {
-		return false
+		if a.usersConfigured {
+			return true, false
+		}
+		return a.password != "", true
 	}
 	n, err := a.users.Count(context.Background())
-	return err == nil && n > 0
+	if err != nil {
+		return true, false
+	}
+	return a.password != "" || n > 0, true
 }
 
 // Verify preserves the legacy password-only API.
@@ -67,6 +82,10 @@ func (a *Auth) Verify(password string) (string, bool) {
 }
 
 func (a *Auth) VerifyCredentials(username, password string) (string, Principal, bool) {
+	enabled, available := a.state()
+	if !available {
+		return "", Principal{}, false
+	}
 	username = strings.TrimSpace(username)
 	if a.users != nil && username != "" {
 		if u, ok := a.users.Authenticate(context.Background(), username, password); ok {
@@ -89,7 +108,7 @@ func (a *Auth) VerifyCredentials(username, password string) (string, Principal, 
 		p := Principal{Username: username, DisplayName: username, Role: users.RoleAdmin, Legacy: true}
 		return a.issue(p), p, true
 	}
-	if !a.Enabled() {
+	if !enabled {
 		p := Principal{Username: "local", DisplayName: "Local user", Role: users.RoleAdmin, Legacy: true}
 		return "", p, true
 	}
@@ -109,7 +128,11 @@ func normalizeToken(token string) string {
 }
 
 func (a *Auth) Principal(token string) (Principal, bool) {
-	if !a.Enabled() {
+	enabled, available := a.state()
+	if !available {
+		return Principal{}, false
+	}
+	if !enabled {
 		return Principal{Username: "local", DisplayName: "Local user", Role: users.RoleAdmin, Legacy: true}, true
 	}
 	token = normalizeToken(token)
@@ -163,6 +186,10 @@ func tokenFromRequest(r *http.Request) string {
 
 func (a *Auth) Middleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !a.Available() {
+			writeDenied(w, http.StatusServiceUnavailable, "user_database_unavailable", "用户数据库不可用，认证服务已关闭访问")
+			return
+		}
 		p, ok := a.Principal(tokenFromRequest(r))
 		if !ok {
 			writeDenied(w, http.StatusUnauthorized, "unauthorized", "身份验证失败")
@@ -174,6 +201,10 @@ func (a *Auth) Middleware(next http.HandlerFunc) http.HandlerFunc {
 
 func (a *Auth) RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !a.Available() {
+			writeDenied(w, http.StatusServiceUnavailable, "user_database_unavailable", "用户数据库不可用，认证服务已关闭访问")
+			return
+		}
 		p, ok := PrincipalFromContext(r.Context())
 		if !ok {
 			p, ok = a.Principal(tokenFromRequest(r))

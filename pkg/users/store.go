@@ -24,13 +24,15 @@ const (
 )
 
 var (
-	ErrConflict        = errors.New("name already exists")
-	ErrNotFound        = errors.New("not found")
-	ErrLastAdmin       = errors.New("cannot remove or disable the last administrator")
-	ErrInvalidUsername = errors.New("username must be 3-32 characters using letters, numbers, dot, underscore or hyphen")
-	ErrWeakPassword    = errors.New("password must be at least 10 characters and contain at least three of uppercase, lowercase, number and symbol")
-	ErrInvalidRole     = errors.New("role must be admin or user")
-	usernamePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$`)
+	ErrConflict           = errors.New("name already exists")
+	ErrNotFound           = errors.New("not found")
+	ErrLastAdmin          = errors.New("cannot remove or disable the last administrator")
+	ErrInvalidUsername    = errors.New("username must be 3-32 characters using letters, numbers, dot, underscore or hyphen")
+	ErrWeakPassword       = errors.New("password must be at least 10 characters and contain at least three of uppercase, lowercase, number and symbol")
+	ErrPasswordWhitespace = errors.New("password must not start or end with whitespace")
+	ErrInvalidRole        = errors.New("role must be admin or user")
+	usernamePattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$`)
+	dummyPasswordHash     = []byte("$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy")
 )
 
 type User struct {
@@ -134,6 +136,9 @@ func ValidateUsername(v string) error {
 }
 
 func ValidatePassword(v string) error {
+	if strings.TrimSpace(v) != v {
+		return ErrPasswordWhitespace
+	}
 	if len(v) < 10 || len(v) > 128 {
 		return ErrWeakPassword
 	}
@@ -176,15 +181,20 @@ func (s *Store) Count(ctx context.Context) (int, error) {
 }
 
 func (s *Store) CreateUser(ctx context.Context, in CreateUser) (User, error) {
+	return s.createUser(ctx, in, nil)
+}
+
+func (s *Store) CreateUserWithRoots(ctx context.Context, in CreateUser, rootIDs []string) (User, error) {
+	return s.createUser(ctx, in, rootIDs)
+}
+
+func (s *Store) createUser(ctx context.Context, in CreateUser, rootIDs []string) (User, error) {
 	in.Username = strings.TrimSpace(in.Username)
 	in.DisplayName = strings.TrimSpace(in.DisplayName)
 	if err := ValidateUsername(in.Username); err != nil {
 		return User{}, err
 	}
 	if err := ValidatePassword(in.Password); err != nil {
-		return User{}, err
-	}
-	if err := validateRole(in.Role); err != nil {
 		return User{}, err
 	}
 	if in.DisplayName == "" {
@@ -194,14 +204,35 @@ func (s *Store) CreateUser(ctx context.Context, in CreateUser) (User, error) {
 	if err != nil {
 		return User{}, err
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		return User{}, err
+	}
+	if count == 0 {
+		in.Role = RoleAdmin
+		in.Enabled = true
+	} else if err := validateRole(in.Role); err != nil {
+		return User{}, err
+	}
 	now := time.Now().UTC()
 	u := User{ID: uuid.NewString(), Username: in.Username, DisplayName: in.DisplayName, Role: in.Role, Enabled: in.Enabled, CreatedAt: now, UpdatedAt: now}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,password_hash,role,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`,
+	_, err = tx.ExecContext(ctx, `INSERT INTO users(id,username,display_name,password_hash,role,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`,
 		u.ID, u.Username, u.DisplayName, string(hash), u.Role, boolInt(u.Enabled), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if isUnique(err) {
 		return User{}, ErrConflict
 	}
-	return u, err
+	if err != nil {
+		return User{}, err
+	}
+	if err := replaceLinks(ctx, tx, "user_file_roots", "user_id", "root_id", u.ID, rootIDs); err != nil {
+		return User{}, err
+	}
+	return u, tx.Commit()
 }
 
 func (s *Store) Authenticate(ctx context.Context, username, password string) (User, bool) {
@@ -210,7 +241,12 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) (Us
 	var enabled int
 	err := s.db.QueryRowContext(ctx, `SELECT id,username,display_name,password_hash,role,enabled,created_at,updated_at FROM users WHERE username=?`, strings.TrimSpace(username)).
 		Scan(&u.ID, &u.Username, &u.DisplayName, &hash, &u.Role, &enabled, &created, &updated)
-	if err != nil || enabled == 0 || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+	hashToCompare := dummyPasswordHash
+	if err == nil && enabled != 0 {
+		hashToCompare = []byte(hash)
+	}
+	passwordOK := bcrypt.CompareHashAndPassword(hashToCompare, []byte(password)) == nil
+	if err != nil || enabled == 0 || !passwordOK {
 		return User{}, false
 	}
 	u.Enabled = true
@@ -250,6 +286,14 @@ func (s *Store) ListUsers(ctx context.Context, search string) ([]User, error) {
 }
 
 func (s *Store) UpdateUser(ctx context.Context, id string, in UpdateUser) (User, error) {
+	return s.updateUser(ctx, id, in, nil)
+}
+
+func (s *Store) UpdateUserWithRoots(ctx context.Context, id string, in UpdateUser, rootIDs []string) (User, error) {
+	return s.updateUser(ctx, id, in, &rootIDs)
+}
+
+func (s *Store) updateUser(ctx context.Context, id string, in UpdateUser, rootIDs *[]string) (User, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return User{}, err
@@ -298,6 +342,11 @@ func (s *Store) UpdateUser(ctx context.Context, id string, in UpdateUser) (User,
 	_, err = tx.ExecContext(ctx, `UPDATE users SET display_name=?,password_hash=?,role=?,enabled=?,updated_at=? WHERE id=?`, u.DisplayName, hash, u.Role, boolInt(u.Enabled), u.UpdatedAt.Format(time.RFC3339Nano), id)
 	if err != nil {
 		return User{}, err
+	}
+	if rootIDs != nil {
+		if err = replaceLinks(ctx, tx, "user_file_roots", "user_id", "root_id", id, *rootIDs); err != nil {
+			return User{}, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return User{}, err

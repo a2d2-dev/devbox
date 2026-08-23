@@ -10,16 +10,19 @@ DevBox 是桌面算力平台，不是 NAS。本功能只提供控制台多用户
 - 密码只保存 bcrypt 哈希，不保存或返回明文。用户名不区分大小写且唯一。
 - 角色为 `admin`（管理员）与 `user`（普通用户）。用户可被禁用，禁用、删除、改角色或重置密码会撤销该用户已有会话。
 - 系统拒绝删除、禁用或降级最后一个已启用管理员。
+- 首个数据库账户固定创建为已启用管理员；请求中的其他角色或禁用状态会被忽略，避免空库失去管理入口。
 - `auth.password` 保留为兼容入口：数据库没有用户时保持原有单密码行为；数据库已有用户后仅用户名 `admin` 可使用该密码，避免普通用户误用旧密码取得管理员权限。
 - 未配置旧密码且用户库为空时，控制台保持原有免认证模式，可创建首个管理员。首个账户创建后认证自动启用。
+- 用户库路径一旦配置，打开失败或查询失败时认证 fail-closed：登录和受保护 API 返回服务不可用，不会降级为匿名访问。
+- 登录失败按客户端 IP 与规范化用户名组合计数，1 分钟内连续失败 5 次后返回 `429`。不存在和禁用用户都会执行固定 dummy bcrypt 比较并返回相同登录失败结果。
 
-用户名要求 3-32 位，以字母或数字开头，仅允许字母、数字、`.`、`_`、`-`。密码为 10-128 位，并且大写、小写、数字、符号四类中至少包含三类。
+用户名要求 3-32 位，以字母或数字开头，仅允许字母、数字、`.`、`_`、`-`。密码为 10-128 位，并且大写、小写、数字、符号四类中至少包含三类；创建或改密时拒绝首尾空白。用户资料与直接文件根授权由同一个 SQLite 事务提交，任一步失败都会整体回滚。
 
 ## 用户组与文件授权
 
 文件根目录必须是 `console.work_dir` 内已经存在的绝对目录。普通用户的有效授权是直接授权与所在用户组授权的并集。管理员及兼容管理员可访问整个 `console.work_dir`。
 
-文件 API 的列表、上传和内容预览均在服务端检查授权。工作区顶层列表仅返回通向已授权根目录的路径；直接请求未授权目录返回 `403`，前端过滤不是安全边界。
+文件 API 的列表、上传和内容预览均在服务端检查授权。工作区根、授权根和请求目标先通过 `EvalSymlinks` 解析为真实路径，再执行目录边界判断；指向工作区或授权根外的符号链接返回 `403`。工作区顶层列表仅返回通向已授权根目录的路径；前端过滤不是安全边界。
 
 数据库关系如下：
 
@@ -33,20 +36,28 @@ users --< group_members >-- user_groups
 
 ## HTTP API
 
-除登录与状态接口外，以下管理接口均要求管理员 bearer token。
+角色矩阵中的“登录用户”包含 `admin` 与 `user`；文件操作还必须通过该用户的目录授权。`-` 表示无需 bearer token。
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `POST` | `/api/v1/auth/verify` | 用户名密码登录；兼容旧 password-only 请求 |
-| `GET` | `/api/v1/auth/status` | 返回认证状态与当前账户 |
-| `GET, POST` | `/api/v1/users` | 搜索/列出、新增用户 |
-| `PUT, DELETE` | `/api/v1/users/{id}` | 编辑、重置密码、角色/状态、删除 |
-| `GET, PUT` | `/api/v1/users/{id}/access-roots` | 用户直接文件根授权 |
-| `GET, POST` | `/api/v1/user-groups` | 搜索/列出、新增用户组 |
-| `PUT, DELETE` | `/api/v1/user-groups/{id}` | 编辑成员与授权、删除用户组 |
-| `GET, PUT` | `/api/v1/user-groups/{id}/access-roots` | 用户组文件根授权 |
-| `GET, POST` | `/api/v1/file-roots` | 列出、新增文件根目录 |
-| `DELETE` | `/api/v1/file-roots/{id}` | 删除文件根目录及关联授权 |
+| 端点（方法） | 匿名 | 普通用户 | 管理员 | 说明 |
+| --- | --- | --- | --- | --- |
+| 静态资源、`/metrics`、`/app-icons/*` | 允许 | 允许 | 允许 | 非 `/api/v1/` 资源与 Prometheus 抓取 |
+| `/api/v1/auth/*`、`GET /health`、`GET /device`、`GET /cloud/status`、`GET /about` | 允许 | 允许 | 允许 | 登录、认证状态与登录页探测 |
+| `GET /metrics*`、`GET /network*` | 拒绝 | 允许 | 允许 | 控制台实时监控 |
+| `GET /processes*`、`GET /disks*`、`GET /gpu/processes`、`GET /ai/activity`、`GET /ai/transcript` | 拒绝 | 允许 | 允许 | 系统只读监控 |
+| `GET /hardware*`、`GET /ports`、`GET /models`、`GET /alerts` | 拒绝 | 允许 | 允许 | 硬件、端口、模型与告警只读数据 |
+| `GET /store/*`、`GET /catalogs*` | 拒绝 | 允许 | 允许 | 商店与 catalog 浏览；不含安装和 source 写操作 |
+| `POST /apps/validate`、`GET /apps*`、`GET /tasks/*` | 拒绝 | 允许 | 允许 | 应用校验、清单、详情、日志、任务与预览 |
+| `POST /apps`、`PUT/DELETE /apps/{id}`、`POST /apps/{id}/*` | 拒绝 | `403` | 允许 | 应用创建、更新、接管、启停、恢复与卸载 |
+| `POST /store/install`、`POST /catalogs/install`、catalog/source 非 GET | 拒绝 | `403` | 允许 | 应用安装、catalog 刷新与 source 配置 |
+| `GET /supervisor/status`、`GET /supervisor/services/{name}/logs` | 拒绝 | 允许 | 允许 | Supervisor 只读状态和日志 |
+| `POST /supervisor/services/{name}/control`、`/terminal/exec` | 拒绝 | `403` | 允许 | 宿主服务控制与宿主 shell |
+| `GET /vms*` | 拒绝 | 允许 | 允许 | VM 清单与详情 |
+| `POST /vms/{name}/control`、`POST /vms/{name}/config` | 拒绝 | `403` | 允许 | VM 启停与配置 |
+| `GET /files`、`GET /files/content`、`POST /files/upload` | 拒绝 | 按授权目录 | 允许 | 普通用户仅能读写获授权文件根 |
+| `/browser/*` | 拒绝 | 允许 | 允许 | 浏览器代理、探测、书签与历史 |
+| `GET /links`、`GET /audit/events` | 拒绝 | 允许 | 允许 | 导航与审计只读数据 |
+| `POST /links/reload`、`POST /alerts/{id}/ack`、`POST /ai/codex/cleanup-stale`、audit 非 GET | 拒绝 | `403` | 允许 | 系统级写操作 |
+| `/users*`、`/user-groups*`、`/file-roots*` | 拒绝 | `403` | 允许 | 账户、组与文件授权管理，含读接口 |
 
 ## 硬件与挂载概览
 

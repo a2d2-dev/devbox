@@ -22,11 +22,11 @@ import (
 // handler 不再直接知道 Deployment/Pod/Container，只依赖 apps.Controller。
 
 func (s *Server) registerAppRoutes() {
-	s.mux.HandleFunc("/api/v1/apps", s.handleApps)
+	s.mux.HandleFunc("/api/v1/apps", s.requireAdminWrites(s.handleApps))
 	s.mux.HandleFunc("/api/v1/apps/validate", s.handleValidate)
 	s.mux.HandleFunc("/api/v1/apps/capability", s.handleCapability)
 	s.mux.HandleFunc("/api/v1/tasks/", s.handleTask)
-	s.mux.HandleFunc("/api/v1/apps/", s.handleAppByID)
+	s.mux.HandleFunc("/api/v1/apps/", s.requireAdminWrites(s.handleAppByID))
 }
 
 const defaultActor = "console"

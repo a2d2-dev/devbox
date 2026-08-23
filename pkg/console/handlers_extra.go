@@ -21,7 +21,7 @@ func (s *Server) registerExtraRoutes() {
 	s.mux.HandleFunc("/api/v1/files/content", s.handleFileContent)
 	s.mux.HandleFunc("/api/v1/models", s.handleModels)
 	s.mux.HandleFunc("/api/v1/alerts", s.handleAlerts)
-	s.mux.HandleFunc("/api/v1/alerts/", s.handleAlertAction)
+	s.mux.HandleFunc("/api/v1/alerts/", s.requireAdminWrites(s.handleAlertAction))
 	s.mux.HandleFunc("/api/v1/ports", s.handlePorts)
 }
 
@@ -170,16 +170,35 @@ func (s *Server) authorizedFilePaths(r *http.Request, requested string, allowAnc
 		target = filepath.Join(work, target)
 	}
 	target = filepath.Clean(target)
-	if !pathWithinAny(target, paths, allowAncestor) {
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return nil, errors.New("access denied: path cannot be resolved")
+	}
+	realPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return nil, errors.New("access denied: assigned path cannot be resolved")
+		}
+		realPaths = append(realPaths, real)
+	}
+	if !pathWithinAny(realTarget, realPaths, allowAncestor) {
 		return nil, errors.New("access denied: path is not assigned to this account")
 	}
-	return paths, nil
+	return realPaths, nil
 }
 
 func pathWithinAny(path string, roots []string, allowAncestor bool) bool {
-	path = filepath.Clean(path)
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	path = real
 	for _, root := range roots {
-		root = filepath.Clean(root)
+		root, err = filepath.EvalSymlinks(root)
+		if err != nil {
+			continue
+		}
 		if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
 			return true
 		}

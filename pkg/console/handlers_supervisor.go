@@ -9,7 +9,7 @@ import (
 // registerSupervisorRoutes registers supervisor-related API routes
 func (s *Server) registerSupervisorRoutes() {
 	s.mux.HandleFunc("/api/v1/supervisor/status", s.handleSupervisorStatus)
-	s.mux.HandleFunc("/api/v1/supervisor/services/", s.handleSupervisorService)
+	s.mux.HandleFunc("/api/v1/supervisor/services/", s.requireAdminWrites(s.handleSupervisorService))
 }
 
 func (s *Server) handleSupervisorStatus(w http.ResponseWriter, r *http.Request) {
@@ -27,8 +27,9 @@ func (s *Server) handleSupervisorStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleSupervisorService handles:
-//   GET  /api/v1/supervisor/services/{name}/logs
-//   POST /api/v1/supervisor/services/{name}/control
+//
+//	GET  /api/v1/supervisor/services/{name}/logs
+//	POST /api/v1/supervisor/services/{name}/control
 func (s *Server) handleSupervisorService(w http.ResponseWriter, r *http.Request) {
 	if s.supervisorMgr == nil {
 		http.Error(w, "supervisor not available", http.StatusServiceUnavailable)

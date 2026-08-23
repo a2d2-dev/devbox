@@ -14,6 +14,8 @@ func TestMultiUserAuthenticationAndRoleBoundary(t *testing.T) {
 	store, err := users.Open(":memory:")
 	require.NoError(t, err)
 	defer store.Close()
+	_, err = store.CreateUser(context.Background(), users.CreateUser{Username: "admin", Password: "Admin-pass-2026", Role: users.RoleAdmin, Enabled: true})
+	require.NoError(t, err)
 	u, err := store.CreateUser(context.Background(), users.CreateUser{Username: "developer", Password: "Developer-2026", Role: users.RoleUser, Enabled: true})
 	require.NoError(t, err)
 	a := New(Config{Password: "legacy-secret", SessionTTL: 60, Users: store})
@@ -47,4 +49,21 @@ func TestDisabledAuthRemainsBackwardCompatible(t *testing.T) {
 	require.Empty(t, token)
 	require.True(t, p.IsAdmin())
 	require.True(t, a.ValidateToken(""))
+}
+
+func TestConfiguredUserStoreFailureFailsClosed(t *testing.T) {
+	store, err := users.Open(":memory:")
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	a := New(Config{Users: store, UsersConfigured: true})
+	require.True(t, a.Enabled())
+
+	called := false
+	h := a.Middleware(func(http.ResponseWriter, *http.Request) { called = true })
+	w := httptest.NewRecorder()
+	h(w, httptest.NewRequest(http.MethodGet, "/api/v1/metrics", nil))
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), "user_database_unavailable")
+	require.False(t, called)
 }

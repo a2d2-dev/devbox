@@ -94,9 +94,9 @@ export default function Users() {
           </Table>
         )}
       </main>
-      {dialog?.type === 'user' && <UserDialog item={dialog.item} roots={roots} onClose={() => setDialog(null)} onSaved={async () => { setDialog(null); await load() }}/>} 
-      {dialog?.type === 'group' && <GroupDialog item={dialog.item} users={users} roots={roots} onClose={() => setDialog(null)} onSaved={async () => { setDialog(null); await load() }}/>} 
-      {dialog?.type === 'roots' && <RootsDialog roots={roots} onClose={() => setDialog(null)} onChanged={load}/>} 
+      {dialog?.type === 'user' && <UserDialog item={dialog.item} roots={roots} onClose={() => setDialog(null)} onSaved={async () => { setDialog(null); await load() }}/>}
+      {dialog?.type === 'group' && <GroupDialog item={dialog.item} users={users} roots={roots} onClose={() => setDialog(null)} onSaved={async () => { setDialog(null); await load() }}/>}
+      {dialog?.type === 'roots' && <RootsDialog roots={roots} onClose={() => setDialog(null)} onChanged={load}/>}
     </div>
   )
 }
@@ -113,7 +113,7 @@ function CheckList({ title, items, selected, onChange, text }) { return <div sty
 function UserDialog({ item, roots, onClose, onSaved }) {
   const [form, setForm] = useState({ username: item?.username || '', displayName: item?.displayName || '', password: '', role: item?.role || 'user', enabled: item?.enabled ?? true, rootIds: item?.rootIds || [] })
   const [error, setError] = useState(''); const [saving, setSaving] = useState(false)
-  const submit = async e => { e.preventDefault(); setSaving(true); setError(''); try { const body = item ? { displayName: form.displayName, role: form.role, enabled: form.enabled, ...(form.password ? { password: form.password } : {}) } : { username: form.username, displayName: form.displayName, password: form.password, role: form.role, enabled: form.enabled }; const saved = await api(item ? `/api/v1/users/${item.id}` : '/api/v1/users', { method: item ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); await api(`/api/v1/users/${saved.id}/access-roots`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rootIds: form.rootIds }) }); onSaved() } catch (e2) { setError(e2.message); setSaving(false) } }
+  const submit = async e => { e.preventDefault(); setSaving(true); setError(''); try { const body = item ? { displayName: form.displayName, role: form.role, enabled: form.enabled, rootIds: form.rootIds, ...(form.password ? { password: form.password } : {}) } : { username: form.username, displayName: form.displayName, password: form.password, role: form.role, enabled: form.enabled, rootIds: form.rootIds }; await api(item ? `/api/v1/users/${item.id}` : '/api/v1/users', { method: item ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); onSaved() } catch (e2) { setError(e2.message); setSaving(false) } }
   return <Modal title={item ? `编辑用户 · ${item.username}` : '新增用户'} onClose={onClose} onSubmit={submit} saving={saving}>{error && <Error text={error}/>} {!item && <Field title="用户名"><input autoFocus required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} style={field}/></Field>}<Field title="显示名"><input required value={form.displayName} onChange={e => setForm({ ...form, displayName: e.target.value })} style={field}/></Field><Field title={item ? '重置密码（留空则不变）' : '密码'}><input required={!item} type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} style={field}/></Field><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><Field title="角色"><select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={field}><option value="user">普通用户</option><option value="admin">管理员</option></select></Field><Field title="账户状态"><label style={{ height: 34, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}><input type="checkbox" checked={form.enabled} onChange={e => setForm({ ...form, enabled: e.target.checked })}/>启用账户</label></Field></div><CheckList title="可访问文件根目录" items={roots} selected={form.rootIds} onChange={v => setForm({ ...form, rootIds: v })} text={r => `${r.name} · ${r.path}`}/></Modal>
 }
 

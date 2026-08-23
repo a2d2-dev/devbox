@@ -384,9 +384,9 @@ export default function App() {
     actions: {
       'toggle-shortcut-help': () => setShortcutHelpOpen(open => !open),
       'show-desktop': showDesktop,
-	  'minimize-window': () => { if (activeId) minimizeApp(activeId); },
+      'minimize-window': minimizeWindow,
       'toggle-maximized': () => setMaximized(current => !current),
-	  'close-window': () => { if (activeId) closeApp(activeId); },
+      'close-window': closeWindow,
       'focus-dock-app': (index) => {
         const app = shortcutDockApps[index];
         if (app) focusApp(app.id);

@@ -12,21 +12,31 @@ import (
 )
 
 func (s *Server) registerUserRoutes() {
-	s.mux.HandleFunc("/api/v1/users", s.admin(s.handleUsers))
-	s.mux.HandleFunc("/api/v1/users/", s.admin(s.handleUser))
-	s.mux.HandleFunc("/api/v1/user-groups", s.admin(s.handleGroups))
-	s.mux.HandleFunc("/api/v1/user-groups/", s.admin(s.handleGroup))
-	s.mux.HandleFunc("/api/v1/file-roots", s.admin(s.handleRoots))
-	s.mux.HandleFunc("/api/v1/file-roots/", s.admin(s.handleRoot))
+	s.mux.HandleFunc("/api/v1/users", s.requireAdmin(s.handleUsers))
+	s.mux.HandleFunc("/api/v1/users/", s.requireAdmin(s.handleUser))
+	s.mux.HandleFunc("/api/v1/user-groups", s.requireAdmin(s.handleGroups))
+	s.mux.HandleFunc("/api/v1/user-groups/", s.requireAdmin(s.handleGroup))
+	s.mux.HandleFunc("/api/v1/file-roots", s.requireAdmin(s.handleRoots))
+	s.mux.HandleFunc("/api/v1/file-roots/", s.requireAdmin(s.handleRoot))
 }
 
-func (s *Server) admin(next http.HandlerFunc) http.HandlerFunc {
+func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.auth == nil {
 			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		s.auth.RequireAdmin(next)(w, r)
+	}
+}
+
+func (s *Server) requireAdminWrites(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			next(w, r)
+			return
+		}
+		s.requireAdmin(next)(w, r)
 	}
 }
 
@@ -68,6 +78,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			Username, DisplayName, Password string
 			Role                            users.Role
 			Enabled                         *bool
+			RootIDs                         []string `json:"rootIds"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -76,7 +87,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		if req.Enabled != nil {
 			enabled = *req.Enabled
 		}
-		u, err := s.users.CreateUser(r.Context(), users.CreateUser{Username: req.Username, DisplayName: req.DisplayName, Password: req.Password, Role: req.Role, Enabled: enabled})
+		u, err := s.users.CreateUserWithRoots(r.Context(), users.CreateUser{Username: req.Username, DisplayName: req.DisplayName, Password: req.Password, Role: req.Role, Enabled: enabled}, req.RootIDs)
 		if err != nil {
 			s.userError(w, err)
 			return
@@ -113,11 +124,19 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 			Password    *string
 			Role        *users.Role
 			Enabled     *bool
+			RootIDs     *[]string `json:"rootIds"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		u, err := s.users.UpdateUser(r.Context(), id, users.UpdateUser{DisplayName: req.DisplayName, Password: req.Password, Role: req.Role, Enabled: req.Enabled})
+		update := users.UpdateUser{DisplayName: req.DisplayName, Password: req.Password, Role: req.Role, Enabled: req.Enabled}
+		var u users.User
+		var err error
+		if req.RootIDs == nil {
+			u, err = s.users.UpdateUser(r.Context(), id, update)
+		} else {
+			u, err = s.users.UpdateUserWithRoots(r.Context(), id, update, *req.RootIDs)
+		}
 		if err != nil {
 			s.userError(w, err)
 			return
@@ -344,7 +363,14 @@ func (s *Server) validateRootPath(path string) (string, error) {
 	if work == "" {
 		work = "/data"
 	}
-	work = filepath.Clean(work)
+	work, err := filepath.EvalSymlinks(filepath.Clean(work))
+	if err != nil {
+		return "", errors.New("console.work_dir does not exist")
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", errors.New("file root does not exist")
+	}
 	if path != work && !strings.HasPrefix(path, work+string(filepath.Separator)) {
 		return "", errors.New("file root must be inside console.work_dir")
 	}
@@ -367,7 +393,7 @@ func (s *Server) userError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, users.ErrLastAdmin):
 		status = http.StatusConflict
-	case errors.Is(err, users.ErrInvalidUsername), errors.Is(err, users.ErrWeakPassword), errors.Is(err, users.ErrInvalidRole), strings.Contains(err.Error(), "required"), strings.Contains(err.Error(), "root"):
+	case errors.Is(err, users.ErrInvalidUsername), errors.Is(err, users.ErrWeakPassword), errors.Is(err, users.ErrPasswordWhitespace), errors.Is(err, users.ErrInvalidRole), strings.Contains(err.Error(), "required"), strings.Contains(err.Error(), "root"):
 		status = http.StatusBadRequest
 	case strings.Contains(strings.ToLower(err.Error()), "foreign key"):
 		status = http.StatusBadRequest

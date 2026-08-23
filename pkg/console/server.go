@@ -76,6 +76,7 @@ type Server struct {
 	vmManager            *vms.Manager
 	browser              *browserStore // 浏览器应用的书签/历史持久化
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
+	loginLimiter         loginRateLimiter
 }
 
 // NewServer 创建控制台服务器
@@ -110,9 +111,10 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		alertEngine:          alerts.NewEngine(col),
 		users:                userStore,
 		auth: auth.New(auth.Config{
-			Password:   cfg.AuthPassword,
-			SessionTTL: cfg.AuthSessionTTL,
-			Users:      userStore,
+			Password:        cfg.AuthPassword,
+			SessionTTL:      cfg.AuthSessionTTL,
+			Users:           userStore,
+			UsersConfigured: true,
 		}),
 		supervisorMgr: supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
 		hardware:      hardware.New(60 * time.Second),
@@ -227,21 +229,21 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/metrics/history", s.handleMetricsHistory)
 
 	// 终端执行路由
-	s.mux.HandleFunc("/api/v1/terminal/exec", s.handleTerminalExec)
+	s.mux.HandleFunc("/api/v1/terminal/exec", s.requireAdmin(s.handleTerminalExec))
 	// 网络信息
 	s.mux.HandleFunc("/api/v1/network", s.handleNetwork)
 
 	// 应用商店路由（阶段4 Compose 商店统一）
 	s.mux.HandleFunc("/api/v1/store/apps", s.handleStoreApps)
 	s.mux.HandleFunc("/api/v1/store/version", s.handleStoreVersion)
-	s.mux.HandleFunc("/api/v1/store/install", s.handleStoreInstall)
+	s.mux.HandleFunc("/api/v1/store/install", s.requireAdmin(s.handleStoreInstall))
 	// 第三方 catalog 路由（阶段4 扩展：HTTP/Git 文件原生 catalog source）
-	s.mux.HandleFunc("/api/v1/catalogs", s.handleCatalogs)
+	s.mux.HandleFunc("/api/v1/catalogs", s.requireAdminWrites(s.handleCatalogs))
 	s.mux.HandleFunc("/api/v1/catalogs/apps", s.handleCatalogApps)
 	s.mux.HandleFunc("/api/v1/catalogs/version", s.handleCatalogVersion)
-	s.mux.HandleFunc("/api/v1/catalogs/install", s.handleCatalogInstall)
-	s.mux.HandleFunc("/api/v1/catalogs/sources", s.handleCatalogSources)
-	s.mux.HandleFunc("/api/v1/catalogs/sources/", s.handleCatalogSources)
+	s.mux.HandleFunc("/api/v1/catalogs/install", s.requireAdmin(s.handleCatalogInstall))
+	s.mux.HandleFunc("/api/v1/catalogs/sources", s.requireAdminWrites(s.handleCatalogSources))
+	s.mux.HandleFunc("/api/v1/catalogs/sources/", s.requireAdminWrites(s.handleCatalogSources))
 	// 代理应用图标到 apiserver
 	s.mux.HandleFunc("/app-icons/", s.handleProxyAppIcons)
 

@@ -21,6 +21,8 @@ func TestValidation(t *testing.T) {
 	require.NoError(t, ValidateUsername("dev.user-1"))
 	require.ErrorIs(t, ValidatePassword("alllowercase"), ErrWeakPassword)
 	require.NoError(t, ValidatePassword("Devbox-2026"))
+	require.ErrorIs(t, ValidatePassword(" Devbox-2026"), ErrPasswordWhitespace)
+	require.ErrorIs(t, ValidatePassword("Devbox-2026\t"), ErrPasswordWhitespace)
 }
 
 func TestUsersAuthenticateAndProtectLastAdmin(t *testing.T) {
@@ -41,6 +43,22 @@ func TestUsersAuthenticateAndProtectLastAdmin(t *testing.T) {
 	_, err = s.UpdateUser(ctx, user.ID, UpdateUser{Role: &role})
 	require.NoError(t, err)
 	require.NoError(t, s.DeleteUser(ctx, admin.ID))
+}
+
+func TestFirstUserIsAlwaysEnabledAdministrator(t *testing.T) {
+	s := testStore(t)
+	u, err := s.CreateUser(context.Background(), CreateUser{
+		Username: "first-user", Password: "First-user-2026", Role: RoleUser, Enabled: false,
+	})
+	require.NoError(t, err)
+	require.Equal(t, RoleAdmin, u.Role)
+	require.True(t, u.Enabled)
+
+	users, err := s.ListUsers(context.Background(), "")
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	require.Equal(t, RoleAdmin, users[0].Role)
+	require.True(t, users[0].Enabled)
 }
 
 func TestGroupAndDirectRootAuthorization(t *testing.T) {
@@ -68,4 +86,35 @@ func TestGroupAndDirectRootAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, ids)
 	require.True(t, errors.Is(s.DeleteRoot(ctx, "missing"), ErrNotFound))
+}
+
+func TestUserAndRootGrantsRollbackTogether(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, err := s.CreateUser(ctx, CreateUser{Username: "admin", Password: "Admin-pass-2026", Role: RoleAdmin, Enabled: true})
+	require.NoError(t, err)
+
+	_, err = s.CreateUserWithRoots(ctx, CreateUser{
+		Username: "developer", DisplayName: "Developer", Password: "Developer-2026", Role: RoleUser, Enabled: true,
+	}, []string{"missing-root"})
+	require.Error(t, err)
+	users, err := s.ListUsers(ctx, "developer")
+	require.NoError(t, err)
+	require.Empty(t, users)
+
+	root, err := s.CreateRoot(ctx, "Workspace", "/data/workspace")
+	require.NoError(t, err)
+	developer, err := s.CreateUserWithRoots(ctx, CreateUser{
+		Username: "developer", DisplayName: "Developer", Password: "Developer-2026", Role: RoleUser, Enabled: true,
+	}, []string{root.ID})
+	require.NoError(t, err)
+	changed := "Changed"
+	_, err = s.UpdateUserWithRoots(ctx, developer.ID, UpdateUser{DisplayName: &changed}, []string{"missing-root"})
+	require.Error(t, err)
+	users, err = s.ListUsers(ctx, "developer")
+	require.NoError(t, err)
+	require.Equal(t, "Developer", users[0].DisplayName)
+	rootIDs, err := s.UserRootIDs(ctx, developer.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{root.ID}, rootIDs)
 }
