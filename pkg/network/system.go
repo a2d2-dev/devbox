@@ -280,8 +280,12 @@ func RenderFirewall(rules []FirewallRule, sessionIP string, interfaces []string)
 			}
 		}
 		unrestrictedInboundAllow := rule.Direction == "in" && rule.Action == "allow" && rule.Protocol == "any" && rule.Port == 0
-		if rule.Direction == "in" && rule.Action == "deny" && ruleMatchesManagement(rule, sessionIP) && (!hasTunnel || !hasSession) {
-			return FirewallPreview{}, errors.New("ruleset rejected: management protection is shadowed by an earlier deny rule")
+		if rule.Direction == "in" && rule.Action == "deny" {
+			shadowsTunnel := !hasTunnel && (rule.Interface == "" || rule.Interface == "tun0")
+			shadowsSession := !hasSession && ruleMatchesSession(rule, sessionIP)
+			if shadowsTunnel || shadowsSession {
+				return FirewallPreview{}, errors.New("ruleset rejected: management protection is shadowed by an earlier deny rule")
+			}
 		}
 		if unrestrictedInboundAllow && rule.Interface == "tun0" && (rule.Source == "" || rule.Source == "any") {
 			hasTunnel = true
@@ -353,10 +357,7 @@ func RenderFirewall(rules []FirewallRule, sessionIP string, interfaces []string)
 	return FirewallPreview{Backend: "nftables", Ruleset: strings.Join(lines, "\n") + "\n", RollbackCommand: "nft -f <previous-ruleset>", RollbackSeconds: 60, DryRun: true}, nil
 }
 
-func ruleMatchesManagement(rule FirewallRule, sessionIP string) bool {
-	if rule.Interface != "" && rule.Interface != "tun0" {
-		return false
-	}
+func ruleMatchesSession(rule FirewallRule, sessionIP string) bool {
 	if rule.Source == "" || rule.Source == "any" || rule.Source == sessionIP {
 		return true
 	}

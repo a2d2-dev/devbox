@@ -76,6 +76,7 @@ func (a *Auth) ValidateToken(token string) bool {
 	if token == "" {
 		return false
 	}
+	a.PruneExpired()
 	a.mu.RLock()
 	expiry, ok := a.sessions[token]
 	a.mu.RUnlock()

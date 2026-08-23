@@ -124,6 +124,31 @@ func TestRenderFirewallRejectsProtectionRulesShadowedByDeny(t *testing.T) {
 	}
 }
 
+func TestRenderFirewallRejectsManagementFlowsShadowedByScopedDeny(t *testing.T) {
+	session := "10.126.126.2"
+	interfaces := []string{"tun0", "eth0"}
+	tunnelProtection := FirewallRule{Direction: "in", Action: "allow", Protocol: "any", Source: "any", Interface: "tun0"}
+	sessionProtection := FirewallRule{Direction: "in", Action: "allow", Protocol: "any", Source: session}
+
+	sessionShadowed := []FirewallRule{
+		tunnelProtection,
+		{Direction: "in", Action: "deny", Protocol: "tcp", Source: session, Interface: "eth0"},
+		sessionProtection,
+	}
+	if _, err := RenderFirewall(sessionShadowed, session, interfaces); err == nil || !strings.Contains(err.Error(), "shadow") {
+		t.Fatalf("expected interface-scoped session deny rejection, got %v", err)
+	}
+
+	tunnelShadowed := []FirewallRule{
+		sessionProtection,
+		{Direction: "in", Action: "deny", Protocol: "tcp", Source: "192.0.2.9", Interface: "tun0"},
+		tunnelProtection,
+	}
+	if _, err := RenderFirewall(tunnelShadowed, session, interfaces); err == nil || !strings.Contains(err.Error(), "shadow") {
+		t.Fatalf("expected source-scoped tunnel deny rejection, got %v", err)
+	}
+}
+
 func TestRenderFirewallRejectsNarrowedTunnelProtection(t *testing.T) {
 	rules := []FirewallRule{
 		{Direction: "in", Action: "allow", Protocol: "any", Source: "10.126.126.0/24", Interface: "tun0"},
