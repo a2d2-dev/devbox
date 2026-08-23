@@ -26,21 +26,23 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/models"
 	"github.com/a2d2-dev/devbox/pkg/shares"
 	"github.com/a2d2-dev/devbox/pkg/supervisor"
+	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
 	"github.com/a2d2-dev/devbox/pkg/vms"
 	"go.uber.org/zap"
 )
 
 // Config 控制台 HTTP 服务器配置
 type Config struct {
-	Enabled           bool   `mapstructure:"enabled"`
-	Port              int    `mapstructure:"port"`
-	StaticDir         string `mapstructure:"static_dir"`
-	SupervisorSocket  string `mapstructure:"supervisor_socket"`
-	SupervisorConfDir string `mapstructure:"supervisor_conf_dir"`
-	ConsoleURL        string `mapstructure:"console_url"`
-	AuthPassword      string `mapstructure:"auth_password"`
-	AuthSessionTTL    int    `mapstructure:"auth_session_ttl"`
-	LinksPath         string `mapstructure:"links_path"`
+	Enabled           bool     `mapstructure:"enabled"`
+	Port              int      `mapstructure:"port"`
+	StaticDir         string   `mapstructure:"static_dir"`
+	SupervisorSocket  string   `mapstructure:"supervisor_socket"`
+	SupervisorConfDir string   `mapstructure:"supervisor_conf_dir"`
+	ConsoleURL        string   `mapstructure:"console_url"`
+	AuthPassword      string   `mapstructure:"auth_password"`
+	AuthSessionTTL    int      `mapstructure:"auth_session_ttl"`
+	TrustedProxies    []string `mapstructure:"trusted_proxies"`
+	LinksPath         string   `mapstructure:"links_path"`
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
@@ -52,6 +54,9 @@ type Config struct {
 	BrowserDataPath string `mapstructure:"browser_data_path"`
 	// BrowserInsecureTLS 浏览器代理是否跳过远端 TLS 校验（内网自签证书场景），默认 false。
 	BrowserInsecureTLS bool `mapstructure:"browser_insecure_tls"`
+	// SystemLogPath is the single persistent store for system and audit events.
+	// Empty uses /var/lib/devbox/system-events.jsonl.
+	SystemLogPath string `mapstructure:"system_log_path"`
 	// Catalogs 第三方 HTTP/Git catalog source 聚合器（Issue #2 阶段4 扩展）。
 	// 为 nil 表示未配置 catalog（UI 隐藏 catalog 区）。
 	Catalogs             *apps.CatalogSet           `mapstructure:"-"`
@@ -79,6 +84,10 @@ type Server struct {
 	vmManager            *vms.Manager
 	browser              *browserStore // 浏览器应用的书签/历史持久化
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
+	systemLog            *eventlog.Store
+	processResources     *processResourceSampler
+	sessionUsersMu       sync.RWMutex
+	sessionUsers         map[string]string
 	maintenanceStore     *maintenance.Store
 	webdav               *shares.WebDAVService
 	notifier             maintenance.Notifier
@@ -91,6 +100,17 @@ type Server struct {
 
 // NewServer 创建控制台服务器
 func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, controller apps.Controller, storeMgr *apps.StoreManager) *Server {
+	logPath := strings.TrimSpace(cfg.SystemLogPath)
+	if logPath == "" {
+		logPath = strings.TrimSpace(os.Getenv("DEVBOX_SYSTEM_LOG_PATH"))
+	}
+	if logPath == "" {
+		logPath = eventlog.DefaultPath
+	}
+	systemLog, logErr := eventlog.New(logPath)
+	if logErr != nil {
+		logger.Error("System log unavailable", zap.String("path", logPath), zap.Error(logErr))
+	}
 	s := &Server{
 		config:               cfg,
 		logger:               logger,
@@ -107,16 +127,19 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 			Password:   cfg.AuthPassword,
 			SessionTTL: cfg.AuthSessionTTL,
 		}),
-		supervisorMgr:   supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
-		hardware:        hardware.New(60 * time.Second),
-		links:           links.New(cfg.LinksPath),
-		gpuHistory:      gpuhistory.New(10*time.Second, 6*time.Hour),
-		vmManager:       vms.NewManager(),
-		browser:         newBrowserStore(cfg.BrowserDataPath),
-		browserClient:   newBrowserClient(cfg.BrowserInsecureTLS),
-		webdav:          shares.NewWebDAVService(),
-		pendingRestores: make(map[string]pendingRestore),
-		onboarding:      newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
+		supervisorMgr:    supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
+		hardware:         hardware.New(60 * time.Second),
+		links:            links.New(cfg.LinksPath),
+		gpuHistory:       gpuhistory.New(10*time.Second, 6*time.Hour),
+		vmManager:        vms.NewManager(),
+		browser:          newBrowserStore(cfg.BrowserDataPath),
+		browserClient:    newBrowserClient(cfg.BrowserInsecureTLS),
+		systemLog:        systemLog,
+		processResources: newProcessResourceSampler(),
+		sessionUsers:     make(map[string]string),
+		webdav:           shares.NewWebDAVService(),
+		pendingRestores:  make(map[string]pendingRestore),
+		onboarding:       newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
 	}
 	if store, err := maintenance.NewStore("", cfg.WorkDir); err != nil {
 		logger.Error("Maintenance settings unavailable", zap.Error(err))
@@ -126,6 +149,8 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 			return store.Get().SMTP
 		}}
 	}
+	s.installAuthSessionCleanup()
+	s.installTaskAuditObserver()
 	downloadEngine, err := downloads.New(downloads.Config{
 		RootDir: cfg.WorkDir, MaxConcurrent: 3, AllowPrivateNetworks: cfg.AllowPrivateNetworks,
 	})
@@ -358,5 +383,5 @@ func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "collector not initialized", http.StatusServiceUnavailable)
 		return
 	}
-	s.jsonOK(w, s.collector.GetMetricsHistory())
+	s.jsonOK(w, s.collector.GetMetricsHistoryWindow(parseWindow(r.URL.Query().Get("window")), 720))
 }

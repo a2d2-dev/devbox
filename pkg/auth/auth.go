@@ -20,8 +20,9 @@ type Auth struct {
 	password   string
 	sessionTTL time.Duration
 
-	mu       sync.RWMutex
-	sessions map[string]time.Time // token → 过期时间
+	mu               sync.RWMutex
+	sessions         map[string]time.Time // token → 过期时间
+	onSessionRemoved func(string)
 }
 
 // New 创建认证管理器
@@ -77,12 +78,38 @@ func (a *Auth) ValidateToken(token string) bool {
 		return false
 	}
 	if time.Now().After(expiry) {
-		a.mu.Lock()
-		delete(a.sessions, token)
-		a.mu.Unlock()
+		a.removeSession(token)
 		return false
 	}
 	return true
+}
+
+// SetSessionRemovedHook registers cleanup invoked after expiry or explicit logout.
+func (a *Auth) SetSessionRemovedHook(hook func(string)) {
+	a.mu.Lock()
+	a.onSessionRemoved = hook
+	a.mu.Unlock()
+}
+
+// RevokeToken removes a session token. It accepts bare and Bearer forms.
+func (a *Auth) RevokeToken(token string) bool {
+	token = strings.TrimSpace(strings.TrimPrefix(token, "Bearer "))
+	if token == "" {
+		return false
+	}
+	return a.removeSession(token)
+}
+
+func (a *Auth) removeSession(token string) bool {
+	a.mu.Lock()
+	_, existed := a.sessions[token]
+	delete(a.sessions, token)
+	hook := a.onSessionRemoved
+	a.mu.Unlock()
+	if existed && hook != nil {
+		hook(token)
+	}
+	return existed
 }
 
 // Middleware HTTP 中间件，检查 Authorization header

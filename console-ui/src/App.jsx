@@ -162,6 +162,13 @@ export default function App() {
   };
 
   const handleLogout = () => {
+		const token = getAuthToken();
+		if (token) {
+			fetch('/api/v1/auth/logout', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}` },
+			}).catch(() => {});
+		}
 		clearAuth();
 		setAuthRequired(true);
     setLoggedIn(false);
@@ -589,7 +596,7 @@ export default function App() {
                   onOpenCompose={() => launchApp({ id: 'compose-manager' })}/>}
                 {appId === 'alerts'    && <AlertCenter authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'audit'     && <AuditLog/>}
-                {appId === 'supervisor'&& <Supervisor/>}
+                {appId === 'supervisor'&& <Supervisor onOpenApp={launchApp}/>}
                 {appId === 'virtual-machines' && <VirtualMachines/>}
                 {appId === 'hardware'  && <Hardware/>}
                 {appId === 'links'     && <Links/>}
@@ -597,7 +604,7 @@ export default function App() {
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
                 {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','links','downloads','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
-                       onOpenManagement={() => setMgmtOpen(true)}/>}
+                       onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp}/>}
 
                 {app.kind === 'app' && (
                   <AppMgmtDrawer

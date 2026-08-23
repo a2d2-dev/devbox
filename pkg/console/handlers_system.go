@@ -3,13 +3,17 @@ package console
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/a2d2-dev/devbox/pkg/aiactivity"
+	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
 	"github.com/a2d2-dev/devbox/pkg/system"
+	"golang.org/x/sys/unix"
 )
 
 // registerSystemRoutes 注册系统级查询路由。
@@ -26,28 +30,43 @@ func (s *Server) registerSystemRoutes() {
 	s.mux.HandleFunc("/api/v1/ai/transcript", s.handleAITranscript)
 	s.mux.HandleFunc("/api/v1/ai/codex/cleanup-stale", s.handleCodexCleanupStale)
 	s.registerVMRoutes()
-	// devbox 无云端 / 无集中审计的存根，避免前端 404
+	// devbox 无云端；日志中心复用本机统一结构化事件存储。
 	s.mux.HandleFunc("/api/v1/cloud/status", s.handleCloudStatus)
 	s.mux.HandleFunc("/api/v1/audit/events", s.handleAuditEvents)
 	s.mux.HandleFunc("/api/v1/about", s.handleAbout)
 }
 
 func (s *Server) handleProcesses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	list, err := system.ListProcesses()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.jsonOK(w, list)
+	if s.processResources == nil {
+		s.processResources = newProcessResourceSampler()
+	}
+	s.jsonOK(w, s.processResources.sample(r.Context(), list))
 }
 
 func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) {
-	pidStr := strings.TrimPrefix(r.URL.Path, "/api/v1/processes/")
-	// 支持 /processes/{pid}/action 或直接 /processes/{pid}
-	pidStr = strings.SplitN(pidStr, "/", 2)[0]
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/processes/"), "/")
+	parts := strings.Split(path, "/")
+	pidStr := parts[0]
 	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
 		http.Error(w, "invalid pid", http.StatusBadRequest)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "terminate" {
+		s.handleTerminateProcess(w, r, pid)
+		return
+	}
+	if len(parts) != 1 || r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	d, err := system.GetProcessDetail(pid)
@@ -55,7 +74,128 @@ func (s *Server) handleProcessDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	if connections, err := system.ListNetworkConnections(r.Context(), 5000); err == nil {
+		for _, connection := range connections {
+			if connection.PID == pid {
+				d.NetConns = append(d.NetConns, connection)
+			}
+		}
+	}
 	s.jsonOK(w, d)
+}
+
+var openProcessPIDFD = unix.PidfdOpen
+var signalProcessPIDFD = unix.PidfdSendSignal
+var closeProcessPIDFD = unix.Close
+
+const processFlagKernelThread = 0x00200000
+
+func (s *Server) handleTerminateProcess(w http.ResponseWriter, r *http.Request, pid int) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.systemLog == nil {
+		writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "审计日志不可用，终止进程已禁用", "reason": "audit_unavailable"})
+		return
+	}
+	if s.auth == nil || !s.auth.Enabled() {
+		writeJSONErrStatus(w, http.StatusForbidden, map[string]any{
+			"error": "终止进程前必须启用控制台密码认证", "reason": "permission_required",
+		})
+		return
+	}
+	if !s.auth.ValidateToken(r.Header.Get("Authorization")) {
+		writeJSONErrStatus(w, http.StatusUnauthorized, map[string]any{"error": "身份验证失败", "reason": "unauthorized"})
+		return
+	}
+	if _, err := s.recordEvent(r, eventlog.Input{
+		Level: "warning", Module: "process", Event: "请求终止进程", EventType: "PROCESS_TERMINATE",
+		Outcome: "intent", ResourceKind: "process", ResourceID: strconv.Itoa(pid), Payload: map[string]any{"signal": "SIGTERM"},
+	}); err != nil {
+		writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "审计日志不可用，已拒绝终止进程", "reason": "audit_unavailable"})
+		return
+	}
+	if pid <= 1 || pid == os.Getpid() || pid == os.Getppid() {
+		s.recordProcessTerminationResult(r, pid, "failure", "protected_process")
+		writeJSONErrStatus(w, http.StatusForbidden, map[string]any{
+			"error": "不允许终止系统关键进程或 DevBox 自身", "reason": "protected_process",
+		})
+		return
+	}
+	var request struct {
+		StartTicks uint64 `json:"startTicks"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.StartTicks == 0 {
+		s.recordProcessTerminationResult(r, pid, "failure", "process_identity_required")
+		writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{"error": "缺少进程启动身份", "reason": "process_identity_required"})
+		return
+	}
+	pidfd, err := openProcessPIDFD(pid, 0)
+	if err != nil {
+		status, reason := processSignalError(err)
+		s.recordProcessTerminationResult(r, pid, "failure", reason)
+		writeJSONErrStatus(w, status, map[string]any{"error": "无法打开进程句柄", "reason": reason})
+		return
+	}
+	defer closeProcessPIDFD(pidfd)
+	procRoot := "/proc"
+	if s.processResources != nil && s.processResources.procRoot != "" {
+		procRoot = s.processResources.procRoot
+	}
+	_, identity, err := readProcessIdentity(procRoot, pid)
+	if err != nil {
+		reason := "process_identity_unavailable"
+		status := http.StatusConflict
+		if errors.Is(err, os.ErrNotExist) {
+			reason, status = "process_not_found", http.StatusNotFound
+		}
+		s.recordProcessTerminationResult(r, pid, "failure", reason)
+		writeJSONErrStatus(w, status, map[string]any{"error": "无法确认进程身份", "reason": reason})
+		return
+	}
+	if identity.startTicks != request.StartTicks {
+		s.recordProcessTerminationResult(r, pid, "failure", "process_identity_changed")
+		writeJSONErrStatus(w, http.StatusConflict, map[string]any{"error": "进程身份已变化，已拒绝发送信号", "reason": "process_identity_changed"})
+		return
+	}
+	if identity.flags&processFlagKernelThread != 0 {
+		s.recordProcessTerminationResult(r, pid, "failure", "protected_process")
+		writeJSONErrStatus(w, http.StatusForbidden, map[string]any{"error": "不允许终止内核线程", "reason": "protected_process"})
+		return
+	}
+	err = signalProcessPIDFD(pidfd, unix.SIGTERM, nil, 0)
+	if err != nil {
+		status, reason := processSignalError(err)
+		s.recordProcessTerminationResult(r, pid, "failure", reason)
+		writeJSONErrStatus(w, status, map[string]any{"error": "终止进程失败", "reason": reason})
+		return
+	}
+	s.recordProcessTerminationResult(r, pid, "success", "")
+	s.jsonStatus(w, http.StatusAccepted, map[string]any{"status": "terminating", "pid": pid, "signal": "SIGTERM"})
+}
+
+func processSignalError(err error) (int, string) {
+	if errors.Is(err, unix.ESRCH) {
+		return http.StatusNotFound, "process_not_found"
+	}
+	if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) {
+		return http.StatusForbidden, "permission_denied"
+	}
+	return http.StatusInternalServerError, "signal_failed"
+}
+
+func (s *Server) recordProcessTerminationResult(r *http.Request, pid int, outcome, reason string) {
+	level, event := "warning", "终止进程"
+	payload := map[string]any{"signal": "SIGTERM"}
+	if outcome == "failure" {
+		level, event = "error", "终止进程失败"
+		payload["reason"] = reason
+	}
+	_, _ = s.recordEvent(r, eventlog.Input{
+		Level: level, Module: "process", Event: event, EventType: "PROCESS_TERMINATE", Outcome: outcome,
+		ResourceKind: "process", ResourceID: strconv.Itoa(pid), Payload: payload,
+	})
 }
 
 func (s *Server) handleDisks(w http.ResponseWriter, r *http.Request) {
@@ -144,12 +284,81 @@ func (s *Server) handleCloudStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// devbox 无集中审计：始终返回空事件列表，前端页面自然显示"暂无数据"。
 func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
-	s.jsonOK(w, map[string]any{
-		"events": []any{},
-		"total":  0,
-	})
+	if s.systemLog == nil {
+		http.Error(w, "system log unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		query, err := parseEventQuery(r)
+		if err != nil {
+			writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		s.jsonOK(w, s.systemLog.Query(query))
+	case http.MethodDelete:
+		if s.auth == nil || !s.auth.Enabled() || !s.auth.ValidateToken(r.Header.Get("Authorization")) {
+			writeJSONErrStatus(w, http.StatusForbidden, map[string]any{"error": "清空日志需要已启用的控制台认证", "reason": "permission_required"})
+			return
+		}
+		intent, err := s.recordEvent(r, eventlog.Input{
+			Level: "warning", Module: "audit", Event: "请求清空系统日志", EventType: "LOG_CLEAR", Outcome: "intent",
+			ResourceKind: "system_log", ResourceID: "all",
+		})
+		if err != nil {
+			writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "审计日志不可用，已拒绝清空日志", "reason": "audit_unavailable"})
+			return
+		}
+		cleared, event, err := s.systemLog.Clear(intent, s.actorFromRequest(r), s.requestIP(r), r.UserAgent())
+		if err != nil {
+			_, _ = s.recordEvent(r, eventlog.Input{
+				Level: "error", Module: "audit", Event: "清空系统日志失败", EventType: "LOG_CLEAR", Outcome: "failure",
+				ResourceKind: "system_log", ResourceID: "all", Payload: map[string]any{"reason": "storage_failure"},
+			})
+			writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "清空日志失败", "reason": "audit_unavailable"})
+			return
+		}
+		s.jsonOK(w, map[string]any{"cleared": cleared, "auditEvent": event})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func parseEventQuery(r *http.Request) (eventlog.Query, error) {
+	values := r.URL.Query()
+	limit, err := parseOptionalInt(values.Get("limit"), 50)
+	if err != nil || limit < 1 || limit > 200 {
+		return eventlog.Query{}, fmt.Errorf("limit must be between 1 and 200")
+	}
+	offset, err := parseOptionalInt(values.Get("offset"), 0)
+	if err != nil || offset < 0 {
+		return eventlog.Query{}, fmt.Errorf("offset must be zero or greater")
+	}
+	query := eventlog.Query{
+		Levels: values["level"], Modules: values["module"], Username: strings.TrimSpace(values.Get("user")),
+		Limit: limit, Offset: offset,
+	}
+	if since := values.Get("since"); since != "" {
+		query.Since, err = time.Parse(time.RFC3339, since)
+		if err != nil {
+			return eventlog.Query{}, fmt.Errorf("since must be RFC3339")
+		}
+	}
+	if until := values.Get("until"); until != "" {
+		query.Until, err = time.Parse(time.RFC3339, until)
+		if err != nil {
+			return eventlog.Query{}, fmt.Errorf("until must be RFC3339")
+		}
+	}
+	return query, nil
+}
+
+func parseOptionalInt(value string, fallback int) (int, error) {
+	if value == "" {
+		return fallback, nil
+	}
+	return strconv.Atoi(value)
 }
 
 // 前端 LoginScreen 遗留调用 /api/v1/about，用 device 数据兜底一份让它别 404。

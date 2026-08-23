@@ -122,6 +122,7 @@ func main() {
 		ConsoleURL:           cfg.Console.ConsoleURL,
 		AuthPassword:         cfg.Auth.Password,
 		AuthSessionTTL:       cfg.Auth.SessionTTL,
+		TrustedProxies:       cfg.Console.TrustedProxies,
 		LinksPath:            cfg.Console.LinksPath,
 		BrowserDataPath:      cfg.Console.BrowserDataPath,
 		BrowserInsecureTLS:   cfg.Console.BrowserInsecureTLS,

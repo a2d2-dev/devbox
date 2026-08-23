@@ -13,7 +13,7 @@ import { T } from '../tokens'
 
 export const SYSTEM_APPS = [
   { id: 'dashboard',           kind: 'system', name: '仪表盘',   icon: 'dashboard', color: T.blue,    bg: 'linear-gradient(160deg,#3b82f6,#1d4ed8)' },
-  { id: 'monitoring',          kind: 'system', name: '监控',     icon: 'sparkle',   color: T.indigo,  bg: 'linear-gradient(160deg,#6366f1,#4f46e5)' },
+  { id: 'monitoring',          kind: 'system', name: '资源管理', icon: 'sparkle',   color: T.indigo,  bg: 'linear-gradient(160deg,#6366f1,#4f46e5)' },
   { id: 'ai-activity',         kind: 'system', name: 'AI 活动',  icon: 'brain',     color: T.violet,  bg: 'linear-gradient(160deg,#a855f7,#6d28d9)' },
   { id: 'store',               kind: 'system', name: '应用商店', icon: 'store',     color: T.green,   bg: 'linear-gradient(160deg,#34d399,#059669)' },
   { id: 'docker',              kind: 'system', name: 'Docker',   icon: 'server',    color: '#2563eb', bg: 'linear-gradient(160deg,#3b82f6,#0f766e)' },
@@ -28,7 +28,7 @@ export const SYSTEM_APPS = [
   { id: 'disks',               kind: 'system', name: '磁盘',     icon: 'hardDrive', color: '#1e40af', bg: 'linear-gradient(160deg,#3b82f6,#1e3a8a)' },
   { id: 'network-connections', kind: 'system', name: '网络连接', icon: 'network',   color: '#0e7490', bg: 'linear-gradient(160deg,#06b6d4,#0e7490)' },
   { id: 'alerts',              kind: 'system', name: '告警中心', icon: 'bell',      color: T.amber,   bg: 'linear-gradient(160deg,#fbbf24,#d97706)' },
-  { id: 'audit',               kind: 'system', name: '操作日志', icon: 'shield',    color: '#7c3aed', bg: 'linear-gradient(160deg,#a78bfa,#5b21b6)' },
+  { id: 'audit',               kind: 'system', name: '日志',     icon: 'shield',    color: '#7c3aed', bg: 'linear-gradient(160deg,#a78bfa,#5b21b6)' },
   { id: 'settings',            kind: 'system', name: '系统设置', icon: 'gear',      color: T.slate,   bg: 'linear-gradient(160deg,#64748b,#334155)' },
   { id: 'browser',             kind: 'system', name: '浏览器',   icon: 'globe',     color: T.blue,    bg: 'linear-gradient(160deg,#3b82f6,#1d4ed8)' },
 ]
