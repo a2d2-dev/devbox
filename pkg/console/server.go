@@ -25,6 +25,8 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/links"
 	"github.com/a2d2-dev/devbox/pkg/maintenance"
 	"github.com/a2d2-dev/devbox/pkg/models"
+	"github.com/a2d2-dev/devbox/pkg/network"
+	"github.com/a2d2-dev/devbox/pkg/security"
 	"github.com/a2d2-dev/devbox/pkg/shares"
 	"github.com/a2d2-dev/devbox/pkg/supervisor"
 	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
@@ -96,6 +98,10 @@ type Server struct {
 	vmManager            *vms.Manager
 	browser              *browserStore // 浏览器应用的书签/历史持久化
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
+	network              *network.Collector
+	security             *security.Store
+	bans                 *security.BanManager
+	certificates         *security.CertificateManager
 	loginLimiter         loginRateLimiter
 	backup               *backup.Manager
 	systemLog            *eventlog.Store
@@ -114,6 +120,16 @@ type Server struct {
 
 // NewServer 创建控制台服务器
 func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, controller apps.Controller, storeMgr *apps.StoreManager) *Server {
+	securityPath, keyPath, certDir := securityPaths()
+	securityStore, securityErr := security.NewStore(securityPath, keyPath)
+	if securityErr != nil {
+		logger.Error("Security settings persistence unavailable; using encrypted in-memory state", zap.Error(securityErr))
+		securityStore, _ = security.NewStore("", "")
+	}
+	if err := securityStore.InitializeHTTPPort(cfg.Port); err != nil {
+		logger.Warn("Could not initialize persisted HTTP port", zap.Error(err))
+	}
+
 	usersPath := cfg.UsersDataPath
 	if usersPath == "" {
 		if cfg.BrowserDataPath != "" {
@@ -166,13 +182,19 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 			Users:           userStore,
 			UsersConfigured: true,
 		}),
-		supervisorMgr:    supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
-		hardware:         hardware.New(60 * time.Second),
-		links:            links.New(cfg.LinksPath),
-		gpuHistory:       gpuhistory.New(10*time.Second, 6*time.Hour),
-		vmManager:        vms.NewManager(),
-		browser:          newBrowserStore(cfg.BrowserDataPath),
-		browserClient:    newBrowserClient(cfg.BrowserInsecureTLS),
+		supervisorMgr: supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
+		hardware:      hardware.New(60 * time.Second),
+		links:         links.New(cfg.LinksPath),
+		gpuHistory:    gpuhistory.New(10*time.Second, 6*time.Hour),
+		vmManager:     vms.NewManager(),
+		browser:       newBrowserStore(cfg.BrowserDataPath),
+		browserClient: newBrowserClient(cfg.BrowserInsecureTLS),
+		network:       network.NewCollector(),
+		security:      securityStore,
+		bans: security.NewBanManager(security.BanRule{
+			Threshold: 5, WindowSec: 600, BanMinutes: 30,
+		}),
+		certificates:     security.NewCertificateManager(certDir),
 		systemLog:        systemLog,
 		processResources: newProcessResourceSampler(),
 		sessionUsers:     make(map[string]string),
@@ -200,6 +222,9 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 	} else {
 		s.downloadEngine = downloadEngine
 	}
+	s.bans.SetProtectedFailureHook(func(ip, source string) {
+		logger.Warn("Skipped ban for protected management address", zap.String("ip", ip), zap.String("source", source))
+	})
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
 	if s.auth.Enabled() {
@@ -209,6 +234,17 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		logger.Info("Local password auth disabled (no password configured)")
 	}
 	return s
+}
+
+func securityPaths() (string, string, string) {
+	if strings.HasSuffix(os.Args[0], ".test") {
+		return "", "", os.TempDir()
+	}
+	base := os.Getenv("DEVBOX_SECURITY_DATA_DIR")
+	if base == "" {
+		base = "/var/lib/devbox/security"
+	}
+	return base + "/settings.json", base + "/master.key", base + "/certificates"
 }
 
 // authGate 用一个"路径豁免 + Middleware 兜底"的组合包住整个 mux。
@@ -234,7 +270,9 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 			inner.ServeHTTP(w, r)
 			return
 		}
-		s.auth.Middleware(inner.ServeHTTP)(w, r)
+		s.auth.Middleware(inner.ServeHTTP, func() bool {
+			return s.security != nil && s.security.ProtectionEnabled()
+		})(w, r)
 	})
 }
 
@@ -246,10 +284,12 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.downloadEngine != nil {
 		s.downloadEngine.Start(ctx)
 	}
-	addr := fmt.Sprintf(":%d", s.config.Port)
+	settings := s.security.Settings()
+	addr := fmt.Sprintf(":%d", settings.HTTPPort)
+	handler := security.RateLimit(s.authGate(s.mux), s.security.Settings)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           s.authGate(s.mux),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -264,6 +304,27 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		srv.Shutdown(shutdownCtx)
 	}()
+
+	if settings.HTTPSCertificate != "" {
+		certPath, keyPath, err := s.certificates.Paths(settings.HTTPSCertificate)
+		if err != nil {
+			return fmt.Errorf("HTTPS certificate binding: %w", err)
+		}
+		httpsAddr := fmt.Sprintf(":%d", settings.HTTPSPort)
+		httpsSrv := &http.Server{Addr: httpsAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = httpsSrv.Shutdown(shutdownCtx)
+		}()
+		go func() {
+			s.logger.Info("Console HTTPS server starting", zap.String("addr", httpsAddr), zap.String("certificate", settings.HTTPSCertificate))
+			if err := httpsSrv.ListenAndServeTLS(certPath, keyPath); err != nil && err != http.ErrServerClosed {
+				s.logger.Error("Console HTTPS server failed", zap.Error(err))
+			}
+		}()
+	}
 
 	s.logger.Info("Console HTTP server starting",
 		zap.String("addr", addr),
@@ -373,6 +434,9 @@ func (s *Server) registerRoutes() {
 
 	// 浏览器应用（代理 + 书签/历史）
 	s.registerBrowserRoutes()
+
+	// 网络、远程访问与安全设置（Issue #13）。
+	s.registerNetworkSecurityRoutes()
 
 	// 本机、外接设备与 rsync over SSH 备份任务。
 	s.registerBackupRoutes()

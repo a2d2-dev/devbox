@@ -29,6 +29,7 @@ export const SYSTEM_APPS = [
   { id: 'links',               kind: 'system', name: '服务导航', icon: 'network',   color: '#0369a1', bg: 'linear-gradient(160deg,#38bdf8,#0369a1)' },
   { id: 'disks',               kind: 'system', name: '磁盘',     icon: 'hardDrive', color: '#1e40af', bg: 'linear-gradient(160deg,#3b82f6,#1e3a8a)' },
   { id: 'network-connections', kind: 'system', name: '网络连接', icon: 'network',   color: '#0e7490', bg: 'linear-gradient(160deg,#06b6d4,#0e7490)' },
+  { id: 'network-security',    kind: 'system', name: '网络与安全', icon: 'shield',   color: '#b45309', bg: 'linear-gradient(160deg,#f59e0b,#b45309)' },
   { id: 'alerts',              kind: 'system', name: '告警中心', icon: 'bell',      color: T.amber,   bg: 'linear-gradient(160deg,#fbbf24,#d97706)' },
   { id: 'audit',               kind: 'system', name: '日志',     icon: 'shield',    color: '#7c3aed', bg: 'linear-gradient(160deg,#a78bfa,#5b21b6)' },
   { id: 'settings',            kind: 'system', name: '系统设置', icon: 'gear',      color: T.slate,   bg: 'linear-gradient(160deg,#64748b,#334155)' },

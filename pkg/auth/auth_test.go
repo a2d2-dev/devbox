@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/a2d2-dev/devbox/pkg/users"
 	"github.com/stretchr/testify/require"
@@ -76,4 +77,36 @@ func TestExpiredSessionNotifiesCleanup(t *testing.T) {
 	require.True(t, ok)
 	require.False(t, a.ValidateToken(token))
 	require.Equal(t, token, removed)
+}
+
+func TestCredentialCheckDoesNotCreateSessionBeforeAdditionalFactors(t *testing.T) {
+	a := New(Config{Password: "pw", SessionTTL: 60})
+	p, ok := a.AuthenticateCredentials("admin", "pw")
+	require.True(t, ok)
+	require.True(t, p.IsAdmin())
+	a.mu.RLock()
+	require.Empty(t, a.sessions)
+	a.mu.RUnlock()
+
+	token := a.IssueSession(p)
+	require.NotEmpty(t, token)
+	require.True(t, a.ValidateToken(token))
+}
+
+func TestValidateTokenPrunesOtherExpiredSessions(t *testing.T) {
+	a := New(Config{Password: "pw", SessionTTL: 60})
+	valid := a.NewSession()
+	expired := "expired-token"
+	a.mu.Lock()
+	a.sessions[expired] = session{expires: time.Now().Add(-time.Minute), principal: Principal{Username: "admin", Role: users.RoleAdmin}}
+	a.mu.Unlock()
+
+	removed := ""
+	a.SetSessionRemovedHook(func(token string) { removed = token })
+	require.True(t, a.ValidateToken(valid))
+	require.Equal(t, expired, removed)
+	a.mu.RLock()
+	_, exists := a.sessions[expired]
+	a.mu.RUnlock()
+	require.False(t, exists)
 }

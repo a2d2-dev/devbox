@@ -38,6 +38,7 @@ func TestRegularUserCannotCallPrivilegedWriteEndpoints(t *testing.T) {
 	s.registerMaintenanceRoutes()
 	s.registerFileRoutes()
 	s.registerOnboardingRoutes()
+	s.registerNetworkSecurityRoutes()
 	h := s.authGate(s.mux)
 
 	tests := []struct {
@@ -70,6 +71,11 @@ func TestRegularUserCannotCallPrivilegedWriteEndpoints(t *testing.T) {
 		{"maintenance restore confirm", http.MethodPost, "/api/v1/maintenance/restore/confirm", `{}`},
 		{"maintenance reset", http.MethodPost, "/api/v1/maintenance/reset", `{}`},
 		{"onboarding update", http.MethodPatch, "/api/v1/onboarding", `{}`},
+		{"network remote access read", http.MethodGet, "/api/v1/network/remote-access", ""},
+		{"network DDNS preview", http.MethodPost, "/api/v1/network/ddns/preview", `{}`},
+		{"security settings read", http.MethodGet, "/api/v1/security/settings", ""},
+		{"security firewall read", http.MethodGet, "/api/v1/security/firewall", ""},
+		{"security firewall apply", http.MethodPost, "/api/v1/security/firewall/apply", `{}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

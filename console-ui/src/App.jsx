@@ -53,6 +53,7 @@ import Links from './pages/Links'
 import Backup from './pages/Backup'
 import Downloads from './pages/Downloads'
 import Diagnostics from './pages/Settings'
+import NetworkSecurity from './pages/NetworkSecurity'
 import { AppShell } from './components/AppShell'
 import AppMgmtDrawer from './components/AppMgmtDrawer'
 import { AuthModal } from './components/AuthModal'
@@ -605,8 +606,9 @@ export default function App() {
                 {appId === 'links'     && <Links/>}
                 {appId === 'backup'    && <Backup/>}
                 {appId === 'downloads' && <Downloads/>}
+                {appId === 'network-security' && <NetworkSecurity/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','users','links','backup','downloads','diag','settings'].includes(appId)
+                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','users','links','backup','downloads','network-security','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp}/>}
 

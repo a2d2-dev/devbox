@@ -40,6 +40,12 @@ auth:
   password: ""
   session_ttl: 86400
 
+# 网络与安全设置（DDNS、分享域名、限速、访问码、2FA、证书绑定）由
+# 「系统设置 > 网络与安全」管理，并加密持久化在
+# /var/lib/devbox/security/。可用 DEVBOX_SECURITY_DATA_DIR 覆盖该目录。
+# SSH、防火墙和网口的系统写操作必须先预览；当前版本在本机仅返回
+# dry-run，不会修改 sshd_config、nftables/iptables 或网口配置。
+
 # 可选的 Kubernetes 集成；不设置则禁用 K8s 应用管理与应用市场。
 kubernetes:
   # kubeconfig 路径；留空则尝试 in-cluster 模式

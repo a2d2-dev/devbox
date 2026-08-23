@@ -43,6 +43,7 @@ users --< group_members >-- user_groups
 | 静态资源、`/metrics`、`/app-icons/*` | 允许 | 允许 | 允许 | 非 `/api/v1/` 资源与 Prometheus 抓取 |
 | `/api/v1/auth/*`、`GET /health`、`GET /device`、`GET /cloud/status`、`GET /about` | 允许 | 允许 | 允许 | 登录、认证状态与登录页探测 |
 | `GET /metrics*`、`GET /network*` | 拒绝 | 允许 | 允许 | 控制台实时监控 |
+| `/network/remote-access`、`/network/ddns/*`、`/security/*` | 拒绝 | `403` | 允许 | 网络入口、SSH、防火墙、认证因子、封禁与证书设置，含只读状态 |
 | `GET /processes*`、`GET /disks*`、`GET /gpu/processes`、`GET /ai/activity`、`GET /ai/transcript` | 拒绝 | 允许 | 允许 | 系统只读监控 |
 | `POST /processes/{pid}/terminate` | 拒绝 | `403` | 允许 | 终止宿主进程 |
 | `GET /hardware*`、`GET /ports`、`GET /models`、`GET /alerts` | 拒绝 | 允许 | 允许 | 硬件、端口、模型与告警只读数据 |

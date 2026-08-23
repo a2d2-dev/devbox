@@ -82,16 +82,19 @@ func (a *Auth) Verify(password string) (string, bool) {
 	return token, ok
 }
 
-func (a *Auth) VerifyCredentials(username, password string) (string, Principal, bool) {
+// AuthenticateCredentials validates the configured user or legacy password
+// without creating a session. Callers can complete additional factors before
+// issuing a token with IssueSession.
+func (a *Auth) AuthenticateCredentials(username, password string) (Principal, bool) {
 	enabled, available := a.state()
 	if !available {
-		return "", Principal{}, false
+		return Principal{}, false
 	}
 	username = strings.TrimSpace(username)
 	if a.users != nil && username != "" {
 		if u, ok := a.users.Authenticate(context.Background(), username, password); ok {
 			p := Principal{UserID: u.ID, Username: u.Username, DisplayName: u.DisplayName, Role: u.Role}
-			return a.issue(p), p, true
+			return p, true
 		}
 	}
 	// Before the first database user exists, keep the configured single-password
@@ -104,21 +107,40 @@ func (a *Auth) VerifyCredentials(username, password string) (string, Principal, 
 	}
 	if allowLegacy {
 		p := Principal{Username: "admin", DisplayName: "admin", Role: users.RoleAdmin, Legacy: true}
-		return a.issue(p), p, true
+		return p, true
 	}
 	if !enabled {
 		p := Principal{Username: "local", DisplayName: "Local user", Role: users.RoleAdmin, Legacy: true}
-		return "", p, true
+		return p, true
 	}
-	return "", Principal{}, false
+	return Principal{}, false
 }
 
-func (a *Auth) issue(p Principal) string {
+func (a *Auth) VerifyCredentials(username, password string) (string, Principal, bool) {
+	p, ok := a.AuthenticateCredentials(username, password)
+	if !ok {
+		return "", Principal{}, false
+	}
+	if !a.Enabled() {
+		return "", p, true
+	}
+	return a.IssueSession(p), p, true
+}
+
+// IssueSession creates a session after all configured authentication factors
+// have succeeded.
+func (a *Auth) IssueSession(p Principal) string {
+	a.PruneExpired()
 	token := generateToken()
 	a.mu.Lock()
 	a.sessions[token] = session{expires: time.Now().Add(a.sessionTTL), principal: p}
 	a.mu.Unlock()
 	return token
+}
+
+// NewSession preserves the original single-password session helper.
+func (a *Auth) NewSession() string {
+	return a.IssueSession(Principal{Username: "admin", DisplayName: "admin", Role: users.RoleAdmin, Legacy: true})
 }
 
 func normalizeToken(token string) string {
@@ -133,18 +155,24 @@ func (a *Auth) Principal(token string) (Principal, bool) {
 	if !enabled {
 		return Principal{Username: "local", DisplayName: "Local user", Role: users.RoleAdmin, Legacy: true}, true
 	}
+	return a.SessionPrincipal(token)
+}
+
+// SessionPrincipal requires a real, unexpired session even when password auth
+// itself is disabled. Security factors use this to protect the API.
+func (a *Auth) SessionPrincipal(token string) (Principal, bool) {
+	if !a.Available() {
+		return Principal{}, false
+	}
 	token = normalizeToken(token)
 	if token == "" {
 		return Principal{}, false
 	}
+	a.PruneExpired()
 	a.mu.RLock()
 	sess, ok := a.sessions[token]
 	a.mu.RUnlock()
 	if !ok {
-		return Principal{}, false
-	}
-	if time.Now().After(sess.expires) {
-		a.removeSession(token)
 		return Principal{}, false
 	}
 	return sess.principal, true
@@ -212,14 +240,44 @@ func (a *Auth) removeSession(token string) bool {
 	return existed
 }
 
+// PruneExpired removes all expired sessions, including tokens that are never
+// reused, and runs the cleanup hook for each removed token.
+func (a *Auth) PruneExpired() {
+	now := time.Now()
+	a.mu.Lock()
+	removed := make([]string, 0)
+	for token, sess := range a.sessions {
+		if !now.Before(sess.expires) {
+			delete(a.sessions, token)
+			removed = append(removed, token)
+		}
+	}
+	hook := a.onSessionRemoved
+	a.mu.Unlock()
+	if hook != nil {
+		for _, token := range removed {
+			hook(token)
+		}
+	}
+}
+
 // Middleware HTTP 中间件，检查 Authorization header
-func (a *Auth) Middleware(next http.HandlerFunc) http.HandlerFunc {
+func (a *Auth) Middleware(next http.HandlerFunc, additionalRequired ...func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !a.Available() {
 			writeDenied(w, http.StatusServiceUnavailable, "user_database_unavailable", "用户数据库不可用，认证服务已关闭访问")
 			return
 		}
-		p, ok := a.Principal(tokenFromRequest(r))
+		required := a.Enabled()
+		for _, check := range additionalRequired {
+			required = required || (check != nil && check())
+		}
+		if !required {
+			p, _ := a.Principal("")
+			next(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+			return
+		}
+		p, ok := a.SessionPrincipal(tokenFromRequest(r))
 		if !ok {
 			writeDenied(w, http.StatusUnauthorized, "unauthorized", "身份验证失败")
 			return
