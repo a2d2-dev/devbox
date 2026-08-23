@@ -3,7 +3,6 @@ package console
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -13,113 +12,11 @@ import (
 
 // registerExtraRoutes 注册文件/模型/告警/端口路由
 func (s *Server) registerExtraRoutes() {
-	s.mux.HandleFunc("/api/v1/files", s.handleFiles)
-	s.mux.HandleFunc("/api/v1/files/upload", s.handleFileUpload)
-	s.mux.HandleFunc("/api/v1/files/content", s.handleFileContent)
+	s.registerFileRoutes()
 	s.mux.HandleFunc("/api/v1/models", s.handleModels)
 	s.mux.HandleFunc("/api/v1/alerts", s.handleAlerts)
 	s.mux.HandleFunc("/api/v1/alerts/", s.handleAlertAction)
 	s.mux.HandleFunc("/api/v1/ports", s.handlePorts)
-}
-
-func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
-	if s.fileBrowser == nil {
-		http.Error(w, "file browser not initialized", http.StatusServiceUnavailable)
-		return
-	}
-	path := r.URL.Query().Get("path")
-	entries, err := s.fileBrowser.List(path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	s.jsonOK(w, entries)
-}
-
-// handleFileUpload 接收 multipart form (path, name, file)，把文件写到当前目录。
-// 供 Files 页面「粘贴图片」使用，20MB 上限够贴截图，超出返 413。
-func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
-	if s.fileBrowser == nil {
-		http.Error(w, "file browser not initialized", http.StatusServiceUnavailable)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	const maxUpload = 20 << 20
-	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
-	if err := r.ParseMultipartForm(maxUpload); err != nil {
-		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
-		return
-	}
-
-	path := r.FormValue("path")
-	name := r.FormValue("name")
-
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "missing file field", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	if name == "" && header != nil {
-		name = header.Filename
-	}
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	saved, err := s.fileBrowser.Save(path, name, data)
-	if err != nil {
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "file exists"):
-			http.Error(w, msg, http.StatusConflict)
-		case strings.Contains(msg, "access denied"):
-			http.Error(w, msg, http.StatusForbidden)
-		case strings.Contains(msg, "invalid filename"), strings.Contains(msg, "invalid path"),
-			strings.Contains(msg, "not a directory"), strings.Contains(msg, "failed to stat directory"):
-			http.Error(w, msg, http.StatusBadRequest)
-		default:
-			http.Error(w, msg, http.StatusInternalServerError)
-		}
-		return
-	}
-	s.jsonOK(w, map[string]string{"name": saved})
-}
-
-// handleFileContent 直出 dirPath/name 指向的文件，给 Files 页预览用。
-// http.ServeFile 自带 Content-Type / Range 处理，图片/PDF/文本都能直接展。
-func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
-	if s.fileBrowser == nil {
-		http.Error(w, "file browser not initialized", http.StatusServiceUnavailable)
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	full, err := s.fileBrowser.ResolveFile(r.URL.Query().Get("path"), r.URL.Query().Get("name"))
-	if err != nil {
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "access denied"):
-			http.Error(w, msg, http.StatusForbidden)
-		case strings.Contains(msg, "file not found"):
-			http.Error(w, msg, http.StatusNotFound)
-		case strings.Contains(msg, "invalid"), strings.Contains(msg, "not a regular file"):
-			http.Error(w, msg, http.StatusBadRequest)
-		default:
-			http.Error(w, msg, http.StatusInternalServerError)
-		}
-		return
-	}
-	http.ServeFile(w, r, full)
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
