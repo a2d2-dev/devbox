@@ -5,7 +5,7 @@
 ## 功能
 
 - **Supervisor 面板** —— 通过 supervisord 托管的进程：启停、保活、查看日志、端口归属
-- **应用市场 / 应用管理** —— 基于本机 Kubernetes 的容器化应用一键安装与管理（可选）
+- **应用市场 / 应用管理** —— Docker Compose 与本机 Kubernetes 双运行时；支持内联 Compose、平台商店和第三方 HTTP/Git catalog（可选）
 - **本地模型** —— 模型目录扫描、容量、可用 runtime 视图
 - **文件浏览器** —— 工作区文件浏览
 - **Web 终端** —— 浏览器内交互式 shell
@@ -59,7 +59,7 @@ pkg/
   config/               配置加载与校验
   console/              本地 HTTP / WebSocket 服务（控制台后端）
   supervisor/           supervisord 客户端封装
-  apps/                 K8s 应用管理 + 应用市场客户端
+  apps/                 Compose/K8s 应用领域、异步任务与应用市场
   collector/            系统 / GPU / 设备指标采集
   alerts/               本地告警规则引擎
   files/                文件浏览

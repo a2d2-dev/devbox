@@ -41,6 +41,7 @@ import { Dock } from './components/Dock'
 import AppWindow, { btnSecondary, btnPrimary } from './components/AppWindow'
 import DashboardApp from './pages/Dashboard'
 import AppStore from './pages/AppStore'
+import { ComposeManager } from './pages/ComposeManager'
 import AlertCenter from './pages/AlertCenter'
 import AuditLog from './pages/AuditLog'
 import Supervisor from './pages/Supervisor'
@@ -112,6 +113,38 @@ const PRESETS = {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+// ─── 自由窗口几何 ─────────────────────────────────────────────
+// MIN_W/MIN_H ：窗口最小可缩放尺寸；TITLEBAR_H ：标题栏高度（用于 clamp y 上限，保证总可见可抓）
+const MIN_W = 420, MIN_H = 300, TITLEBAR_H = 44;
+// 级联偏移：每开一个新窗口往右下挪一点，回绕避免无限偏移
+const CASCADE_STEP = 28, CASCADE_MAX = 6;
+
+// 新窗口的默认浮动几何（基于已开窗口数级联）
+function defaultGeo(openCount, vw, vh) {
+  const w = Math.min(1280, Math.round(vw * 0.72));
+  const h = Math.min(820, Math.round(vh * 0.74));
+  const k = openCount % CASCADE_MAX;
+  return {
+    x: clamp(60 + k * CASCADE_STEP, 0, Math.max(0, vw - w)),
+    y: clamp(40 + k * CASCADE_STEP, 0, Math.max(0, vh - h - TITLEBAR_H)),
+    w, h,
+  };
+}
+
+// 最大化几何：铺满主内容区
+function fullscreenGeo(vw, vh) { return { x: 0, y: 0, w: vw, h: vh }; }
+
+// 把任意几何夹进可行域：尺寸 ∈ [MIN, 视口]；x 允许部分出屏但至少留 80px 可抓；
+// y 保证标题栏始终在视口内（不被顶栏盖、也不出底）
+function clampGeo(g, vw, vh) {
+  const w = clamp(g.w, MIN_W, Math.max(MIN_W, vw));
+  const h = clamp(g.h, MIN_H, Math.max(MIN_H, vh));
+  const xLo = -(w - 80), xHi = vw - 80;
+  const x = clamp(g.x, Math.min(xLo, xHi), Math.max(xLo, xHi));
+  const y = clamp(g.y, 0, Math.max(0, vh - TITLEBAR_H));
+  return { x, y, w, h };
+}
+
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(() => !!getAuthToken());
   const [loginUser, setLoginUser] = useState('');
@@ -172,6 +205,45 @@ export default function App() {
     else dockIconRects.current.delete(id);
   }, []);
   const getDockIconRect = useCallback((id) => dockIconRects.current.get(id)?.getBoundingClientRect(), []);
+
+  // ─── 自由窗口化状态 ───────────────────────────────────────────
+  // geoByApp     : 每个窗口浮动(framed)态的像素几何 {x,y,w,h}；最大化时不用
+  // zByApp       : 每个窗口的 z-index，bringToFront 时自增取栈顶
+  // interactingId: 当前正被拖拽/缩放的 appId → 切到「即时跟手」transition
+  const [geoByApp, setGeoByApp] = useState({});
+  const [zByApp, setZByApp] = useState({});
+  const zCounter = useRef(10);
+  const [interactingId, setInteractingId] = useState(null);
+
+  // 主内容区（窗口的 offsetParent）尺寸：默认几何与 clamp 都依赖它
+  const stageRef = useRef(null);
+  const [stageSize, setStageSize] = useState(() => ({ vw: window.innerWidth, vh: window.innerHeight }));
+  useEffect(() => {
+    const measure = () => {
+      const r = stageRef.current?.getBoundingClientRect?.();
+      if (r && r.width > 0) setStageSize({ vw: r.width, vh: r.height });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  // 置顶聚焦：设为 active + 自增 z-index
+  const bringToFront = useCallback((id) => {
+    if (!id) return;
+    setActiveId(id);
+    zCounter.current += 1;
+    setZByApp(z => ({ ...z, [id]: zCounter.current }));
+  }, []);
+
+  // 拖拽 / 缩放回写几何（夹进可行域）
+  const setGeoFor = useCallback((id, partial) => {
+    setGeoByApp(g => {
+      const cur = g[id];
+      if (!cur) return g;
+      return { ...g, [id]: clampGeo({ ...cur, ...partial }, stageSize.vw, stageSize.vh) };
+    });
+  }, [stageSize.vw, stageSize.vh]);
   const maximized = activeId ? (maxByApp[activeId] ?? true) : true;
   const setMaximized = (next) => {
     if (!activeId) return;
@@ -199,7 +271,9 @@ export default function App() {
       const next = new Set(prev); next.delete(app.id); return next;
     });
     setMaxByApp(m => (app.id in m) ? m : { ...m, [app.id]: true });
-    setActiveId(app.id);
+    // 预分配浮动几何（首次 restore 时用）；按已开窗口数级联，避免完全重叠
+    setGeoByApp(g => (app.id in g) ? g : { ...g, [app.id]: defaultGeo(openApps.length, stageSize.vw, stageSize.vh) });
+    bringToFront(app.id);
     setMgmtOpen(false);
   };
 
@@ -218,27 +292,14 @@ export default function App() {
       const n = new Set(prev); n.delete(id); return n;
     });
     // Don't touch maxByApp — restore whatever mode the window was in.
-    setActiveId(id);
+    bringToFront(id);
     setMgmtOpen(false);
   };
 
-  // Minimize the active window — keep the app in the dock
-  const minimizeWindow = () => {
-    if (!activeId) return;
-    setMinimized(prev => { const n = new Set(prev); n.add(activeId); return n; });
-    setActiveId(null);
-    setMgmtOpen(false);
-  };
-
-  // Close window: remove the app from the running set
-  const closeWindow = () => {
-    if (!activeId) return;
-    const id = activeId;
-    setOpenApps(p => p.filter(x => x !== id));
-    setMinimized(prev => { const n = new Set(prev); n.delete(id); return n; });
-    setMaxByApp(m => { if (!(id in m)) return m; const n = { ...m }; delete n[id]; return n; });
-    setActiveId(null);
-    setMgmtOpen(false);
+  // Minimize a specific window by id — 多窗口可见时，标题栏按钮须精确作用于自身
+  const minimizeApp = (id) => {
+    setMinimized(prev => { const n = new Set(prev); n.add(id); return n; });
+    if (activeId === id) { setActiveId(null); setMgmtOpen(false); }
   };
 
   // Close any open app (e.g. from dock right-click / hover X)
@@ -246,6 +307,8 @@ export default function App() {
     setOpenApps(p => p.filter(x => x !== id));
     setMinimized(prev => { const n = new Set(prev); n.delete(id); return n; });
     setMaxByApp(m => { if (!(id in m)) return m; const n = { ...m }; delete n[id]; return n; });
+    setGeoByApp(g => { if (!(id in g)) return g; const n = { ...g }; delete n[id]; return n; });
+    setZByApp(z => { if (!(id in z)) return z; const n = { ...z }; delete n[id]; return n; });
     if (activeId === id) { setActiveId(null); setMgmtOpen(false); }
   };
 
@@ -405,7 +468,7 @@ export default function App() {
       </div>
 
       {/* Main content area */}
-      <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
+      <div ref={stageRef} style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
           <Desktop
             onOpenApp={(app) => {
@@ -433,8 +496,11 @@ export default function App() {
           {openApps.map(appId => {
             const app = appById[appId];
             if (!app) return null;
-            const isVisible = activeId === appId && !minimized.has(appId);
+            // 多窗口并存：所有未最小化的窗口都可见、可层叠；activeId 只决定谁在最前 / 高亮
+            const isVisible = !minimized.has(appId);
             const isMax = maxByApp[appId] ?? true;
+            const geo = (isMax ? fullscreenGeo(stageSize.vw, stageSize.vh) : geoByApp[appId])
+              || defaultGeo(0, stageSize.vw, stageSize.vh);
             return (
               <AppWindow
                 key={appId}
@@ -443,16 +509,26 @@ export default function App() {
                 visible={isVisible}
                 minimized={minimized.has(appId)}
                 maximized={isMax}
+                geo={geo}
+                zIndex={zByApp[appId] ?? 10}
+                interacting={interactingId === appId}
+                stageSize={stageSize}
                 getDockIconRect={getDockIconRect}
-                onMaximize={() => setMaxByApp(m => ({ ...m, [appId]: !(m[appId] ?? true) }))}
-                onMinimize={minimizeWindow}
-                onClose={closeWindow}
+                onMaximize={() => { bringToFront(appId); setMaxByApp(m => ({ ...m, [appId]: !(m[appId] ?? true) })); }}
+                onMinimize={() => minimizeApp(appId)}
+                onClose={() => closeApp(appId)}
+                onBringToFront={() => bringToFront(appId)}
+                onChangeGeo={(partial) => setGeoFor(appId, partial)}
+                onInteractStart={() => setInteractingId(appId)}
+                onInteractEnd={() => setInteractingId(null)}
                 canManage={app.kind === 'app'}
                 mgmtOpen={activeId === appId && mgmtOpen}
                 onToggleMgmt={() => setMgmtOpen(o => !o)}
               >
                 {appId === 'dashboard' && <DashboardApp onOpenApp={launchApp}/>}
                 {appId === 'store'     && <AppStore onOpenApp={launchApp} authed={authed} onRequireAuth={requireAuth}/>}
+                {appId === 'compose-manager' && <ComposeManager authed={authed} onRequireAuth={requireAuth}
+                  onOpenStore={() => launchApp({ id: 'store' })} onOpenApp={launchApp}/>}
                 {appId === 'alerts'    && <AlertCenter authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'audit'     && <AuditLog/>}
                 {appId === 'supervisor'&& <Supervisor/>}
@@ -460,7 +536,7 @@ export default function App() {
                 {appId === 'hardware'  && <Hardware/>}
                 {appId === 'links'     && <Links/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','alerts','audit','supervisor','virtual-machines','hardware','links','diag','settings'].includes(appId)
+                {!['dashboard','store','compose-manager','alerts','audit','supervisor','virtual-machines','hardware','links','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)}/>}
 

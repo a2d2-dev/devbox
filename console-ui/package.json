@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "vitest run && node --test src/lib/compose.test.js",
     "test:unit": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

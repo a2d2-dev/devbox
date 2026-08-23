@@ -13,6 +13,7 @@ import DiskManager from '../pages/DiskManager'
 import NetworkConnections from '../pages/NetworkConnections'
 import MonitoringApp from '../pages/Monitoring'
 import AIActivity from '../pages/AIActivity'
+import BrowserFace from '../pages/Browser'
 
 // Reusable face header
 function FaceHeader({ accent = T.blue, title, subtitle, version, kb, onMgmt, extra, errorMode }) {
@@ -103,6 +104,7 @@ function AppShellContent({ appId, app, authed, onRequireAuth, onOpenManagement }
   if (appId === 'network-connections') return <NetworkConnections/>;
   if (appId === 'monitoring') return <MonitoringApp/>;
   if (appId === 'ai-activity') return <AIActivity/>;
+  if (appId === 'browser')   return <BrowserFace/>;
   // Generic iframe fallback for any installed app with a HostPort
   if (app) return <IframeFace app={app} onMgmt={onOpenManagement}/>;
   return null;

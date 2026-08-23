@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => ({
     setupFiles: './src/test/setup.js',
     css: false,
     restoreMocks: true,
-    exclude: ['e2e/**', 'node_modules/**'],
+    exclude: ['e2e/**', 'node_modules/**', 'src/lib/compose.test.js'],
   },
   plugins: [
     mode !== 'test' && codeInspectorPlugin({ bundler: 'vite' }),
