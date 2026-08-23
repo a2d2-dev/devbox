@@ -16,6 +16,7 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/alerts"
 	"github.com/a2d2-dev/devbox/pkg/apps"
 	"github.com/a2d2-dev/devbox/pkg/auth"
+	"github.com/a2d2-dev/devbox/pkg/backup"
 	"github.com/a2d2-dev/devbox/pkg/collector"
 	"github.com/a2d2-dev/devbox/pkg/downloads"
 	"github.com/a2d2-dev/devbox/pkg/files"
@@ -54,6 +55,12 @@ type Config struct {
 	BrowserDataPath string `mapstructure:"browser_data_path"`
 	// BrowserInsecureTLS 浏览器代理是否跳过远端 TLS 校验（内网自签证书场景），默认 false。
 	BrowserInsecureTLS bool `mapstructure:"browser_insecure_tls"`
+	// BackupDataDir 保存备份任务与历史；空 = /var/lib/devbox/backup。
+	BackupDataDir string `mapstructure:"backup_data_dir"`
+	// BackupConcurrency 是备份与恢复共享的进程内并发上限；小于 1 时为 2。
+	BackupConcurrency int `mapstructure:"backup_concurrency"`
+	// BackupAllowedRoots 扩展本地备份/恢复目标允许根；WorkDir 与 /data 始终包含。
+	BackupAllowedRoots []string `mapstructure:"backup_allowed_roots"`
 	// SystemLogPath is the single persistent store for system and audit events.
 	// Empty uses /var/lib/devbox/system-events.jsonl.
 	SystemLogPath string `mapstructure:"system_log_path"`
@@ -84,6 +91,7 @@ type Server struct {
 	vmManager            *vms.Manager
 	browser              *browserStore // 浏览器应用的书签/历史持久化
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
+	backup               *backup.Manager
 	systemLog            *eventlog.Store
 	processResources     *processResourceSampler
 	sessionUsersMu       sync.RWMutex
@@ -110,6 +118,11 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 	systemLog, logErr := eventlog.New(logPath)
 	if logErr != nil {
 		logger.Error("System log unavailable", zap.String("path", logPath), zap.Error(logErr))
+	}
+	backupManager, backupErr := backup.NewManager(cfg.BackupDataDir, cfg.BackupConcurrency, logger,
+		backup.WithWorkDir(cfg.WorkDir), backup.WithAllowedTargetRoots(cfg.BackupAllowedRoots...))
+	if backupErr != nil {
+		logger.Warn("Backup manager unavailable; backup management disabled", zap.Error(backupErr))
 	}
 	s := &Server{
 		config:               cfg,
@@ -140,6 +153,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		webdav:           shares.NewWebDAVService(),
 		pendingRestores:  make(map[string]pendingRestore),
 		onboarding:       newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
+		backup:           backupManager,
 	}
 	if store, err := maintenance.NewStore("", cfg.WorkDir); err != nil {
 		logger.Error("Maintenance settings unavailable", zap.Error(err))
@@ -200,6 +214,9 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 
 // Start 启动 HTTP 服务器（阻塞，应在 goroutine 中调用）
 func (s *Server) Start(ctx context.Context) error {
+	if s.backup != nil {
+		s.backup.Start(ctx)
+	}
 	if s.downloadEngine != nil {
 		s.downloadEngine.Start(ctx)
 	}
@@ -327,6 +344,9 @@ func (s *Server) registerRoutes() {
 
 	// 浏览器应用（代理 + 书签/历史）
 	s.registerBrowserRoutes()
+
+	// 本机、外接设备与 rsync over SSH 备份任务。
+	s.registerBackupRoutes()
 
 	// 文件访问服务与系统维护（Issue #14）
 	s.registerMaintenanceRoutes()

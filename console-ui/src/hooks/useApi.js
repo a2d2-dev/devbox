@@ -844,6 +844,7 @@ async function readErr(r) {
         err.message = j.error;
         if (typeof j.reason === 'string') err.reason = j.reason;
         if (j.detail) err.detail = j.detail;
+        if (j.preflight) err.preflight = j.preflight;
         if (Array.isArray(j.findings)) err.findings = j.findings;
         return err;
       }
@@ -1019,6 +1020,45 @@ export function refreshCatalogSource(id) { return catalogSourceMutation(`/${enco
 // useCatalogApps：GET /catalogs/apps → []StoreApp（带 catalogId/catalogName/installable/installed）。
 export function useCatalogApps(interval = 30000) {
   return usePoll('/catalogs/apps', { interval, fallback: [] });
+}
+
+// ─── Backup tasks (Issue #17) ──────────────────────────────────
+
+export function useBackups(interval = 3000) {
+  return usePoll('/backups', { interval, fallback: [] });
+}
+
+export function useBackupHistory(taskId, interval = 3000) {
+  return usePoll(taskId ? `/backups/${encodeURIComponent(taskId)}/history` : null, { interval, fallback: [] });
+}
+
+export function useBackupVersions(taskId) {
+  return usePoll(taskId ? `/backups/${encodeURIComponent(taskId)}/versions` : null, { fallback: [] });
+}
+
+async function backupRequest(path, method = 'GET', body) {
+  const options = { method, headers: {} };
+  if (body !== undefined) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(body);
+  }
+  const response = await authFetch(`${API}${path}`, options);
+  if (!response.ok) throw await readErr(response);
+  return response.json();
+}
+
+export function preflightBackup(task) { return backupRequest('/backups/preflight', 'POST', task); }
+export function createBackup(task) { return backupRequest('/backups', 'POST', task); }
+export function runBackup(id) { return backupRequest(`/backups/${encodeURIComponent(id)}/run`, 'POST'); }
+export function pauseBackup(id, paused) { return backupRequest(`/backups/${encodeURIComponent(id)}/pause`, 'POST', { paused }); }
+export function fetchBackupLog(taskId, historyId) {
+  return backupRequest(`/backups/${encodeURIComponent(taskId)}/history/${encodeURIComponent(historyId)}/log`);
+}
+export function previewBackupRestore(taskId, request) {
+  return backupRequest(`/backups/${encodeURIComponent(taskId)}/restore/preview`, 'POST', request);
+}
+export function restoreBackup(taskId, request) {
+  return backupRequest(`/backups/${encodeURIComponent(taskId)}/restore`, 'POST', request);
 }
 
 // refreshCatalogs：POST /catalogs 显式刷新所有已配置 source（不接受 URL 入参）。

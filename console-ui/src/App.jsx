@@ -49,6 +49,7 @@ import Supervisor from './pages/Supervisor'
 import VirtualMachines from './pages/VirtualMachines'
 import Hardware from './pages/Hardware'
 import Links from './pages/Links'
+import Backup from './pages/Backup'
 import Downloads from './pages/Downloads'
 import Diagnostics from './pages/Settings'
 import { AppShell } from './components/AppShell'
@@ -600,9 +601,10 @@ export default function App() {
                 {appId === 'virtual-machines' && <VirtualMachines/>}
                 {appId === 'hardware'  && <Hardware/>}
                 {appId === 'links'     && <Links/>}
+                {appId === 'backup'    && <Backup/>}
                 {appId === 'downloads' && <Downloads/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','links','downloads','diag','settings'].includes(appId)
+                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','links','backup','downloads','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp}/>}
 

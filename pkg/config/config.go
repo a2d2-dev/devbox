@@ -37,6 +37,9 @@ type ConsoleConfig struct {
 	BrowserDataPath      string   `mapstructure:"browser_data_path"`      // 浏览器书签/历史 JSON 路径；空 = /etc/devbox/browser.json
 	BrowserInsecureTLS   bool     `mapstructure:"browser_insecure_tls"`   // 浏览器代理是否跳过远端 TLS 校验（内网自签证书）
 	TrustedProxies       []string `mapstructure:"trusted_proxies"`        // 可解析 X-Forwarded-For 的可信反向代理 IP/CIDR
+	BackupDataDir        string   `mapstructure:"backup_data_dir"`        // 备份状态与专用 keys 目录；默认 /var/lib/devbox/backup
+	BackupConcurrency    int      `mapstructure:"backup_concurrency"`     // 备份与恢复共享并发上限；默认 2
+	BackupAllowedRoots   []string `mapstructure:"backup_allowed_roots"`   // 本地目标扩展允许根；work_dir 与 /data 始终包含
 }
 
 // KubernetesConfig 可选的 K8s 集成（应用市场 / Pod 管理）。
@@ -117,6 +120,8 @@ func Load(configFile string) (*Config, error) {
 	v.BindEnv("console.supervisor_conf_dir", "DEVBOX_SUPERVISOR_CONF_DIR")
 	v.BindEnv("console.browser_data_path", "DEVBOX_CONSOLE_BROWSER_DATA_PATH")
 	v.BindEnv("console.browser_insecure_tls", "DEVBOX_CONSOLE_BROWSER_INSECURE_TLS")
+	v.BindEnv("console.backup_data_dir", "DEVBOX_CONSOLE_BACKUP_DATA_DIR")
+	v.BindEnv("console.backup_concurrency", "DEVBOX_CONSOLE_BACKUP_CONCURRENCY")
 	v.BindEnv("console.trusted_proxies", "DEVBOX_CONSOLE_TRUSTED_PROXIES")
 	v.BindEnv("kubernetes.kubeconfig", "DEVBOX_KUBECONFIG")
 	v.BindEnv("kubernetes.namespace", "DEVBOX_NAMESPACE")
@@ -158,6 +163,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("console.links_path", "/etc/devbox/links.yaml")
 	v.SetDefault("console.browser_data_path", "/etc/devbox/browser.json")
 	v.SetDefault("console.browser_insecure_tls", false)
+	v.SetDefault("console.backup_data_dir", "/var/lib/devbox/backup")
+	v.SetDefault("console.backup_concurrency", 2)
+	v.SetDefault("console.backup_allowed_roots", []string{})
 
 	v.SetDefault("kubernetes.kubeconfig", "")
 	v.SetDefault("kubernetes.namespace", "default")

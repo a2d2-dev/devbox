@@ -126,6 +126,9 @@ func main() {
 		LinksPath:            cfg.Console.LinksPath,
 		BrowserDataPath:      cfg.Console.BrowserDataPath,
 		BrowserInsecureTLS:   cfg.Console.BrowserInsecureTLS,
+		BackupDataDir:        cfg.Console.BackupDataDir,
+		BackupConcurrency:    cfg.Console.BackupConcurrency,
+		BackupAllowedRoots:   cfg.Console.BackupAllowedRoots,
 		Catalogs:             catalogs,
 		CatalogSourceManager: catalogSourceManager,
 	}, col, appController, storeMgr)

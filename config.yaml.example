@@ -20,6 +20,8 @@ console:
   # 下载任务也以此为根目录；状态保存到 <work_dir>/.devbox/downloads.json。
   # WebDAV 与 SMB 共享目录同样受此数据根约束（包括符号链接解析后的真实路径）。
   work_dir: "/data"
+  # 备份任务状态默认保存于 /var/lib/devbox/backup，备份/恢复共享 2 个并发槽。
+  # 当前二进制使用该固定默认值；详细语义见 docs/backup.md。
   # 仅来自这些 IP/CIDR 的请求会解析 X-Forwarded-For；默认空列表。
   trusted_proxies: []
   # 下载默认拒绝私网、回环、链路本地及组播地址；仅可信内网场景显式开启。

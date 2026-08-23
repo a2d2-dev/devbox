@@ -19,6 +19,7 @@ export const SYSTEM_APPS = [
   { id: 'docker',              kind: 'system', name: 'Docker',   icon: 'server',    color: '#2563eb', bg: 'linear-gradient(160deg,#3b82f6,#0f766e)' },
   { id: 'compose-manager',     kind: 'system', name: 'Compose 应用', icon: 'apps', color: '#0891b2', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
   { id: 'files',               kind: 'system', name: '文件',     icon: 'folder',    color: '#0891b2', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
+  { id: 'backup',              kind: 'system', name: '备份',     icon: 'layers',    color: '#047857', bg: 'linear-gradient(160deg,#34d399,#047857)' },
   { id: 'downloads',           kind: 'system', name: '下载',     icon: 'download',  color: '#2563eb', bg: 'linear-gradient(160deg,#60a5fa,#2563eb)' },
   { id: 'processes',           kind: 'system', name: '进程',     icon: 'cpu',       color: '#475569', bg: 'linear-gradient(160deg,#64748b,#1e293b)' },
   { id: 'supervisor',          kind: 'system', name: '进程守护', icon: 'shield',    color: '#0d9488', bg: 'linear-gradient(160deg,#14b8a6,#0f766e)' },
