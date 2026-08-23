@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Icon } from '../icons'
+import { localLoginInputError } from './loginValidation'
 
 // humanizeAuthError 把 /auth/login 失败响应映射成给用户看的中文提示。
 // OIDC 标准 error code 直接返「invalid_grant」/「invalid_client」这种术语
@@ -48,6 +49,9 @@ function humanizeAuthError(data) {
 export function LoginScreen({ onLogin, deviceName }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+	const [accessCode, setAccessCode] = useState('')
+	const [otp, setOTP] = useState('')
+	const [authRequirements, setAuthRequirements] = useState({ passwordRequired: true, accessCodeRequired: false, twoFactorRequired: false })
 	const [showPwd, setShowPwd] = useState(false)
 	const [persistence, setPersistence] = useState('persistent')
 	const [showResetHelp, setShowResetHelp] = useState(false)
@@ -80,22 +84,44 @@ export function LoginScreen({ onLogin, deviceName }) {
     return () => { cancelled = true }
   }, [])
 
-  // devbox 本地认证：用户名/密码 + session token；旧单密码配置仍由后端兼容。
-  // 未启用密码 (config auth.password 为空) 时后端会直接返 {authenticated:true, token:""}
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/v1/auth/status')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!cancelled && d) setAuthRequirements({
+          passwordRequired: !!d.passwordRequired,
+          accessCodeRequired: !!d.accessCodeRequired,
+          twoFactorRequired: !!d.twoFactorRequired,
+        })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  // Local credentials are checked first; access code and TOTP follow before
+  // the server creates a session.
   const submit = async (e) => {
     if (e) e.preventDefault()
     if (phase !== 'idle') return
     const cleanPassword = password.trim()
-    if (!username || !cleanPassword) { setError('请输入账号与密码'); return }
+    const inputError = localLoginInputError(username, cleanPassword, authRequirements.passwordRequired)
+    if (inputError) { setError(inputError); return }
     setError('')
     setPhase('verifying')
     try {
       const r = await fetch('/api/v1/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password: cleanPassword }),
+        body: JSON.stringify({ username: username.trim(), password: cleanPassword, accessCode, otp }),
       })
       const data = await r.json().catch(() => ({}))
+      if (data.twoFactorRequired) {
+        setAuthRequirements(current => ({ ...current, twoFactorRequired: true }))
+        setError(data.message || '请输入动态验证码或恢复码')
+        setPhase('idle')
+        return
+      }
       if (!r.ok || !data.authenticated) {
         setError(data.message || '密码错误')
         setPhase('idle')
@@ -200,21 +226,39 @@ export function LoginScreen({ onLogin, deviceName }) {
                   <Field icon="user" value={username} onChange={setUsername}
                     placeholder="本地账号" type="text" autoFocus autoComplete="username"/>
                 </div>
-                <div>
-                  <label style={lblStyle}>密码</label>
-                  <Field
-                    icon="lock" type={showPwd ? 'text' : 'password'}
-                    value={password} onChange={setPassword}
-                    placeholder="登录密码" autoComplete="current-password"
-                    trailing={
-                      <button type="button" onClick={() => setShowPwd(v => !v)} style={{
-                        border: 'none', background: 'transparent', cursor: 'pointer',
-                        color: showPwd ? T.blue : T.ink4, padding: 4, display: 'flex',
-                      }} aria-label={showPwd ? '隐藏密码' : '显示密码'}>
-                        <Icon name="eye" size={16} stroke={1.8}/>
-                      </button>
-                    }/>
-                </div>
+                {authRequirements.passwordRequired && (
+                  <div>
+                    <label style={lblStyle}>密码</label>
+                    <Field
+                      icon="lock" type={showPwd ? 'text' : 'password'}
+                      value={password} onChange={setPassword}
+                      placeholder="登录密码" autoComplete="current-password"
+                      trailing={
+                        <button type="button" onClick={() => setShowPwd(v => !v)} style={{
+                          border: 'none', background: 'transparent', cursor: 'pointer',
+                          color: showPwd ? T.blue : T.ink4, padding: 4, display: 'flex',
+                        }} aria-label={showPwd ? '隐藏密码' : '显示密码'}>
+                          <Icon name="eye" size={16} stroke={1.8}/>
+                        </button>
+                      }/>
+                  </div>
+                )}
+
+                {authRequirements.accessCodeRequired && (
+                  <div>
+                    <label style={lblStyle}>访问码</label>
+                    <Field icon="shield" type="password" value={accessCode} onChange={setAccessCode}
+                      placeholder="共享访问码" autoComplete="off"/>
+                  </div>
+                )}
+
+                {authRequirements.twoFactorRequired && (
+                  <div>
+                    <label style={lblStyle}>双重验证码</label>
+                    <Field icon="key" type="text" value={otp} onChange={setOTP}
+                      placeholder="6 位动态码或恢复码" autoComplete="one-time-code"/>
+                  </div>
+                )}
 
 				{error && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: T.red, fontSize: 12 }}>
@@ -233,15 +277,15 @@ export function LoginScreen({ onLogin, deviceName }) {
 					</select>
 				</div>
 
-                <button type="submit" disabled={phase === 'verifying' || !username || !password} style={{
+                <button type="submit" disabled={phase === 'verifying' || !username || (authRequirements.passwordRequired && !password)} style={{
                   height: 46, marginTop: 6, borderRadius: 10, border: 'none',
-                  cursor: phase === 'verifying' || !username || !password ? 'default' : 'pointer',
-                  background: phase === 'verifying' || !username || !password
+                  cursor: phase === 'verifying' || !username || (authRequirements.passwordRequired && !password) ? 'default' : 'pointer',
+                  background: phase === 'verifying' || !username || (authRequirements.passwordRequired && !password)
                     ? '#cbd5e1'
                     : 'linear-gradient(150deg,#3b82f6,#1d4ed8)',
                   color: '#fff', fontSize: 14.5, fontWeight: 600,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9,
-                  boxShadow: phase === 'verifying' || !username || !password
+                  boxShadow: phase === 'verifying' || !username || (authRequirements.passwordRequired && !password)
                     ? 'none'
                     : '0 8px 20px -8px rgba(37,99,235,0.6)',
                   transition: 'background .15s, box-shadow .15s',
