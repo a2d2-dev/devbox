@@ -25,16 +25,17 @@ type AuthConfig struct {
 
 // ConsoleConfig 本地控制台 HTTP 服务的配置。
 type ConsoleConfig struct {
-	Enabled           bool   `mapstructure:"enabled"`             // 是否启用本地控制台
-	Port              int    `mapstructure:"port"`                // HTTP 监听端口
-	StaticDir         string `mapstructure:"static_dir"`          // 静态文件目录（空则使用 embed）
-	WorkDir           string `mapstructure:"work_dir"`            // 文件浏览器工作区根目录；空则默认 /data
-	ConsoleURL        string `mapstructure:"console_url"`         // 外部 Console 地址（用于图标代理，可选）
-	SupervisorSocket  string `mapstructure:"supervisor_socket"`   // supervisord Unix socket 路径
-	SupervisorConfDir string `mapstructure:"supervisor_conf_dir"` // supervisor conf.d 目录
-	LinksPath         string `mapstructure:"links_path"`          // 服务导航 YAML 路径；空 = /etc/devbox/links.yaml
-	BrowserDataPath   string `mapstructure:"browser_data_path"`    // 浏览器书签/历史 JSON 路径；空 = /etc/devbox/browser.json
-	BrowserInsecureTLS bool   `mapstructure:"browser_insecure_tls"` // 浏览器代理是否跳过远端 TLS 校验（内网自签证书）
+	Enabled              bool   `mapstructure:"enabled"`                // 是否启用本地控制台
+	Port                 int    `mapstructure:"port"`                   // HTTP 监听端口
+	StaticDir            string `mapstructure:"static_dir"`             // 静态文件目录（空则使用 embed）
+	WorkDir              string `mapstructure:"work_dir"`               // 文件浏览器工作区根目录；空则默认 /data
+	AllowPrivateNetworks bool   `mapstructure:"allow_private_networks"` // 下载是否允许访问私网地址；默认 false
+	ConsoleURL           string `mapstructure:"console_url"`            // 外部 Console 地址（用于图标代理，可选）
+	SupervisorSocket     string `mapstructure:"supervisor_socket"`      // supervisord Unix socket 路径
+	SupervisorConfDir    string `mapstructure:"supervisor_conf_dir"`    // supervisor conf.d 目录
+	LinksPath            string `mapstructure:"links_path"`             // 服务导航 YAML 路径；空 = /etc/devbox/links.yaml
+	BrowserDataPath      string `mapstructure:"browser_data_path"`      // 浏览器书签/历史 JSON 路径；空 = /etc/devbox/browser.json
+	BrowserInsecureTLS   bool   `mapstructure:"browser_insecure_tls"`   // 浏览器代理是否跳过远端 TLS 校验（内网自签证书）
 }
 
 // KubernetesConfig 可选的 K8s 集成（应用市场 / Pod 管理）。

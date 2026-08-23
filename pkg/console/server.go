@@ -10,17 +10,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/a2d2-dev/devbox/pkg/alerts"
 	"github.com/a2d2-dev/devbox/pkg/apps"
 	"github.com/a2d2-dev/devbox/pkg/auth"
 	"github.com/a2d2-dev/devbox/pkg/collector"
+	"github.com/a2d2-dev/devbox/pkg/downloads"
 	"github.com/a2d2-dev/devbox/pkg/files"
 	"github.com/a2d2-dev/devbox/pkg/gpuhistory"
 	"github.com/a2d2-dev/devbox/pkg/hardware"
 	"github.com/a2d2-dev/devbox/pkg/links"
+	"github.com/a2d2-dev/devbox/pkg/maintenance"
 	"github.com/a2d2-dev/devbox/pkg/models"
+	"github.com/a2d2-dev/devbox/pkg/shares"
 	"github.com/a2d2-dev/devbox/pkg/supervisor"
 	"github.com/a2d2-dev/devbox/pkg/vms"
 	"go.uber.org/zap"
@@ -40,6 +44,8 @@ type Config struct {
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
+	// AllowPrivateNetworks 显式允许下载访问私网、回环和链路本地地址。
+	AllowPrivateNetworks bool `mapstructure:"allow_private_networks"`
 	// AppsDir 是 Compose 受管应用文件根，由 compose.data_dir 派生。
 	AppsDir string `mapstructure:"-"`
 	// BrowserDataPath 浏览器应用的书签/历史 JSON 路径；空 = /etc/devbox/browser.json。
@@ -73,6 +79,13 @@ type Server struct {
 	vmManager            *vms.Manager
 	browser              *browserStore // 浏览器应用的书签/历史持久化
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
+	maintenanceStore     *maintenance.Store
+	webdav               *shares.WebDAVService
+	notifier             maintenance.Notifier
+	restoreMu            sync.Mutex
+	pendingRestores      map[string]pendingRestore
+	downloadEngine       *downloads.Engine
+	downloadEngineError  string
 	onboarding           *onboardingStore
 }
 
@@ -94,14 +107,33 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 			Password:   cfg.AuthPassword,
 			SessionTTL: cfg.AuthSessionTTL,
 		}),
-		supervisorMgr: supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
-		hardware:      hardware.New(60 * time.Second),
-		links:         links.New(cfg.LinksPath),
-		gpuHistory:    gpuhistory.New(10*time.Second, 6*time.Hour),
-		vmManager:     vms.NewManager(),
-		browser:       newBrowserStore(cfg.BrowserDataPath),
-		browserClient: newBrowserClient(cfg.BrowserInsecureTLS),
-		onboarding:    newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
+		supervisorMgr:   supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
+		hardware:        hardware.New(60 * time.Second),
+		links:           links.New(cfg.LinksPath),
+		gpuHistory:      gpuhistory.New(10*time.Second, 6*time.Hour),
+		vmManager:       vms.NewManager(),
+		browser:         newBrowserStore(cfg.BrowserDataPath),
+		browserClient:   newBrowserClient(cfg.BrowserInsecureTLS),
+		webdav:          shares.NewWebDAVService(),
+		pendingRestores: make(map[string]pendingRestore),
+		onboarding:      newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
+	}
+	if store, err := maintenance.NewStore("", cfg.WorkDir); err != nil {
+		logger.Error("Maintenance settings unavailable", zap.Error(err))
+	} else {
+		s.maintenanceStore = store
+		s.notifier = maintenance.SMTPNotifier{Config: func() maintenance.SMTPConfig {
+			return store.Get().SMTP
+		}}
+	}
+	downloadEngine, err := downloads.New(downloads.Config{
+		RootDir: cfg.WorkDir, MaxConcurrent: 3, AllowPrivateNetworks: cfg.AllowPrivateNetworks,
+	})
+	if err != nil {
+		s.downloadEngineError = err.Error()
+		logger.Warn("Download engine unavailable", zap.Error(err))
+	} else {
+		s.downloadEngine = downloadEngine
 	}
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
@@ -143,6 +175,9 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 
 // Start 启动 HTTP 服务器（阻塞，应在 goroutine 中调用）
 func (s *Server) Start(ctx context.Context) error {
+	if s.downloadEngine != nil {
+		s.downloadEngine.Start(ctx)
+	}
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	srv := &http.Server{
 		Addr:              addr,
@@ -156,6 +191,9 @@ func (s *Server) Start(ctx context.Context) error {
 		s.logger.Info("Shutting down console HTTP server...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if s.webdav != nil {
+			_ = s.webdav.Stop(shutdownCtx)
+		}
 		srv.Shutdown(shutdownCtx)
 	}()
 
@@ -166,6 +204,14 @@ func (s *Server) Start(ctx context.Context) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+	if s.maintenanceStore != nil {
+		settings := s.maintenanceStore.Get()
+		if settings.WebDAV.Enabled {
+			if err := s.webdav.Start(s.config.WorkDir, settings.WebDAV, s.config.AuthPassword); err != nil {
+				s.logger.Warn("Configured WebDAV service could not start", zap.Error(err))
+			}
+		}
 	}
 
 	// 打印实际监听地址（端口 0 时有用）
@@ -256,6 +302,12 @@ func (s *Server) registerRoutes() {
 
 	// 浏览器应用（代理 + 书签/历史）
 	s.registerBrowserRoutes()
+
+	// 文件访问服务与系统维护（Issue #14）
+	s.registerMaintenanceRoutes()
+
+	// 下载任务中心
+	s.registerDownloadRoutes()
 
 	// 静态文件兜底
 	fileServer := http.FileServer(staticFS)
