@@ -691,6 +691,7 @@ function StoragePane({ data }) {
 		  )})}
 		</tbody>
 	  </table>
+	  {!disks.length && <div style={{ color: T.ink3, fontSize: 12, marginTop: 8 }}>未检测到物理硬盘，或当前环境无法读取 lsblk 信息。</div>}
 	</Section>
 	<Section title="数据目录与挂载点" cmd="findmnt --real">
 	  <table style={{ width: '100%', fontSize: 12.5, ...MONO, borderCollapse: 'collapse' }}><thead><tr style={{ color: T.ink3, textAlign: 'left', borderBottom: `1px solid ${T.border}` }}><th style={{ padding: '6px 4px' }}>路径</th><th>容量</th><th>已用</th><th>使用率</th><th>文件系统</th><th>所属磁盘</th></tr></thead><tbody>{mounts.map(m => <tr key={`${m.source}-${m.path}`} style={{ borderBottom: `1px dashed ${T.borderSoft}` }}><td style={{ padding: '7px 4px', color: T.ink2 }}>{m.path}</td><td>{fmtBytes(m.sizeBytes)}</td><td>{fmtBytes(m.usedBytes)}</td><td>{Number(m.usagePct).toFixed(0)}%</td><td>{m.fstype || '不支持'}</td><td>{m.disk || m.source || '不支持'}</td></tr>)}</tbody></table>

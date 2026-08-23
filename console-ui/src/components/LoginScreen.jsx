@@ -95,7 +95,7 @@ export function LoginScreen({ onLogin, deviceName }) {
       const r = await fetch('/api/v1/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-	        body: JSON.stringify({ username: username.trim(), password: cleanPassword }),
+        body: JSON.stringify({ username: username.trim(), password: cleanPassword }),
       })
       const data = await r.json().catch(() => ({}))
       if (!r.ok || !data.authenticated) {

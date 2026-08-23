@@ -386,20 +386,31 @@ func (s *Store) ListGroups(ctx context.Context, search string) ([]Group, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []Group{}
 	for rows.Next() {
 		var g Group
 		if err := rows.Scan(&g.ID, &g.Name, &g.Description); err != nil {
-			return nil, err
-		}
-		g.MemberIDs, err = listIDs(ctx, s.db, `SELECT user_id FROM group_members WHERE group_id=? ORDER BY user_id`, g.ID)
-		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, g)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// The store intentionally uses one SQLite connection. Finish the group
+	// result set before loading memberships so the nested queries can proceed.
+	for i := range out {
+		out[i].MemberIDs, err = listIDs(ctx, s.db, `SELECT user_id FROM group_members WHERE group_id=? ORDER BY user_id`, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) UpdateGroup(ctx context.Context, id, name, description string, members []string) (Group, error) {

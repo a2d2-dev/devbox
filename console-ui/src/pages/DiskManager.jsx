@@ -75,9 +75,9 @@ export default function DiskManager() {
         .then(d => { if (!stopped && Array.isArray(d)) { setDisks(d); setError(null); } })
         .catch(() => { safeSetError('磁盘信息读取失败（网络错误）'); })
 		.finally(() => { if (!stopped) setLoading(false); });
-	  authFetch('/api/v1/hardware').then(r => r.ok ? r.json() : null).then(h => {
-		if (!stopped && h?.storage) setHardwareByPath(Object.fromEntries(h.storage.map(d => [d.path, d])));
-	  }).catch(() => {});
+      authFetch('/api/v1/hardware').then(r => r.ok ? r.json() : null).then(h => {
+        if (!stopped && h?.storage) setHardwareByPath(Object.fromEntries(h.storage.map(d => [d.path, d])));
+      }).catch(() => { /* Existing disk data remains usable when enrichment is unavailable. */ });
     }
     load();
     const id = setInterval(load, 30000); // 磁盘变化不频繁，30s 轮询
