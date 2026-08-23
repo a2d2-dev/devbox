@@ -3,6 +3,8 @@ import { Icon } from '../icons'
 import { StatusDot, useClock } from './ui'
 import { AppIcon } from './AppIcon'
 import { MemoWidget } from './MemoWidget'
+import { SystemStatusWidget } from './SystemStatusWidget'
+import { WelcomeWidget } from './WelcomeWidget'
 
 // ─── Clock + Calendar widget ────────────────────────────────────
 function ClockCalendarWidget() {
@@ -221,7 +223,7 @@ function DeviceInfoCard({ DEVICE }) {
   );
 }
 
-function RunningChip({ running, error }) {
+function RunningChip({ error }) {
   if (error > 0) {
     return (
       <span style={{
@@ -280,8 +282,47 @@ function AppGrid({ apps, onOpen, iconStyle, accent, iconPx = 76, tilePx = 104, l
   );
 }
 
+function DeployedApps({ apps, loading, error, onRetry, onOpen, iconStyle, accent, iconPx, tilePx, labelSize }) {
+  if (apps.length > 0) {
+    return <AppGrid apps={apps} onOpen={onOpen} iconStyle={iconStyle} accent={accent}
+      iconPx={iconPx} tilePx={tilePx} labelSize={labelSize}/>;
+  }
+  const unavailable = !!error;
+  const title = loading ? '正在读取服务状态' : unavailable ? '服务状态暂不可用' : '服务未配置';
+  const description = loading ? '正在从 DevBox 获取已部署应用。' : unavailable
+    ? '应用列表接口请求失败，其他桌面功能仍可使用。'
+    : '尚未部署应用，可从应用商店选择服务。';
+  return (
+    <div className="desktop-deployed-empty" style={{ minHeight: 96, padding: '18px 20px', borderRadius: 8,
+      border: `1px dashed ${T.border}`, background: 'rgba(255,255,255,0.55)',
+      display: 'flex', alignItems: 'center', gap: 14 }}>
+      <div style={{ width: 38, height: 38, borderRadius: 8, background: '#f1f5f9',
+        color: T.ink3, display: 'grid', placeItems: 'center' }}>
+        <Icon name="apps" size={18} stroke={1.7}/>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>{title}</div>
+        <div style={{ marginTop: 3, fontSize: 11, color: T.ink3 }}>{description}</div>
+      </div>
+      {!loading && <button type="button" onClick={() => unavailable ? onRetry?.() : onOpen({ id: 'store' })} style={{
+        height: 32, padding: '0 12px', border: 'none', borderRadius: 6,
+        background: T.blue, color: '#fff', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+      }}>{unavailable ? '重试' : '打开应用商店'}</button>}
+    </div>
+  );
+}
+
+function DesktopWidgets({ onOpenApp, deviceName }) {
+  return <>
+    <SystemStatusWidget
+      onOpenMonitoring={() => onOpenApp({ id: 'monitoring' })}
+      onOpenStorage={() => onOpenApp({ id: 'disks' })}/>
+    <WelcomeWidget onOpenApp={onOpenApp} deviceName={deviceName}/>
+  </>;
+}
+
 // ─── Desktop ────────────────────────────────────────────────────
-export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, iconStyle = 'gradient', accent = '#2563eb', layout = 'workstation', iconSize = 'md', APPS, RECENT_IDS, DEVICE }) {
+export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsLoading, deployedAppsError, onRetryDeployedApps, showRecent = true, iconStyle = 'gradient', accent = '#2563eb', layout = 'workstation', iconSize = 'md', APPS, RECENT_IDS, DEVICE }) {
   const runningCount = deployedApps.filter(a => a.state === 'running').length;
   const errorCount   = deployedApps.filter(a => a.state === 'error').length;
 
@@ -293,7 +334,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
   // ─── Launcher layout: single full-width column, larger icons, no right sidebar
   if (layout === 'launcher') {
     return (
-      <div style={{
+      <div className="desktop-layout desktop-layout-launcher" style={{
         flex: 1, padding: '40px 56px 110px',
         display: 'flex', flexDirection: 'column', gap: 32,
         overflow: 'auto', alignContent: 'start',
@@ -304,7 +345,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
         </Section>
         <Section label="已部署应用" meta="云端下发"
           right={<RunningChip running={runningCount} error={errorCount}/>}>
-          <AppGrid apps={deployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+          <DeployedApps apps={deployedApps} loading={deployedAppsLoading} error={deployedAppsError} onRetry={onRetryDeployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
             iconPx={Math.max(iconPx, 88)} tilePx={tilePx + 12} labelSize={labelSize}/>
         </Section>
         {showRecent && (
@@ -314,6 +355,9 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
               onOpen={onOpenApp} variant="row"/>
           </Section>
         )}
+        <div className="desktop-launcher-widgets" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(280px, 1fr))', gap: 14 }}>
+          <DesktopWidgets onOpenApp={onOpenApp} deviceName={DEVICE.name}/>
+        </div>
       </div>
     );
   }
@@ -321,7 +365,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
   // ─── Compact: denser grid, smaller spacing, dual column with smaller widgets
   if (layout === 'compact') {
     return (
-      <div style={{
+      <div className="desktop-layout desktop-layout-grid" style={{
         flex: 1, padding: '20px 36px 110px',
         display: 'grid', gridTemplateColumns: '1fr 280px', gap: 22,
         overflow: 'auto', alignContent: 'start',
@@ -333,7 +377,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
           </Section>
           <Section label="已部署应用" meta="云端下发"
             right={<RunningChip running={runningCount} error={errorCount}/>}>
-            <AppGrid apps={deployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+            <DeployedApps apps={deployedApps} loading={deployedAppsLoading} error={deployedAppsError} onRetry={onRetryDeployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
               iconPx={Math.min(iconPx, 64)} tilePx={Math.min(tilePx, 94)} labelSize={11}/>
           </Section>
           {showRecent && (
@@ -344,8 +388,9 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
             </Section>
           )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="desktop-sidebar" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <ClockCalendarWidget/>
+          <DesktopWidgets onOpenApp={onOpenApp} deviceName={DEVICE.name}/>
           <DeviceInfoCard DEVICE={DEVICE}/>
           <MemoWidget/>
         </div>
@@ -355,7 +400,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
 
   // ─── Workstation (default): two-column with full widgets
   return (
-    <div style={{
+    <div className="desktop-layout desktop-layout-grid" style={{
       flex: 1, position: 'relative',
       padding: '28px 48px 110px',
       display: 'grid', gridTemplateColumns: '1fr 340px', gap: 32,
@@ -369,7 +414,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
 
         <Section label="已部署应用" meta="云端下发"
           right={<RunningChip running={runningCount} error={errorCount}/>}>
-          <AppGrid apps={deployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+          <DeployedApps apps={deployedApps} loading={deployedAppsLoading} error={deployedAppsError} onRetry={onRetryDeployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
             iconPx={iconPx} tilePx={tilePx} labelSize={labelSize}/>
         </Section>
 
@@ -382,8 +427,9 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
         )}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="desktop-sidebar" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <ClockCalendarWidget/>
+        <DesktopWidgets onOpenApp={onOpenApp} deviceName={DEVICE.name}/>
         <DeviceInfoCard DEVICE={DEVICE}/>
         <MemoWidget/>
       </div>
