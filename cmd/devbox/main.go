@@ -114,6 +114,8 @@ func main() {
 		Port:                 cfg.Console.Port,
 		StaticDir:            cfg.Console.StaticDir,
 		WorkDir:              cfg.Console.WorkDir,
+		AllowPrivateNetworks: cfg.Console.AllowPrivateNetworks,
+		AppsDir:              filepath.Join(cfg.Compose.DataDir, "apps"),
 		SupervisorSocket:     cfg.Console.SupervisorSocket,
 		SupervisorConfDir:    cfg.Console.SupervisorConfDir,
 		ConsoleURL:           cfg.Console.ConsoleURL,

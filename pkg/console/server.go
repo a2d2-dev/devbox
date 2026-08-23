@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/apps"
 	"github.com/a2d2-dev/devbox/pkg/auth"
 	"github.com/a2d2-dev/devbox/pkg/collector"
+	"github.com/a2d2-dev/devbox/pkg/downloads"
 	"github.com/a2d2-dev/devbox/pkg/files"
 	"github.com/a2d2-dev/devbox/pkg/gpuhistory"
 	"github.com/a2d2-dev/devbox/pkg/hardware"
@@ -42,6 +44,10 @@ type Config struct {
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
+	// AllowPrivateNetworks 显式允许下载访问私网、回环和链路本地地址。
+	AllowPrivateNetworks bool `mapstructure:"allow_private_networks"`
+	// AppsDir 是 Compose 受管应用文件根，由 compose.data_dir 派生。
+	AppsDir string `mapstructure:"-"`
 	// BrowserDataPath 浏览器应用的书签/历史 JSON 路径；空 = /etc/devbox/browser.json。
 	BrowserDataPath string `mapstructure:"browser_data_path"`
 	// BrowserInsecureTLS 浏览器代理是否跳过远端 TLS 校验（内网自签证书场景），默认 false。
@@ -78,6 +84,9 @@ type Server struct {
 	notifier             maintenance.Notifier
 	restoreMu            sync.Mutex
 	pendingRestores      map[string]pendingRestore
+	downloadEngine       *downloads.Engine
+	downloadEngineError  string
+	onboarding           *onboardingStore
 }
 
 // NewServer 创建控制台服务器
@@ -91,7 +100,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		storeManager:         storeMgr,
 		catalogs:             cfg.Catalogs,
 		catalogSourceManager: cfg.CatalogSourceManager,
-		fileBrowser:          files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
+		fileBrowser:          files.NewBrowser(files.Config{RootDir: cfg.WorkDir, AppsDir: cfg.AppsDir}),
 		modelScanner:         models.NewScanner(models.Config{}),
 		alertEngine:          alerts.NewEngine(col),
 		auth: auth.New(auth.Config{
@@ -107,6 +116,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		browserClient:   newBrowserClient(cfg.BrowserInsecureTLS),
 		webdav:          shares.NewWebDAVService(),
 		pendingRestores: make(map[string]pendingRestore),
+		onboarding:      newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
 	}
 	if store, err := maintenance.NewStore("", cfg.WorkDir); err != nil {
 		logger.Error("Maintenance settings unavailable", zap.Error(err))
@@ -115,6 +125,15 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		s.notifier = maintenance.SMTPNotifier{Config: func() maintenance.SMTPConfig {
 			return store.Get().SMTP
 		}}
+	}
+	downloadEngine, err := downloads.New(downloads.Config{
+		RootDir: cfg.WorkDir, MaxConcurrent: 3, AllowPrivateNetworks: cfg.AllowPrivateNetworks,
+	})
+	if err != nil {
+		s.downloadEngineError = err.Error()
+		logger.Warn("Download engine unavailable", zap.Error(err))
+	} else {
+		s.downloadEngine = downloadEngine
 	}
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
@@ -142,6 +161,7 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 		// devbox 侧固定返回"离线"占位，无敏感数据，公开访问以避免登录页 401 噪音。
 		if !strings.HasPrefix(p, "/api/v1/") ||
 			strings.HasPrefix(p, "/api/v1/auth/") ||
+			strings.HasPrefix(p, "/api/v1/files/public/") ||
 			p == "/api/v1/health" ||
 			p == "/api/v1/device" ||
 			p == "/api/v1/cloud/status" ||
@@ -155,6 +175,9 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 
 // Start 启动 HTTP 服务器（阻塞，应在 goroutine 中调用）
 func (s *Server) Start(ctx context.Context) error {
+	if s.downloadEngine != nil {
+		s.downloadEngine.Start(ctx)
+	}
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	srv := &http.Server{
 		Addr:              addr,
@@ -273,6 +296,7 @@ func (s *Server) registerRoutes() {
 
 	// 认证路由
 	s.registerAuthRoutes()
+	s.registerOnboardingRoutes()
 
 	// 浏览器应用（代理 + 书签/历史）
 	s.registerBrowserRoutes()
@@ -280,9 +304,19 @@ func (s *Server) registerRoutes() {
 	// 文件访问服务与系统维护（Issue #14）
 	s.registerMaintenanceRoutes()
 
+	// 下载任务中心
+	s.registerDownloadRoutes()
+
 	// 静态文件兜底
 	fileServer := http.FileServer(staticFS)
 	s.mux.Handle("/", fileServer)
+}
+
+func onboardingPath(browserDataPath string) string {
+	if browserDataPath == "" {
+		return "/etc/devbox/onboarding.json"
+	}
+	return filepath.Join(filepath.Dir(browserDataPath), "onboarding.json")
 }
 
 // --- JSON helpers ---

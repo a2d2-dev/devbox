@@ -48,6 +48,7 @@ import Supervisor from './pages/Supervisor'
 import VirtualMachines from './pages/VirtualMachines'
 import Hardware from './pages/Hardware'
 import Links from './pages/Links'
+import Downloads from './pages/Downloads'
 import Diagnostics from './pages/Settings'
 import { AppShell } from './components/AppShell'
 import AppMgmtDrawer from './components/AppMgmtDrawer'
@@ -55,7 +56,7 @@ import { AuthModal } from './components/AuthModal'
 import { LoginScreen } from './components/LoginScreen'
 import { ToastProvider } from './components/Toast'
 import { TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakToggle, TweakColor } from './components/TweaksPanel'
-import { useMetrics, useMetricsHistory, useApps, useAlerts, useDevice, setAuthToken, getAuthToken, clearAuth, setOnAuthExpired } from './hooks/useApi'
+import { useMetrics, useMetricsHistory, useApps, useAlerts, useDevice, setAuthToken, getAuthToken, clearAuth, setOnAuthExpired, setAuthRequired } from './hooks/useApi'
 import { SYSTEM_APPS } from './data/systemApps'
 import { AnimatePresence } from './motion'
 import { ShortcutHelpDialog } from './components/ShortcutHelpDialog'
@@ -146,28 +147,62 @@ function clampGeo(g, vw, vh) {
 }
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(() => !!getAuthToken());
-  const [loginUser, setLoginUser] = useState('');
+	const [loggedIn, setLoggedIn] = useState(false);
+	const [authChecking, setAuthChecking] = useState(true);
+	const [loginUser, setLoginUser] = useState('');
   const overlayStack = useOverlayStack();
 
-  const handleLogin = (token, username) => {
-    setAuthToken(token);
-    setLoginUser(username);
-    setLoggedIn(true);
+	const handleLogin = (token, username, persistence = 'persistent') => {
+		setAuthRequired(!!token);
+		setAuthToken(token, persistence);
+		setLoginUser(username);
+		setLoggedIn(true);
+		setAuthChecking(false);
   };
 
   const handleLogout = () => {
-    clearAuth();
+		clearAuth();
+		setAuthRequired(true);
     setLoggedIn(false);
     setLoginUser('');
   };
 
-  useEffect(() => {
-    setOnAuthExpired(() => {
-      setLoggedIn(false);
-      setLoginUser('');
-    });
-  }, []);
+	useEffect(() => {
+		setOnAuthExpired(() => {
+			setLoggedIn(false);
+			setLoginUser('');
+			setAuthChecking(false);
+		});
+		return () => setOnAuthExpired(null);
+	}, []);
+
+	useEffect(() => {
+		let cancelled = false;
+		const token = getAuthToken();
+		fetch('/api/v1/auth/status', {
+			headers: token ? { Authorization: `Bearer ${token}` } : {},
+		})
+			.then(async (response) => response.ok ? response.json() : null)
+			.then((status) => {
+				if (cancelled) return;
+				const authRequired = status?.enabled !== false;
+				setAuthRequired(authRequired);
+				if (status && (!status.enabled || status.authenticated)) {
+					setLoggedIn(true);
+				} else {
+					clearAuth();
+					setLoggedIn(false);
+				}
+			})
+			.catch(() => {
+				if (!cancelled) {
+					clearAuth();
+					setLoggedIn(false);
+				}
+			})
+			.finally(() => { if (!cancelled) setAuthChecking(false); });
+		return () => { cancelled = true; };
+	}, []);
 
   const [t, setT] = useTweaks(TWEAK_DEFAULTS);
 
@@ -321,10 +356,19 @@ export default function App() {
     setMgmtOpen(false);
   };
 
+  const minimizeWindow = () => {
+    if (activeId) minimizeApp(activeId);
+  };
+
+  const closeWindow = () => {
+    if (activeId) closeApp(activeId);
+  };
+
   // Live data from API hooks
   const metricsHook = useMetrics();
   const { data: metricsHistoryData } = useMetricsHistory();
-  const { data: liveApps } = useApps();
+	const appsHook = useApps(10000, loggedIn);
+	const { data: liveApps } = appsHook;
   const { data: liveAlerts } = useAlerts();
   const { data: liveDevice } = useDevice();
 
@@ -394,7 +438,15 @@ export default function App() {
     context: { activeId, dockApps: shortcutDockApps },
   });
 
-  if (!loggedIn) {
+	if (authChecking) {
+		return (
+			<div style={{ width: '100vw', height: '100vh', display: 'grid', placeItems: 'center', background: '#f8fafc', color: T.ink3, fontSize: 13 }}>
+				正在恢复控制台会话…
+			</div>
+		);
+	}
+
+	if (!loggedIn) {
     return (
       <ToastProvider>
         <LoginScreen onLogin={handleLogin} deviceName={device.deviceName || device.hostname}/>
@@ -479,7 +531,10 @@ export default function App() {
               launchApp(app);
             }}
             sysApps={sysApps}
-            deployedApps={deployedApps}
+			deployedApps={deployedApps}
+			deployedAppsLoading={appsHook.loading}
+			deployedAppsError={appsHook.error}
+			onRetryDeployedApps={appsHook.refresh}
             APPS={apps}
             RECENT_IDS={[]}
             DEVICE={device}
@@ -535,8 +590,9 @@ export default function App() {
                 {appId === 'virtual-machines' && <VirtualMachines/>}
                 {appId === 'hardware'  && <Hardware/>}
                 {appId === 'links'     && <Links/>}
+                {appId === 'downloads' && <Downloads/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','compose-manager','alerts','audit','supervisor','virtual-machines','hardware','links','diag','settings'].includes(appId)
+                {!['dashboard','store','compose-manager','alerts','audit','supervisor','virtual-machines','hardware','links','downloads','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)}/>}
 
