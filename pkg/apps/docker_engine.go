@@ -28,6 +28,18 @@ import (
 
 const defaultDockerSocket = "/var/run/docker.sock"
 
+const dockerEngineRequestTimeout = 8 * time.Second
+
+type dockerAPIError struct {
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *dockerAPIError) Error() string {
+	return fmt.Sprintf("GET %s: status %d: %s", e.Path, e.StatusCode, e.Body)
+}
+
 // dockerEngine Docker Engine 只读客户端。
 type dockerEngine struct {
 	baseURL string
@@ -53,7 +65,7 @@ func newDockerEngine(endpoint string) *dockerEngine {
 		baseURL: baseURL,
 		client: &http.Client{
 			Transport: tr,
-			Timeout:   30 * time.Second,
+			Timeout:   dockerEngineRequestTimeout,
 		},
 	}
 }
@@ -124,10 +136,58 @@ type enginePort struct {
 	Type        string `json:"Type"`
 }
 
+type engineInfo struct {
+	ServerVersion     string `json:"ServerVersion"`
+	Containers        int    `json:"Containers"`
+	ContainersRunning int    `json:"ContainersRunning"`
+	ContainersPaused  int    `json:"ContainersPaused"`
+	ContainersStopped int    `json:"ContainersStopped"`
+	DockerRootDir     string `json:"DockerRootDir"`
+	MemTotal          int64  `json:"MemTotal"`
+}
+
+type engineContainerStats struct {
+	CPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+		OnlineCPUs     uint32 `json:"online_cpus"`
+	} `json:"cpu_stats"`
+	PreCPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+	} `json:"precpu_stats"`
+	MemoryStats struct {
+		Usage uint64 `json:"usage"`
+		Limit uint64 `json:"limit"`
+	} `json:"memory_stats"`
+	Networks map[string]struct {
+		RxBytes uint64 `json:"rx_bytes"`
+		TxBytes uint64 `json:"tx_bytes"`
+	} `json:"networks"`
+}
+
+func (e *dockerEngine) info(ctx context.Context) (engineInfo, error) {
+	var info engineInfo
+	err := e.getJSON(ctx, "/info", nil, &info)
+	return info, err
+}
+
 // listContainers 列出容器（all=true 含停止），可选按 label 过滤。
 func (e *dockerEngine) listContainers(ctx context.Context, labelFilters []string) ([]engineContainer, error) {
+	return e.listContainersAll(ctx, true, labelFilters)
+}
+
+func (e *dockerEngine) listContainersAll(ctx context.Context, all bool, labelFilters []string) ([]engineContainer, error) {
 	q := url.Values{}
-	q.Set("all", "1")
+	if all {
+		q.Set("all", "1")
+	} else {
+		q.Set("all", "0")
+	}
 	if len(labelFilters) > 0 {
 		filters := map[string][]string{"label": labelFilters}
 		b, _ := json.Marshal(filters)
@@ -138,6 +198,15 @@ func (e *dockerEngine) listContainers(ctx context.Context, labelFilters []string
 		return nil, err
 	}
 	return list, nil
+}
+
+func (e *dockerEngine) containerStats(ctx context.Context, id string) (engineContainerStats, error) {
+	q := url.Values{}
+	q.Set("stream", "false")
+	q.Set("one-shot", "true")
+	var stats engineContainerStats
+	err := e.getJSON(ctx, "/containers/"+url.PathEscape(id)+"/stats", q, &stats)
+	return stats, err
 }
 
 // containerLogs 取容器日志（demultiplex Docker 流式帧）。
@@ -185,7 +254,7 @@ func (e *dockerEngine) getJSON(ctx context.Context, path string, q url.Values, o
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("GET %s: status %d: %s", path, resp.StatusCode, string(b))
+		return &dockerAPIError{Path: path, StatusCode: resp.StatusCode, Body: string(b)}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

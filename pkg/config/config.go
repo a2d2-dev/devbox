@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/viper"
 )
@@ -49,11 +50,12 @@ type KubernetesConfig struct {
 // ComposeConfig Docker Compose 应用管理（Issue #2）。
 // Compose 与 K8s 并列；Compose 默认启用，Docker 不可用时仅该运行时降级，不影响 K8s。
 type ComposeConfig struct {
-	Enabled      bool                  `mapstructure:"enabled"`       // 默认 true
-	DataDir      string                `mapstructure:"data_dir"`      // 数据根（apps.db + apps/<id>）；默认 /var/lib/devbox
-	DockerSocket string                `mapstructure:"docker_socket"` // Docker daemon unix socket；默认 /var/run/docker.sock
-	Catalogs     []CatalogSourceConfig `mapstructure:"catalogs"`      // 第三方 HTTP/Git catalog source（Issue #2 阶段4 扩展）
-	CatalogPoll  int                   `mapstructure:"catalog_poll"`  // catalog 周期同步间隔（秒）；0=不同步，<=0 关闭周期刷新
+	Enabled               bool                  `mapstructure:"enabled"`                 // 默认 true
+	DataDir               string                `mapstructure:"data_dir"`                // 数据根（apps.db + apps/<id>）；默认 /var/lib/devbox
+	DockerSocket          string                `mapstructure:"docker_socket"`           // Docker daemon unix socket；默认 /var/run/docker.sock
+	MigrationAllowedRoots []string              `mapstructure:"migration_allowed_roots"` // Docker data-root 迁移目标白名单
+	Catalogs              []CatalogSourceConfig `mapstructure:"catalogs"`                // 第三方 HTTP/Git catalog source（Issue #2 阶段4 扩展）
+	CatalogPoll           int                   `mapstructure:"catalog_poll"`            // catalog 周期同步间隔（秒）；0=不同步，<=0 关闭周期刷新
 }
 
 // CatalogSourceConfig 第三方 Docker Compose catalog source 配置。
@@ -122,6 +124,7 @@ func Load(configFile string) (*Config, error) {
 	v.BindEnv("compose.enabled", "DEVBOX_COMPOSE_ENABLED")
 	v.BindEnv("compose.data_dir", "DEVBOX_COMPOSE_DATA_DIR")
 	v.BindEnv("compose.docker_socket", "DEVBOX_COMPOSE_DOCKER_SOCKET")
+	v.BindEnv("compose.migration_allowed_roots", "DEVBOX_COMPOSE_MIGRATION_ALLOWED_ROOTS")
 	v.BindEnv("compose.catalog_poll", "DEVBOX_COMPOSE_CATALOG_POLL")
 	v.BindEnv("auth.password", "DEVBOX_AUTH_PASSWORD")
 	v.BindEnv("auth.session_ttl", "DEVBOX_AUTH_SESSION_TTL")
@@ -162,6 +165,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("compose.enabled", true)
 	v.SetDefault("compose.data_dir", "/var/lib/devbox")
 	v.SetDefault("compose.docker_socket", "/var/run/docker.sock")
+	v.SetDefault("compose.migration_allowed_roots", []string{"/data", "/var/lib"})
 	// catalog 周期同步间隔（秒）。0=仅启动时同步一次 + 显式 refresh，不做周期刷新。
 	v.SetDefault("compose.catalog_poll", 300)
 
@@ -177,6 +181,11 @@ func (c *Config) Validate() error {
 	if c.Console.Enabled {
 		if c.Console.Port <= 0 || c.Console.Port > 65535 {
 			return fmt.Errorf("console.port must be between 1 and 65535")
+		}
+	}
+	for i, root := range c.Compose.MigrationAllowedRoots {
+		if !filepath.IsAbs(root) {
+			return fmt.Errorf("compose.migration_allowed_roots[%d] must be an absolute path", i)
 		}
 	}
 	for i, cat := range c.Compose.Catalogs {

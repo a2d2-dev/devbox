@@ -109,6 +109,7 @@ type service struct {
 	now        func() time.Time
 	mutationMu sync.Mutex
 	mutations  map[string]*sync.Mutex
+	docker     *DockerManager
 }
 
 // ServiceOption 构造选项。
@@ -129,6 +130,11 @@ func WithTakeoverPrechecker(p takeoverPrechecker) ServiceOption {
 	return func(s *service) { s.takeover = p }
 }
 
+// WithDockerManager 注入与 Compose 共用端点的 Docker 主机管理能力。
+func WithDockerManager(m *DockerManager) ServiceOption {
+	return func(s *service) { s.docker = m }
+}
+
 // NewController 构造 Controller。adapters 至少含一个运行时；runner 由 worker 提供。
 func NewController(repo Repository, paths *Paths, adapters map[RuntimeKind]runtimeAdapter, runner taskRunner, logger *zap.Logger, opts ...ServiceOption) Controller {
 	s := &service{
@@ -143,7 +149,55 @@ func NewController(repo Repository, paths *Paths, adapters map[RuntimeKind]runti
 	for _, o := range opts {
 		o(s)
 	}
+	if s.docker == nil {
+		if compose, ok := adapters[RuntimeCompose].(*composeRuntime); ok {
+			runner := realDockerCommandRunner{}
+			s.docker = newDockerManagerWithDeps(compose.engine, &systemDockerServiceHost{runner: runner}, &osDockerStorage{daemonPath: defaultDaemonJSON}, runner)
+		}
+	}
 	return s
+}
+
+func (s *service) DockerOverview(ctx context.Context) (DockerOverview, error) {
+	if s.docker == nil {
+		return DockerOverview{Service: DockerServiceSummary{State: DockerServiceNotInstalled, Diagnostic: "Docker 管理能力未装配"}, CheckedAt: s.now()}, nil
+	}
+	return s.docker.Overview(ctx)
+}
+
+func (s *service) DockerStats(ctx context.Context) (DockerStats, error) {
+	if s.docker == nil {
+		return DockerStats{Diagnostic: "Docker 管理能力未装配", SampledAt: s.now()}, nil
+	}
+	return s.docker.Stats(ctx)
+}
+
+func (s *service) DockerServiceAction(ctx context.Context, req DockerServiceActionRequest) (DockerOverview, error) {
+	if s.docker == nil {
+		return DockerOverview{}, CapabilityErr("Docker 管理能力未装配")
+	}
+	return s.docker.ServiceAction(ctx, req)
+}
+
+func (s *service) SetDockerAutostart(ctx context.Context, req DockerAutostartRequest) (DockerOverview, error) {
+	if s.docker == nil {
+		return DockerOverview{}, CapabilityErr("Docker 管理能力未装配")
+	}
+	return s.docker.SetAutostart(ctx, req)
+}
+
+func (s *service) PlanDockerMigration(ctx context.Context, req DockerMigrationRequest) (DockerMigrationPlan, error) {
+	if s.docker == nil {
+		return DockerMigrationPlan{}, CapabilityErr("Docker 管理能力未装配")
+	}
+	return s.docker.MigrationPlan(ctx, req)
+}
+
+func (s *service) ExecuteDockerMigration(ctx context.Context, req DockerMigrationExecuteRequest) (DockerMigrationResult, error) {
+	if s.docker == nil {
+		return DockerMigrationResult{}, CapabilityErr("Docker 管理能力未装配")
+	}
+	return s.docker.ExecuteMigration(ctx, req)
 }
 
 func (s *service) lockMutation(appID string) func() {

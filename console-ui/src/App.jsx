@@ -42,6 +42,7 @@ import AppWindow, { btnSecondary, btnPrimary } from './components/AppWindow'
 import DashboardApp from './pages/Dashboard'
 import AppStore from './pages/AppStore'
 import { ComposeManager } from './pages/ComposeManager'
+import DockerOverview from './pages/DockerOverview'
 import AlertCenter from './pages/AlertCenter'
 import AuditLog from './pages/AuditLog'
 import Supervisor from './pages/Supervisor'
@@ -591,6 +592,8 @@ export default function App() {
                 {appId === 'store'     && <AppStore onOpenApp={launchApp} authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'compose-manager' && <ComposeManager authed={authed} onRequireAuth={requireAuth}
                   onOpenStore={() => launchApp({ id: 'store' })} onOpenApp={launchApp}/>}
+                {appId === 'docker' && <DockerOverview onRequireAuth={requireAuth}
+                  onOpenCompose={() => launchApp({ id: 'compose-manager' })}/>}
                 {appId === 'alerts'    && <AlertCenter authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'audit'     && <AuditLog/>}
                 {appId === 'supervisor'&& <Supervisor onOpenApp={launchApp}/>}
@@ -599,7 +602,7 @@ export default function App() {
                 {appId === 'links'     && <Links/>}
                 {appId === 'downloads' && <Downloads/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','compose-manager','alerts','audit','supervisor','virtual-machines','hardware','links','downloads','diag','settings'].includes(appId)
+                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','links','downloads','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp}/>}
 

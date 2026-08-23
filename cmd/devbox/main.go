@@ -56,12 +56,13 @@ func main() {
 	var appController apps.Controller
 	var appCleanup func()
 	if c, cleanup, err := apps.AssembleController(ctx, apps.ControllerConfig{
-		DataDir:           cfg.Compose.DataDir,
-		DockerSocket:      cfg.Compose.DockerSocket,
-		ComposeEnabled:    cfg.Compose.Enabled,
-		Kubeconfig:        cfg.Kubernetes.Kubeconfig,
-		Namespace:         cfg.Kubernetes.Namespace,
-		KubernetesEnabled: true,
+		DataDir:                     cfg.Compose.DataDir,
+		DockerSocket:                cfg.Compose.DockerSocket,
+		DockerMigrationAllowedRoots: cfg.Compose.MigrationAllowedRoots,
+		ComposeEnabled:              cfg.Compose.Enabled,
+		Kubeconfig:                  cfg.Kubernetes.Kubeconfig,
+		Namespace:                   cfg.Kubernetes.Namespace,
+		KubernetesEnabled:           true,
 	}, logger); err != nil {
 		logger.Warn("App controller unavailable; app management disabled", zap.Error(err))
 	} else {

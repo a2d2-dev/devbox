@@ -507,6 +507,7 @@ type Error struct {
 	Reason  string // 机器可读原因码（如 "revision_mismatch" / "idempotency_conflict"）
 	Message string
 	Cause   error
+	Detail  string // 可操作诊断摘要；不得包含 secret 或配置正文
 	// Findings 仅 ErrKindRiskBlocked 携带：阻断/需确认的具体风险项。内容仅含
 	// 字段名与脱敏描述（不含 compose 正文 / secret 值），可安全回传调用方。
 	Findings []RiskFinding
@@ -549,6 +550,11 @@ func RiskBlockedErr(msg string, findings []RiskFinding) *Error {
 // CapabilityErr 运行时不可用（→ HTTP 503）。
 func CapabilityErr(msg string) *Error {
 	return newErr(ErrKindCapability, "unavailable", msg, nil)
+}
+
+// CapabilityDetailErr 返回带机器可读原因和可操作诊断的运行能力错误。
+func CapabilityDetailErr(reason, msg, detail string, cause error) *Error {
+	return &Error{Kind: ErrKindCapability, Reason: reason, Message: msg, Detail: detail, Cause: cause}
 }
 
 // AsError 解包到 *Error；非领域错误返回 nil kind。
