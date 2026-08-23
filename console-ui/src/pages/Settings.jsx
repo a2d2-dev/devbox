@@ -245,7 +245,7 @@ function MaintenancePage({ settings, setSettings, currentVersion, save, busy, me
   const confirmRestore = async () => {
     const response = await authFetch('/api/v1/maintenance/restore/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: restore.token, confirmation: restorePhrase }) })
     if (!response.ok) return setAction({ text: await responseMessage(response), error: true })
-    setRestore(null); setAction({ text: (await response.json()).message })
+    setRestore(null); setAction({ text: (await response.json()).message }); window.setTimeout(() => window.location.reload(), 800)
   }
   const reset = async () => {
     const response = await authFetch('/api/v1/maintenance/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: resetChecked, phrase: resetPhrase }) })

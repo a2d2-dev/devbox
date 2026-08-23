@@ -13,6 +13,18 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/shares"
 )
 
+func TestDefaultSMTPValuesMatchDisplayedFormValues(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(t.TempDir(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Get().SMTP
+	if got.Port != 587 || got.TLS != "starttls" {
+		t.Fatalf("default SMTP config = %+v, want port 587 with STARTTLS", got)
+	}
+}
+
 func TestSMTPPasswordEncryptedAndRedactedExport(t *testing.T) {
 	dir := t.TempDir()
 	root := t.TempDir()

@@ -96,6 +96,7 @@ func defaultSettings(dataRoot string) Settings {
 	return Settings{
 		SchemaVersion: currentSchema,
 		WebDAV:        shares.WebDAVConfig{Port: 19000, Path: dataRoot},
+		SMTP:          SMTPConfig{Port: 587, TLS: "starttls"},
 		Updates:       UpdateConfig{CheckEnabled: true, Repository: "a2d2-dev/devbox"},
 		DefaultApps:   map[string]string{"text/plain": "browser", "application/json": "browser"},
 	}
@@ -217,6 +218,12 @@ func normalizeSettings(state Settings, dataRoot string) Settings {
 	}
 	if state.WebDAV.Path == "" {
 		state.WebDAV.Path = dataRoot
+	}
+	if state.SMTP.Port == 0 {
+		state.SMTP.Port = 587
+	}
+	if state.SMTP.TLS == "" {
+		state.SMTP.TLS = "starttls"
 	}
 	if state.Updates.Repository == "" {
 		state.Updates.Repository = "a2d2-dev/devbox"
