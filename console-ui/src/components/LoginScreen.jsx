@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Icon } from '../icons'
+import { localLoginInputError } from './loginValidation'
 
 // humanizeAuthError 把 /auth/login 失败响应映射成给用户看的中文提示。
 // OIDC 标准 error code 直接返「invalid_grant」/「invalid_client」这种术语
@@ -50,7 +51,7 @@ export function LoginScreen({ onLogin, deviceName }) {
   const [password, setPassword] = useState('')
   const [accessCode, setAccessCode] = useState('')
   const [otp, setOTP] = useState('')
-  const [authRequirements, setAuthRequirements] = useState({ accessCodeRequired: false, twoFactorRequired: false })
+  const [authRequirements, setAuthRequirements] = useState({ passwordRequired: true, accessCodeRequired: false, twoFactorRequired: false })
   const [showPwd, setShowPwd] = useState(false)
   const [phase, setPhase] = useState('idle') // idle | verifying | success
   const [error, setError] = useState('')
@@ -89,19 +90,18 @@ export function LoginScreen({ onLogin, deviceName }) {
     let cancelled = false
     fetch('/api/v1/auth/status')
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (!cancelled && d) setAuthRequirements({ accessCodeRequired: !!d.accessCodeRequired, twoFactorRequired: !!d.twoFactorRequired }) })
+      .then(d => { if (!cancelled && d) setAuthRequirements({ passwordRequired: !!d.passwordRequired, accessCodeRequired: !!d.accessCodeRequired, twoFactorRequired: !!d.twoFactorRequired }) })
       .catch(() => {})
     return () => { cancelled = true }
   }, [])
 
-  // devbox 本地认证：单密码 + session token。
-  // 后端 /api/v1/auth/verify 只校验 password，username 只做前端展示。
-  // 未启用密码 (config auth.password 为空) 时后端会直接返 {authenticated:true, token:""}
+  // devbox 本地认证按状态要求密码、访问码和 TOTP，全部通过后才返回 session token。
   const submit = async (e) => {
     if (e) e.preventDefault()
     if (phase !== 'idle') return
     const cleanPassword = password.trim()
-    if (!username || !cleanPassword) { setError('请输入账号与密码'); return }
+    const inputError = localLoginInputError(username, cleanPassword, authRequirements.passwordRequired)
+    if (inputError) { setError(inputError); return }
     setError('')
     setPhase('verifying')
     try {
@@ -111,7 +111,7 @@ export function LoginScreen({ onLogin, deviceName }) {
         body: JSON.stringify({ password: cleanPassword, accessCode, otp }),
       })
       const data = await r.json().catch(() => ({}))
-      if (r.status === 428 && data.twoFactorRequired) {
+      if (data.twoFactorRequired) {
         setAuthRequirements(v => ({ ...v, twoFactorRequired: true }))
         setError(data.message || '请输入动态验证码或恢复码')
         setPhase('idle')
@@ -223,21 +223,23 @@ export function LoginScreen({ onLogin, deviceName }) {
                   <Field icon="user" value={username} onChange={setUsername}
                     placeholder="本地账号" type="text" autoFocus autoComplete="username"/>
                 </div>
-                <div>
-                  <label style={lblStyle}>密码</label>
-                  <Field
-                    icon="lock" type={showPwd ? 'text' : 'password'}
-                    value={password} onChange={setPassword}
-                    placeholder="登录密码" autoComplete="current-password"
-                    trailing={
-                      <button type="button" onClick={() => setShowPwd(v => !v)} style={{
-                        border: 'none', background: 'transparent', cursor: 'pointer',
-                        color: showPwd ? T.blue : T.ink4, padding: 4, display: 'flex',
-                      }} aria-label={showPwd ? '隐藏密码' : '显示密码'}>
-                        <Icon name="eye" size={16} stroke={1.8}/>
-                      </button>
-                    }/>
-                </div>
+                {authRequirements.passwordRequired && (
+                  <div>
+                    <label style={lblStyle}>密码</label>
+                    <Field
+                      icon="lock" type={showPwd ? 'text' : 'password'}
+                      value={password} onChange={setPassword}
+                      placeholder="登录密码" autoComplete="current-password"
+                      trailing={
+                        <button type="button" onClick={() => setShowPwd(v => !v)} style={{
+                          border: 'none', background: 'transparent', cursor: 'pointer',
+                          color: showPwd ? T.blue : T.ink4, padding: 4, display: 'flex',
+                        }} aria-label={showPwd ? '隐藏密码' : '显示密码'}>
+                          <Icon name="eye" size={16} stroke={1.8}/>
+                        </button>
+                      }/>
+                  </div>
+                )}
 
                 {authRequirements.accessCodeRequired && (
                   <div>
@@ -261,15 +263,15 @@ export function LoginScreen({ onLogin, deviceName }) {
                   </div>
                 )}
 
-                <button type="submit" disabled={phase === 'verifying' || !username || !password} style={{
+                <button type="submit" disabled={phase === 'verifying' || !username || (authRequirements.passwordRequired && !password)} style={{
                   height: 46, marginTop: 6, borderRadius: 10, border: 'none',
-                  cursor: phase === 'verifying' || !username || !password ? 'default' : 'pointer',
-                  background: phase === 'verifying' || !username || !password
+                  cursor: phase === 'verifying' || !username || (authRequirements.passwordRequired && !password) ? 'default' : 'pointer',
+                  background: phase === 'verifying' || !username || (authRequirements.passwordRequired && !password)
                     ? '#cbd5e1'
                     : 'linear-gradient(150deg,#3b82f6,#1d4ed8)',
                   color: '#fff', fontSize: 14.5, fontWeight: 600,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9,
-                  boxShadow: phase === 'verifying' || !username || !password
+                  boxShadow: phase === 'verifying' || !username || (authRequirements.passwordRequired && !password)
                     ? 'none'
                     : '0 8px 20px -8px rgba(37,99,235,0.6)',
                   transition: 'background .15s, box-shadow .15s',

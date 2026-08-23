@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,6 +32,7 @@ type Certificate struct {
 type CertificateManager struct {
 	Dir string
 	Now func() time.Time
+	mu  sync.Mutex
 }
 
 func NewCertificateManager(dir string) *CertificateManager {
@@ -42,7 +44,10 @@ func (m *CertificateManager) Paths(name string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	certPath, keyPath := filepath.Join(m.Dir, name+".crt"), filepath.Join(m.Dir, name+".key")
+	certPath, keyPath := filepath.Join(m.Dir, name, "certificate.crt"), filepath.Join(m.Dir, name, "private.key")
+	if !fileExists(certPath) || !fileExists(keyPath) {
+		certPath, keyPath = filepath.Join(m.Dir, name+".crt"), filepath.Join(m.Dir, name+".key")
+	}
 	if !fileExists(certPath) || !fileExists(keyPath) {
 		return "", "", errors.New("bound certificate or private key is missing")
 	}
@@ -56,6 +61,21 @@ func (m *CertificateManager) List() []Certificate {
 	}
 	var result []Certificate
 	for _, entry := range entries {
+		if entry.IsDir() {
+			if strings.HasPrefix(entry.Name(), ".certificate-") {
+				continue
+			}
+			name := entry.Name()
+			b, err := os.ReadFile(filepath.Join(m.Dir, name, "certificate.crt"))
+			if err != nil {
+				continue
+			}
+			cert, err := parseCertificate(b)
+			if err == nil {
+				result = append(result, m.describe(name, cert))
+			}
+			continue
+		}
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".crt" {
 			continue
 		}
@@ -79,13 +99,29 @@ func (m *CertificateManager) Upload(name string, certPEM, keyPEM []byte) (Certif
 		return Certificate{}, err
 	}
 	name = info.Name
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if err := os.MkdirAll(m.Dir, 0700); err != nil {
 		return Certificate{}, err
 	}
-	if err := atomicWrite(filepath.Join(m.Dir, name+".crt"), certPEM, 0644); err != nil {
+	target := filepath.Join(m.Dir, name)
+	if _, err := os.Stat(target); err == nil {
+		return Certificate{}, errors.New("certificate already exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return Certificate{}, err
 	}
-	if err := atomicWrite(filepath.Join(m.Dir, name+".key"), keyPEM, 0600); err != nil {
+	tmp, err := os.MkdirTemp(m.Dir, ".certificate-"+name+"-")
+	if err != nil {
+		return Certificate{}, err
+	}
+	defer os.RemoveAll(tmp)
+	if err := os.WriteFile(filepath.Join(tmp, "certificate.crt"), certPEM, 0644); err != nil {
+		return Certificate{}, err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "private.key"), keyPEM, 0600); err != nil {
+		return Certificate{}, err
+	}
+	if err := os.Rename(tmp, target); err != nil {
 		return Certificate{}, err
 	}
 	info.HasKey = true
@@ -107,6 +143,13 @@ func (m *CertificateManager) Validate(name string, certPEM, keyPEM []byte) (Cert
 	}
 	if !publicKeysEqual(cert.PublicKey, key.Public()) {
 		return Certificate{}, errors.New("certificate and private key do not match")
+	}
+	now := m.Now()
+	if now.Before(cert.NotBefore) {
+		return Certificate{}, errors.New("certificate is not valid yet")
+	}
+	if !now.Before(cert.NotAfter) {
+		return Certificate{}, errors.New("certificate has expired")
 	}
 	return m.describe(name, cert), nil
 }
@@ -163,7 +206,8 @@ func (m *CertificateManager) ValidateSelfSigned(name string, hosts []string, val
 
 func (m *CertificateManager) describe(name string, cert *x509.Certificate) Certificate {
 	days := int(cert.NotAfter.Sub(m.Now()).Hours() / 24)
-	return Certificate{Name: name, Subject: cert.Subject.String(), DNSNames: cert.DNSNames, NotBefore: cert.NotBefore, NotAfter: cert.NotAfter, DaysLeft: days, Expiring: days < 30, HasKey: fileExists(filepath.Join(m.Dir, name+".key")), SelfSigned: cert.Subject.String() == cert.Issuer.String() && cert.CheckSignature(cert.SignatureAlgorithm, cert.RawTBSCertificate, cert.Signature) == nil}
+	_, _, pathErr := m.Paths(name)
+	return Certificate{Name: name, Subject: cert.Subject.String(), DNSNames: cert.DNSNames, NotBefore: cert.NotBefore, NotAfter: cert.NotAfter, DaysLeft: days, Expiring: days < 30, HasKey: pathErr == nil, SelfSigned: cert.Subject.String() == cert.Issuer.String() && cert.CheckSignature(cert.SignatureAlgorithm, cert.RawTBSCertificate, cert.Signature) == nil}
 }
 
 func parseCertificate(data []byte) (*x509.Certificate, error) {

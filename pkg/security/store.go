@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -20,7 +21,10 @@ import (
 
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+	"golang.org/x/crypto/bcrypt"
 )
+
+const RedactedCredentialRef = "env:REDACTED"
 
 type Settings struct {
 	HTTPPort             int    `json:"httpPort"`
@@ -29,7 +33,6 @@ type Settings struct {
 	MaxUploadBytesSec    int64  `json:"maxUploadBytesSec"`
 	MaxDownloadBytesSec  int64  `json:"maxDownloadBytesSec"`
 	AccessCodeEnabled    bool   `json:"accessCodeEnabled"`
-	ForceTwoFactor       bool   `json:"forceTwoFactor"`
 	HTTPSCertificate     string `json:"httpsCertificate"`
 	AccessCodeConfigured bool   `json:"accessCodeConfigured"`
 	TOTPEnabled          bool   `json:"totpEnabled"`
@@ -48,16 +51,22 @@ type persisted struct {
 }
 
 type Store struct {
-	mu      sync.RWMutex
-	path    string
-	keyPath string
-	key     []byte
-	data    persisted
-	loaded  bool
+	mu           sync.RWMutex
+	path         string
+	keyPath      string
+	key          []byte
+	data         persisted
+	loaded       bool
+	consumedTOTP map[totpUse]struct{}
+}
+
+type totpUse struct {
+	step int64
+	code string
 }
 
 func NewStore(path, keyPath string) (*Store, error) {
-	s := &Store{path: path, keyPath: keyPath}
+	s := &Store{path: path, keyPath: keyPath, consumedTOTP: make(map[totpUse]struct{})}
 	if err := s.loadKey(); err != nil {
 		return nil, err
 	}
@@ -118,7 +127,23 @@ func (s *Store) loadKey() error {
 func (s *Store) Settings() Settings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.data.Settings
+	settings := s.data.Settings
+	if settings.DDNSCredentialRef != "" {
+		settings.DDNSCredentialRef = RedactedCredentialRef
+	}
+	return settings
+}
+
+func (s *Store) ProtectionEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.AccessCodeEnabled || s.data.TOTPEnabled
+}
+
+func (s *Store) DDNSCredentialRef() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.DDNSCredentialRef
 }
 
 type SettingsUpdate struct {
@@ -129,7 +154,6 @@ type SettingsUpdate struct {
 	MaxDownloadBytesSec int64  `json:"maxDownloadBytesSec"`
 	AccessCodeEnabled   bool   `json:"accessCodeEnabled"`
 	AccessCode          string `json:"accessCode,omitempty"`
-	ForceTwoFactor      bool   `json:"forceTwoFactor"`
 	HTTPSCertificate    string `json:"httpsCertificate"`
 	DDNSProvider        string `json:"ddnsProvider"`
 	DDNSDomain          string `json:"ddnsDomain"`
@@ -141,29 +165,44 @@ func (s *Store) Update(update SettingsUpdate) error {
 	if err := s.UpdatePreview(update); err != nil {
 		return err
 	}
+	var accessHash string
+	if update.AccessCode != "" {
+		var err error
+		accessHash, err = bcryptHash(strings.TrimSpace(update.AccessCode))
+		if err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data.HTTPPort = update.HTTPPort
-	s.data.HTTPSPort = update.HTTPSPort
-	s.data.ShareDomain = strings.TrimSpace(update.ShareDomain)
-	s.data.MaxUploadBytesSec = update.MaxUploadBytesSec
-	s.data.MaxDownloadBytesSec = update.MaxDownloadBytesSec
-	s.data.AccessCodeEnabled = update.AccessCodeEnabled
-	s.data.ForceTwoFactor = update.ForceTwoFactor
+	next := clonePersisted(s.data)
+	next.HTTPPort = update.HTTPPort
+	next.HTTPSPort = update.HTTPSPort
+	next.ShareDomain = strings.TrimSpace(update.ShareDomain)
+	next.MaxUploadBytesSec = update.MaxUploadBytesSec
+	next.MaxDownloadBytesSec = update.MaxDownloadBytesSec
+	next.AccessCodeEnabled = update.AccessCodeEnabled
 	if update.HTTPSCertificate == "" {
-		s.data.HTTPSCertificate = ""
+		next.HTTPSCertificate = ""
 	} else {
-		s.data.HTTPSCertificate = filepath.Base(update.HTTPSCertificate)
+		next.HTTPSCertificate = filepath.Base(update.HTTPSCertificate)
 	}
-	s.data.DDNSProvider = update.DDNSProvider
-	s.data.DDNSDomain = strings.TrimSpace(update.DDNSDomain)
-	s.data.DDNSCredentialRef = strings.TrimSpace(update.DDNSCredentialRef)
-	s.data.DDNSWebhookURL = strings.TrimSpace(update.DDNSWebhookURL)
+	next.DDNSProvider = update.DDNSProvider
+	next.DDNSDomain = strings.TrimSpace(update.DDNSDomain)
+	if strings.TrimSpace(update.DDNSCredentialRef) != RedactedCredentialRef {
+		next.DDNSCredentialRef = strings.TrimSpace(update.DDNSCredentialRef)
+	}
+	next.DDNSWebhookURL = strings.TrimSpace(update.DDNSWebhookURL)
 	if update.AccessCode != "" {
-		s.data.AccessCodeHash = hash(update.AccessCode)
+		next.AccessCodeHash = accessHash
 	}
-	s.syncPublicFlags()
-	return s.saveLocked()
+	syncPublicFlags(&next)
+	if err := s.saveDataLocked(next); err != nil {
+		return err
+	}
+	s.data = next
+	s.loaded = true
+	return nil
 }
 
 func (s *Store) UpdatePreview(update SettingsUpdate) error {
@@ -182,14 +221,19 @@ func (s *Store) UpdatePreview(update SettingsUpdate) error {
 			return errors.New("share domain must be an HTTP or HTTPS URL without credentials")
 		}
 	}
+	if update.DDNSCredentialRef != "" && update.DDNSCredentialRef != RedactedCredentialRef {
+		if err := validateCredentialReference(update.DDNSCredentialRef); err != nil {
+			return err
+		}
+	}
 	s.mu.RLock()
-	configured, totpEnabled := s.data.AccessCodeHash != "", s.data.TOTPEnabled
+	configured := s.data.AccessCodeHash != ""
 	s.mu.RUnlock()
 	if update.AccessCodeEnabled && strings.TrimSpace(update.AccessCode) == "" && !configured {
 		return errors.New("access code is required when enabling access-code protection")
 	}
-	if update.ForceTwoFactor && !totpEnabled {
-		return errors.New("enroll TOTP before forcing two-factor authentication")
+	if update.AccessCode != "" && len([]rune(strings.TrimSpace(update.AccessCode))) < 8 {
+		return errors.New("access code must be at least 8 characters")
 	}
 	return nil
 }
@@ -200,7 +244,7 @@ func (s *Store) VerifyAccessCode(code string) bool {
 	if !s.data.AccessCodeEnabled {
 		return true
 	}
-	return secureEqual(s.data.AccessCodeHash, hash(code))
+	return verifyHash(s.data.AccessCodeHash, strings.TrimSpace(code))
 }
 
 type Enrollment struct {
@@ -229,10 +273,12 @@ func (s *Store) BeginTOTP(issuer, account string) (Enrollment, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data.PendingTOTP = ciphertext
-	if err := s.saveLocked(); err != nil {
+	next := clonePersisted(s.data)
+	next.PendingTOTP = ciphertext
+	if err := s.saveDataLocked(next); err != nil {
 		return Enrollment{}, err
 	}
+	s.data = next
 	return Enrollment{Secret: key.Secret(), URI: key.URL(), QRDataURL: "data:image/png;base64," + encoded}, nil
 }
 
@@ -250,63 +296,92 @@ func (s *Store) ConfirmTOTP(code string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.data.TOTPSecret = s.data.PendingTOTP
-	s.data.PendingTOTP = ""
-	s.data.RecoveryHashes = hashes
-	s.syncPublicFlags()
-	if err := s.saveLocked(); err != nil {
+	next := clonePersisted(s.data)
+	next.TOTPSecret = next.PendingTOTP
+	next.PendingTOTP = ""
+	next.RecoveryHashes = hashes
+	syncPublicFlags(&next)
+	if err := s.saveDataLocked(next); err != nil {
 		return nil, err
 	}
+	s.data = next
 	return codes, nil
 }
 
-func (s *Store) VerifySecondFactor(value string, now time.Time) bool {
+func (s *Store) VerifySecondFactor(value string, now time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.data.TOTPEnabled {
-		return !s.data.ForceTwoFactor
+		return true, nil
 	}
 	secret, err := s.decrypt(s.data.TOTPSecret)
-	valid := false
-	if err == nil {
-		valid, _ = totp.ValidateCustom(strings.TrimSpace(value), secret, now, totp.ValidateOpts{Period: 30, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1})
+	if err != nil {
+		return false, err
 	}
-	if valid {
-		return true
+	code := strings.TrimSpace(value)
+	if step, valid := matchingTOTPStep(code, secret, now); valid {
+		use := totpUse{step: step, code: code}
+		if _, consumed := s.consumedTOTP[use]; consumed {
+			return false, nil
+		}
+		for old := range s.consumedTOTP {
+			if old.step < now.Unix()/30-1 {
+				delete(s.consumedTOTP, old)
+			}
+		}
+		s.consumedTOTP[use] = struct{}{}
+		return true, nil
 	}
-	wanted := hash(strings.ToUpper(strings.TrimSpace(value)))
+	wanted := strings.ToUpper(code)
 	for i, candidate := range s.data.RecoveryHashes {
-		if secureEqual(candidate, wanted) {
-			s.data.RecoveryHashes = append(s.data.RecoveryHashes[:i], s.data.RecoveryHashes[i+1:]...)
-			_ = s.saveLocked()
-			return true
+		if verifyHash(candidate, wanted) {
+			next := clonePersisted(s.data)
+			next.RecoveryHashes = append(next.RecoveryHashes[:i], next.RecoveryHashes[i+1:]...)
+			if err := s.saveDataLocked(next); err != nil {
+				return false, err
+			}
+			s.data = next
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (s *Store) DisableTOTP() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data.TOTPSecret, s.data.PendingTOTP, s.data.RecoveryHashes = "", "", nil
-	s.data.ForceTwoFactor = false
-	s.syncPublicFlags()
-	return s.saveLocked()
+	next := clonePersisted(s.data)
+	next.TOTPSecret, next.PendingTOTP, next.RecoveryHashes = "", "", nil
+	syncPublicFlags(&next)
+	if err := s.saveDataLocked(next); err != nil {
+		return err
+	}
+	s.data = next
+	s.consumedTOTP = make(map[totpUse]struct{})
+	return nil
 }
 
 func (s *Store) syncPublicFlags() {
-	s.data.AccessCodeConfigured = s.data.AccessCodeHash != ""
-	s.data.TOTPEnabled = s.data.TOTPSecret != ""
+	syncPublicFlags(&s.data)
+}
+
+func syncPublicFlags(data *persisted) {
+	data.AccessCodeConfigured = data.AccessCodeHash != ""
+	data.TOTPEnabled = data.TOTPSecret != ""
 }
 
 func (s *Store) saveLocked() error {
+	return s.saveDataLocked(s.data)
+}
+
+func (s *Store) saveDataLocked(data persisted) error {
 	if s.path == "" {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(s.data, "", "  ")
+	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -315,6 +390,11 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 	return os.Rename(tmp, s.path)
+}
+
+func clonePersisted(data persisted) persisted {
+	data.RecoveryHashes = append([]string(nil), data.RecoveryHashes...)
+	return data
 }
 
 func (s *Store) encrypt(value string) (string, error) {
@@ -369,13 +449,60 @@ func makeRecoveryCodes(count int) ([]string, []string, error) {
 	codes := make([]string, count)
 	hashes := make([]string, count)
 	for i := range codes {
-		b := make([]byte, 5)
+		b := make([]byte, 10)
 		if _, err := rand.Read(b); err != nil {
 			return nil, nil, err
 		}
-		raw := strings.ToUpper(hex.EncodeToString(b))
-		codes[i] = raw[:5] + "-" + raw[5:]
-		hashes[i] = hash(codes[i])
+		raw := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)
+		codes[i] = raw[:4] + "-" + raw[4:8] + "-" + raw[8:12] + "-" + raw[12:]
+		var err error
+		hashes[i], err = bcryptHash(codes[i])
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	return codes, hashes, nil
+}
+
+func bcryptHash(value string) (string, error) {
+	encoded, err := bcrypt.GenerateFromPassword([]byte(value), bcrypt.MinCost)
+	return string(encoded), err
+}
+
+func verifyHash(encoded, value string) bool {
+	if strings.HasPrefix(encoded, "$2") {
+		return bcrypt.CompareHashAndPassword([]byte(encoded), []byte(value)) == nil
+	}
+	return secureEqual(encoded, hash(value))
+}
+
+func matchingTOTPStep(code, secret string, now time.Time) (int64, bool) {
+	for _, offset := range []int{-1, 0, 1} {
+		candidateTime := now.Add(time.Duration(offset) * 30 * time.Second)
+		candidate, err := totp.GenerateCodeCustom(secret, candidateTime, totp.ValidateOpts{Period: 30, Skew: 0, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1})
+		if err == nil && secureEqual(candidate, code) {
+			return candidateTime.Unix() / 30, true
+		}
+	}
+	return 0, false
+}
+
+func validateCredentialReference(value string) error {
+	value = strings.TrimSpace(value)
+	scheme, target, ok := strings.Cut(value, ":")
+	if !ok || target == "" {
+		return errors.New("DDNS credential must use env:NAME or file:path")
+	}
+	if scheme == "env" {
+		for i, r := range target {
+			if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || i > 0 && r >= '0' && r <= '9') {
+				return errors.New("DDNS environment reference is invalid")
+			}
+		}
+		return nil
+	}
+	if scheme == "file" && strings.TrimSpace(target) == target && !strings.ContainsAny(target, "\r\n\x00") {
+		return nil
+	}
+	return errors.New("DDNS credential must use env:NAME or file:path")
 }

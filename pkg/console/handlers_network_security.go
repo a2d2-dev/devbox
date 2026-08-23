@@ -41,6 +41,8 @@ func (s *Server) handleRemoteAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	remote := s.network.RemoteAccess()
+	currentSessionIP := clientIP(r)
+	s.bans.SetProtectedIP(currentSessionIP)
 	https := remote.HTTPS
 	settings := s.security.Settings()
 	if settings.HTTPSCertificate != "" {
@@ -51,7 +53,7 @@ func (s *Server) handleRemoteAccess(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.jsonOK(w, map[string]any{"listeners": remote.Listeners, "tunnelIPs": remote.TunnelIPs, "https": https, "currentSessionIP": clientIP(r)})
+	s.jsonOK(w, map[string]any{"listeners": remote.Listeners, "tunnelIPs": remote.TunnelIPs, "https": https, "currentSessionIP": currentSessionIP})
 }
 
 func settingsDDNS(cfg security.Settings, echo string) devnetwork.DDNSConfig {
@@ -86,7 +88,9 @@ func (s *Server) handleDDNSUpdate(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	result, err := devnetwork.RunDDNSDry(settingsDDNS(s.security.Settings(), req.EchoCommand))
+	settings := s.security.Settings()
+	settings.DDNSCredentialRef = s.security.DDNSCredentialRef()
+	result, err := devnetwork.RunDDNSDry(settingsDDNS(settings, req.EchoCommand))
 	if err != nil {
 		jsonError(w, err, http.StatusBadRequest)
 		return
@@ -140,6 +144,9 @@ func (s *Server) handleSecuritySettingsPreview(w http.ResponseWriter, r *http.Re
 	current := s.security.Settings()
 	redacted := req
 	redacted.AccessCode = ""
+	if redacted.DDNSCredentialRef != "" {
+		redacted.DDNSCredentialRef = security.RedactedCredentialRef
+	}
 	s.jsonOK(w, map[string]any{"current": current, "proposed": redacted, "restartRequired": current.HTTPPort != req.HTTPPort || current.HTTPSPort != req.HTTPSPort || current.HTTPSCertificate != req.HTTPSCertificate, "requiresConfirmation": true})
 }
 
@@ -242,7 +249,15 @@ func (s *Server) firewallPreview(r *http.Request, req firewallRequest) (devnetwo
 	if req.SessionIP != "" && req.SessionIP != ip {
 		return devnetwork.FirewallPreview{}, fmt.Errorf("sessionIP must match current request address")
 	}
-	return devnetwork.RenderFirewall(req.Rules, ip)
+	status, err := s.network.Snapshot()
+	if err != nil {
+		return devnetwork.FirewallPreview{}, fmt.Errorf("read current interfaces: %w", err)
+	}
+	interfaces := make([]string, 0, len(status.Interfaces))
+	for _, iface := range status.Interfaces {
+		interfaces = append(interfaces, iface.Name)
+	}
+	return devnetwork.RenderFirewall(req.Rules, ip, interfaces)
 }
 func (s *Server) handleFirewallPreview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

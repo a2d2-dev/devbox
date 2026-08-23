@@ -75,28 +75,29 @@ func TestRenderFirewallLockoutProtection(t *testing.T) {
 	session := "10.126.126.2"
 	tunnelProtection := FirewallRule{Direction: "in", Action: "allow", Protocol: "any", Source: "any", Interface: "tun0"}
 	sessionProtection := FirewallRule{Direction: "in", Action: "allow", Protocol: "any", Source: session}
-	if _, err := RenderFirewall([]FirewallRule{tunnelProtection}, session); err == nil || !strings.Contains(err.Error(), "session IP") {
+	interfaces := []string{"tun0", "eth0"}
+	if _, err := RenderFirewall([]FirewallRule{tunnelProtection}, session, interfaces); err == nil || !strings.Contains(err.Error(), "session IP") {
 		t.Fatalf("expected session protection rejection, got %v", err)
 	}
-	if _, err := RenderFirewall([]FirewallRule{sessionProtection}, session); err == nil || !strings.Contains(err.Error(), "tun0") {
+	if _, err := RenderFirewall([]FirewallRule{sessionProtection}, session, interfaces); err == nil || !strings.Contains(err.Error(), "tun0") {
 		t.Fatalf("expected tun0 protection rejection, got %v", err)
 	}
 	tooNarrow := []FirewallRule{
 		{Direction: "in", Action: "allow", Protocol: "tcp", Port: 22, Source: "any", Interface: "tun0"},
 		sessionProtection,
 	}
-	if _, err := RenderFirewall(tooNarrow, session); err == nil || !strings.Contains(err.Error(), "tun0") {
+	if _, err := RenderFirewall(tooNarrow, session, interfaces); err == nil || !strings.Contains(err.Error(), "tun0") {
 		t.Fatalf("expected narrow tun0 rule rejection, got %v", err)
 	}
 	protected := []FirewallRule{tunnelProtection, sessionProtection}
-	preview, err := RenderFirewall(protected, session)
+	preview, err := RenderFirewall(protected, session, interfaces)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(preview.Ruleset, `iifname "tun0" accept`) || !strings.Contains(preview.Ruleset, "ip saddr 10.126.126.2 accept") {
 		t.Fatalf("missing safety rules:\n%s", preview.Ruleset)
 	}
-	if _, err := RenderFirewall(protected, "not-an-ip"); err == nil {
+	if _, err := RenderFirewall(protected, "not-an-ip", interfaces); err == nil {
 		t.Fatal("expected invalid session IP rejection")
 	}
 }
@@ -107,8 +108,58 @@ func TestRenderFirewallRejectsPortWithoutTransportProtocol(t *testing.T) {
 		{Direction: "in", Action: "allow", Protocol: "any", Source: "10.126.126.2"},
 		{Direction: "in", Action: "allow", Protocol: "any", Port: 443, Source: "any"},
 	}
-	if _, err := RenderFirewall(rules, "10.126.126.2"); err == nil || !strings.Contains(err.Error(), "tcp or udp") {
+	if _, err := RenderFirewall(rules, "10.126.126.2", []string{"tun0", "eth0"}); err == nil || !strings.Contains(err.Error(), "tcp or udp") {
 		t.Fatalf("expected protocol/port validation error, got %v", err)
+	}
+}
+
+func TestRenderFirewallRejectsProtectionRulesShadowedByDeny(t *testing.T) {
+	rules := []FirewallRule{
+		{Direction: "in", Action: "deny", Protocol: "any", Source: "any"},
+		{Direction: "in", Action: "allow", Protocol: "any", Source: "any", Interface: "tun0"},
+		{Direction: "in", Action: "allow", Protocol: "any", Source: "10.126.126.2"},
+	}
+	if _, err := RenderFirewall(rules, "10.126.126.2", []string{"tun0", "eth0"}); err == nil || !strings.Contains(err.Error(), "shadow") {
+		t.Fatalf("expected shadowed protection rejection, got %v", err)
+	}
+}
+
+func TestRenderFirewallRejectsNarrowedTunnelProtection(t *testing.T) {
+	rules := []FirewallRule{
+		{Direction: "in", Action: "allow", Protocol: "any", Source: "10.126.126.0/24", Interface: "tun0"},
+		{Direction: "in", Action: "allow", Protocol: "any", Source: "10.126.126.2"},
+	}
+	if _, err := RenderFirewall(rules, "10.126.126.2", []string{"tun0", "eth0"}); err == nil || !strings.Contains(err.Error(), "tun0") {
+		t.Fatalf("expected narrowed tun0 protection rejection, got %v", err)
+	}
+}
+
+func TestRenderFirewallRejectsSessionProtectionOnUnknownInterface(t *testing.T) {
+	rules := []FirewallRule{
+		{Direction: "in", Action: "allow", Protocol: "any", Source: "any", Interface: "tun0"},
+		{Direction: "in", Action: "allow", Protocol: "any", Source: "10.126.126.2", Interface: "fake0"},
+	}
+	if _, err := RenderFirewall(rules, "10.126.126.2", []string{"tun0", "eth0"}); err == nil || !strings.Contains(err.Error(), "interface") {
+		t.Fatalf("expected unknown session interface rejection, got %v", err)
+	}
+}
+
+func TestDDNSCredentialMustBeAReferenceAndPreviewIsRedacted(t *testing.T) {
+	for _, value := range []string{"plain-secret-token", "0123456789abcdef0123456789abcdef", "hunter2"} {
+		cfg := DDNSConfig{Provider: "cloudflare", Domain: "example.com", CredentialRef: value}
+		if err := ValidateDDNS(cfg); err == nil {
+			t.Fatalf("accepted bare credential %q", value)
+		}
+	}
+	for _, value := range []string{"env:CLOUDFLARE_TOKEN", "file:/run/secrets/cloudflare-token"} {
+		cfg := DDNSConfig{Provider: "cloudflare", Domain: "example.com", CredentialRef: value}
+		preview, err := PreviewDDNS(cfg)
+		if err != nil {
+			t.Fatalf("valid reference %q rejected: %v", value, err)
+		}
+		if strings.Contains(preview, value) || !strings.Contains(preview, "redacted") {
+			t.Fatalf("credential reference leaked in preview: %q", preview)
+		}
 	}
 }
 

@@ -157,8 +157,8 @@ func ValidateDDNS(cfg DDNSConfig) error {
 	if strings.TrimSpace(cfg.Domain) == "" || strings.ContainsAny(cfg.Domain, " /\\") {
 		return errors.New("invalid domain")
 	}
-	if strings.TrimSpace(cfg.CredentialRef) == "" {
-		return errors.New("credentialRef is required")
+	if err := validateCredentialRef(cfg.CredentialRef); err != nil {
+		return err
 	}
 	if cfg.Provider == "webhook" {
 		u, err := url.Parse(cfg.WebhookURL)
@@ -174,9 +174,32 @@ func PreviewDDNS(cfg DDNSConfig) (string, error) {
 		return "", err
 	}
 	if cfg.Provider == "cloudflare" {
-		return fmt.Sprintf("Cloudflare DNS update: domain=%s credential=%s value=<public-ip>", cfg.Domain, cfg.CredentialRef), nil
+		return fmt.Sprintf("Cloudflare DNS update: domain=%s credential=<redacted> value=<public-ip>", cfg.Domain), nil
 	}
-	return fmt.Sprintf("Webhook POST: url=%s domain=%s credential=%s value=<public-ip>", cfg.WebhookURL, cfg.Domain, cfg.CredentialRef), nil
+	return fmt.Sprintf("Webhook POST: url=%s domain=%s credential=<redacted> value=<public-ip>", cfg.WebhookURL, cfg.Domain), nil
+}
+
+func validateCredentialRef(value string) error {
+	value = strings.TrimSpace(value)
+	scheme, target, ok := strings.Cut(value, ":")
+	if !ok || target == "" {
+		return errors.New("credentialRef must use env:NAME or file:path")
+	}
+	switch scheme {
+	case "env":
+		for i, r := range target {
+			if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || i > 0 && r >= '0' && r <= '9') {
+				return errors.New("credentialRef env name is invalid")
+			}
+		}
+	case "file":
+		if strings.TrimSpace(target) != target || strings.ContainsAny(target, "\r\n\x00") {
+			return errors.New("credentialRef file path is invalid")
+		}
+	default:
+		return errors.New("credentialRef must use env:NAME or file:path")
+	}
+	return nil
 }
 
 func RunDDNSDry(cfg DDNSConfig) (string, error) {
@@ -222,11 +245,15 @@ func (c *Collector) FirewallRules() (string, string, error) {
 	return "unavailable", "", errors.New("neither nftables nor iptables rules could be read")
 }
 
-func RenderFirewall(rules []FirewallRule, sessionIP string) (FirewallPreview, error) {
+func RenderFirewall(rules []FirewallRule, sessionIP string, interfaces []string) (FirewallPreview, error) {
 	if net.ParseIP(sessionIP) == nil {
 		return FirewallPreview{}, errors.New("current session IP is required for lockout protection")
 	}
 	hasTunnel, hasSession := false, false
+	knownInterfaces := map[string]bool{}
+	for _, name := range interfaces {
+		knownInterfaces[name] = true
+	}
 	input := []string{"    ct state established,related accept", "    iifname \"lo\" accept"}
 	output := []string{"    ct state established,related accept", "    oifname \"lo\" accept"}
 	for _, rule := range rules {
@@ -253,10 +280,16 @@ func RenderFirewall(rules []FirewallRule, sessionIP string) (FirewallPreview, er
 			}
 		}
 		unrestrictedInboundAllow := rule.Direction == "in" && rule.Action == "allow" && rule.Protocol == "any" && rule.Port == 0
-		if unrestrictedInboundAllow && rule.Interface == "tun0" {
+		if rule.Direction == "in" && rule.Action == "deny" && ruleMatchesManagement(rule, sessionIP) && (!hasTunnel || !hasSession) {
+			return FirewallPreview{}, errors.New("ruleset rejected: management protection is shadowed by an earlier deny rule")
+		}
+		if unrestrictedInboundAllow && rule.Interface == "tun0" && (rule.Source == "" || rule.Source == "any") {
 			hasTunnel = true
 		}
 		if unrestrictedInboundAllow && rule.Source == sessionIP {
+			if rule.Interface != "" && !knownInterfaces[rule.Interface] {
+				return FirewallPreview{}, fmt.Errorf("ruleset rejected: session protection interface %q does not exist", rule.Interface)
+			}
 			hasSession = true
 		}
 		chain := "input"
@@ -318,6 +351,18 @@ func RenderFirewall(rules []FirewallRule, sessionIP string) (FirewallPreview, er
 	lines = append(lines, output...)
 	lines = append(lines, "  }", "}")
 	return FirewallPreview{Backend: "nftables", Ruleset: strings.Join(lines, "\n") + "\n", RollbackCommand: "nft -f <previous-ruleset>", RollbackSeconds: 60, DryRun: true}, nil
+}
+
+func ruleMatchesManagement(rule FirewallRule, sessionIP string) bool {
+	if rule.Interface != "" && rule.Interface != "tun0" {
+		return false
+	}
+	if rule.Source == "" || rule.Source == "any" || rule.Source == sessionIP {
+		return true
+	}
+	ip := net.ParseIP(sessionIP)
+	_, network, err := net.ParseCIDR(rule.Source)
+	return err == nil && network.Contains(ip)
 }
 
 func ParseSSHDConfig(path string) map[string]string {

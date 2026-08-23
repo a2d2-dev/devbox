@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { T } from "../tokens";
 import { Icon } from "../icons";
 import { authFetch } from "../hooks/useApi";
-import { settingsUpdatePayload } from "./settingsPayload";
+import { diagnosticsTools, settingsUpdatePayload } from "./settingsPayload";
 
 const tabs = [
   ["network", "网口状态", "network"],
@@ -12,6 +12,7 @@ const tabs = [
   ["bans", "异常封禁", "shield"],
   ["firewall", "防火墙", "shield"],
   ["certs", "证书", "key"],
+  ["diagnostics", "诊断", "wrench"],
 ];
 
 const panel = {
@@ -796,8 +797,8 @@ function AccountTab({ settings, setSettings, reload }) {
         />
       </Section>
       <Section
-        title="强制双重验证"
-        note="TOTP 密钥经 AES-GCM 加密存储；恢复码仅显示一次"
+        title="双重验证"
+        note="启用后登录必须验证 TOTP 或一次性恢复码；TOTP 密钥经 AES-GCM 加密存储"
         actions={
           !settings.totpEnabled ? (
             <button style={primary} onClick={begin}>
@@ -808,25 +809,6 @@ function AccountTab({ settings, setSettings, reload }) {
           )
         }
       >
-        <label
-          style={{
-            fontSize: 12,
-            color: T.ink2,
-            display: "flex",
-            alignItems: "center",
-            gap: 7,
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={!!settings.forceTwoFactor}
-            disabled={!settings.totpEnabled}
-            onChange={(e) =>
-              setSettings({ ...settings, forceTwoFactor: e.target.checked })
-            }
-          />
-          强制所有本地用户启用 2FA
-        </label>
         {enroll && (
           <div
             style={{
@@ -965,6 +947,21 @@ function BansTab({ bans, reload }) {
               value={rule.banMinutes}
               onChange={(e) =>
                 setRule({ ...rule, banMinutes: +e.target.value })
+              }
+            />
+          </Field>
+          <Field label="保护网段（逗号分隔）">
+            <input
+              style={input}
+              value={(rule.protectedCIDRs || ["10.126.126.0/24"]).join(", ")}
+              onChange={(e) =>
+                setRule({
+                  ...rule,
+                  protectedCIDRs: e.target.value
+                    .split(",")
+                    .map((value) => value.trim())
+                    .filter(Boolean),
+                })
               }
             />
           </Field>
@@ -1453,6 +1450,66 @@ function CertsTab({ certs, reload, settings, setSettings }) {
   );
 }
 
+function DiagnosticsTab() {
+  const [running, setRunning] = useState(null);
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))",
+        gap: 12,
+      }}
+    >
+      {diagnosticsTools.map((tool) => (
+        <button
+          key={tool.id}
+          type="button"
+          onClick={() => setRunning(tool.id)}
+          style={{
+            ...panel,
+            minHeight: 92,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            textAlign: "left",
+            cursor: "pointer",
+            borderColor: running === tool.id ? tool.color : T.border,
+            boxShadow: running === tool.id ? `0 0 0 2px ${tool.color}22` : "none",
+          }}
+        >
+          <span
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 7,
+              flexShrink: 0,
+              display: "grid",
+              placeItems: "center",
+              color: tool.color,
+              background: `${tool.color}15`,
+            }}
+          >
+            <Icon name={tool.icon} size={18} />
+          </span>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: "block", color: T.ink, fontSize: 13, fontWeight: 700 }}>
+              {tool.name}
+            </span>
+            <span style={{ display: "block", color: T.ink3, fontSize: 11.5, marginTop: 4 }}>
+              {tool.desc}
+            </span>
+            {running === tool.id && (
+              <span style={{ display: "block", color: tool.color, fontSize: 11.5, fontWeight: 650, marginTop: 7 }}>
+                正在执行...
+              </span>
+            )}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function NetworkSecuritySettings() {
   const [tab, setTab] = useState("network");
   const [data, setData] = useState({});
@@ -1525,6 +1582,7 @@ export default function NetworkSecuritySettings() {
         setSettings={setSettings}
       />
     ),
+    diagnostics: <DiagnosticsTab />,
   }[tab];
   return (
     <div

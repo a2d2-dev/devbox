@@ -41,17 +41,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.auth == nil || !s.auth.Enabled() {
-		s.jsonOK(w, map[string]interface{}{
-			"authenticated": true,
-			"token":         "",
-			"message":       "认证未启用",
-		})
-		return
-	}
-
-	token, ok := s.auth.Verify(req.Password)
-	if !ok {
+	if s.auth != nil && !s.auth.VerifyPassword(req.Password) {
 		s.bans.RecordFailure(ip, "devbox-login")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -63,16 +53,29 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	settings := s.security.Settings()
 	if settings.TOTPEnabled && req.OTP == "" {
+		s.bans.RecordFailure(ip, "devbox-login")
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusPreconditionRequired)
+		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]interface{}{"authenticated": false, "twoFactorRequired": true, "message": "请输入动态验证码或恢复码"})
 		return
 	}
-	if settings.TOTPEnabled && !s.security.VerifySecondFactor(req.OTP, time.Now()) {
-		s.bans.RecordFailure(ip, "devbox-login")
-		jsonError(w, fmt.Errorf("动态验证码或恢复码错误"), http.StatusUnauthorized)
-		return
+	if settings.TOTPEnabled {
+		valid, err := s.security.VerifySecondFactor(req.OTP, time.Now())
+		if err != nil {
+			jsonError(w, fmt.Errorf("保存恢复码消费状态: %w", err), http.StatusInternalServerError)
+			return
+		}
+		if !valid {
+			s.bans.RecordFailure(ip, "devbox-login")
+			jsonError(w, fmt.Errorf("动态验证码或恢复码错误"), http.StatusUnauthorized)
+			return
+		}
 	}
+	token := ""
+	if s.auth != nil {
+		token = s.auth.NewSession()
+	}
+	s.bans.SetProtectedIP(ip)
 
 	s.jsonOK(w, map[string]interface{}{
 		"authenticated": true,
@@ -82,7 +85,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
-	enabled := s.auth != nil && s.auth.Enabled()
+	enabled := (s.auth != nil && s.auth.Enabled()) || s.security.ProtectionEnabled()
 	authenticated := false
 
 	if s.auth != nil {
@@ -96,6 +99,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	s.jsonOK(w, map[string]interface{}{
 		"enabled":            enabled,
 		"authenticated":      authenticated,
+		"passwordRequired":   s.auth != nil && s.auth.Enabled(),
 		"accessCodeRequired": s.security.Settings().AccessCodeEnabled,
 		"twoFactorRequired":  s.security.Settings().TOTPEnabled,
 	})

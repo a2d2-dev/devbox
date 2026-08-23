@@ -119,6 +119,9 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		}),
 		certificates: security.NewCertificateManager(certDir),
 	}
+	s.bans.SetProtectedFailureHook(func(ip, source string) {
+		logger.Warn("Skipped ban for protected management address", zap.String("ip", ip), zap.String("source", source))
+	})
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
 	if s.auth.Enabled() {
@@ -163,7 +166,9 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 			inner.ServeHTTP(w, r)
 			return
 		}
-		s.auth.Middleware(inner.ServeHTTP)(w, r)
+		s.auth.Middleware(inner.ServeHTTP, func() bool {
+			return s.security != nil && s.security.ProtectionEnabled()
+		})(w, r)
 	})
 }
 
