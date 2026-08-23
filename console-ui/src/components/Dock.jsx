@@ -49,6 +49,7 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
 
   return (
     <div
+      className={`desktop-dock${apps.length === 0 ? ' desktop-dock-empty' : ''}`}
       aria-hidden={hidden}
       inert={hidden ? true : undefined}
       style={{

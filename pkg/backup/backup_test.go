@@ -189,10 +189,15 @@ func TestRestoreRequiresPreviewAndRestoresConflict(t *testing.T) {
 func TestRestorePathPolicyAllowsOriginalSourceButRejectsOtherOutsidePath(t *testing.T) {
 	requireRsync(t)
 	root := t.TempDir()
+	externalRoot, err := os.MkdirTemp("/var/tmp", "devbox-backup-restore-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(externalRoot) })
 	workDir := filepath.Join(root, "work")
-	source := filepath.Join(root, "source-outside-work")
+	source := filepath.Join(externalRoot, "source-outside-work")
 	target := filepath.Join(workDir, "target")
-	outside := filepath.Join(root, "other-outside-work")
+	outside := filepath.Join(externalRoot, "other-outside-work")
 	for _, path := range []string{workDir, source, target, outside} {
 		mustMkdir(t, path)
 	}
@@ -216,7 +221,7 @@ func TestRestorePathPolicyAllowsOriginalSourceButRejectsOtherOutsidePath(t *test
 	}
 	if _, err := manager.PreviewRestore(context.Background(), created.ID, RestoreRequest{
 		Version: version, Destination: outside,
-	}); err == nil || !strings.Contains(err.Error(), "允许根") {
+	}); err == nil || !strings.Contains(err.Error(), "目标路径") {
 		t.Fatalf("outside restore destination should be rejected by path policy: %v", err)
 	}
 }
@@ -255,8 +260,10 @@ func TestPathPolicyRejectsProtectedTargetAndAllowedRootAncestor(t *testing.T) {
 	})
 
 	t.Run("allowed root ancestor", func(t *testing.T) {
-		result := manager.Preflight(context.Background(), localTask(source, root))
-		assertFailedCheck(t, result, "配置")
+		policy := pathPolicy{workDir: workDir, targetRoots: []string{workDir}}
+		if err := policy.validateLocalTarget(root); err == nil || !strings.Contains(err.Error(), "允许根") {
+			t.Fatalf("allowed root ancestor should be rejected by path policy: %v", err)
+		}
 	})
 
 	t.Run("symlink escape", func(t *testing.T) {

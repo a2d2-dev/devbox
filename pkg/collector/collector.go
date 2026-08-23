@@ -10,7 +10,7 @@ import (
 
 const (
 	collectInterval = 5 * time.Second
-	historySize     = 30 // 保留最近 30 个采集点
+	historySize     = 24 * 60 * 60 / 5 // 5s interval, retain 24 hours
 )
 
 // Collector 系统指标采集器
@@ -124,6 +124,16 @@ func (c *Collector) GetCurrentMetrics() SystemMetrics {
 
 // GetMetricsHistory 获取指标历史
 func (c *Collector) GetMetricsHistory() MetricsHistory {
+	return c.getMetricsHistory(0, 0)
+}
+
+// GetMetricsHistoryWindow returns a bounded, evenly sampled history window.
+// maxPoints prevents a 24-hour view from returning tens of thousands of points.
+func (c *Collector) GetMetricsHistoryWindow(window time.Duration, maxPoints int) MetricsHistory {
+	return c.getMetricsHistory(window, maxPoints)
+}
+
+func (c *Collector) getMetricsHistory(window time.Duration, maxPoints int) MetricsHistory {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -134,27 +144,46 @@ func (c *Collector) GetMetricsHistory() MetricsHistory {
 		count = c.historyIdx
 	}
 
-	h := MetricsHistory{
-		Timestamps:     make([]time.Time, 0, count),
-		CPUPercent:     make([]float64, 0, count),
-		MemoryPercent:  make([]float64, 0, count),
-		DiskPercent:    make([]float64, 0, count),
-		DiskReadBytes:  make([]uint64, 0, count),
-		DiskWriteBytes: make([]uint64, 0, count),
-		GPUUtil:        make([]float64, 0, count),
-		GPUMemPercent:  make([]float64, 0, count),
-		NetBytesSent:   make([]uint64, 0, count),
-		NetBytesRecv:   make([]uint64, 0, count),
-	}
-
-	// 按时间顺序读取
+	// Build chronological indices first, then apply the requested time window.
 	start := 0
 	if c.historyFull {
 		start = c.historyIdx
 	}
-
+	indices := make([]int, 0, count)
+	var cutoff time.Time
+	if window > 0 && count > 0 {
+		latest := c.history[(start+count-1)%historySize].ShotTime
+		cutoff = latest.Add(-window)
+	}
 	for i := 0; i < count; i++ {
 		idx := (start + i) % historySize
+		if !cutoff.IsZero() && c.history[idx].ShotTime.Before(cutoff) {
+			continue
+		}
+		indices = append(indices, idx)
+	}
+	capacity := len(indices)
+	if maxPoints > 0 && capacity > maxPoints {
+		capacity = maxPoints
+	}
+	h := MetricsHistory{
+		Timestamps: make([]time.Time, 0, capacity), CPUPercent: make([]float64, 0, capacity),
+		MemoryPercent: make([]float64, 0, capacity), DiskPercent: make([]float64, 0, capacity),
+		DiskReadBytes: make([]uint64, 0, capacity), DiskWriteBytes: make([]uint64, 0, capacity),
+		GPUUtil: make([]float64, 0, capacity), GPUMemPercent: make([]float64, 0, capacity),
+		NetBytesSent: make([]uint64, 0, capacity), NetBytesRecv: make([]uint64, 0, capacity),
+	}
+	for pos := 0; pos < capacity; pos++ {
+		indexPos := pos
+		if capacity == 1 && len(indices) > 1 {
+			indexPos = len(indices) - 1
+		} else if capacity > 1 && len(indices) > capacity {
+			// Map both endpoints and every intermediate point evenly into the
+			// requested capacity. This keeps the latest sample without ever
+			// returning maxPoints+1 entries.
+			indexPos = pos * (len(indices) - 1) / (capacity - 1)
+		}
+		idx := indices[indexPos]
 		m := c.history[idx]
 
 		h.Timestamps = append(h.Timestamps, m.ShotTime)

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/viper"
 )
@@ -24,19 +25,21 @@ type AuthConfig struct {
 
 // ConsoleConfig 本地控制台 HTTP 服务的配置。
 type ConsoleConfig struct {
-	Enabled            bool     `mapstructure:"enabled"`              // 是否启用本地控制台
-	Port               int      `mapstructure:"port"`                 // HTTP 监听端口
-	StaticDir          string   `mapstructure:"static_dir"`           // 静态文件目录（空则使用 embed）
-	WorkDir            string   `mapstructure:"work_dir"`             // 文件浏览器工作区根目录；空则默认 /data
-	ConsoleURL         string   `mapstructure:"console_url"`          // 外部 Console 地址（用于图标代理，可选）
-	SupervisorSocket   string   `mapstructure:"supervisor_socket"`    // supervisord Unix socket 路径
-	SupervisorConfDir  string   `mapstructure:"supervisor_conf_dir"`  // supervisor conf.d 目录
-	LinksPath          string   `mapstructure:"links_path"`           // 服务导航 YAML 路径；空 = /etc/devbox/links.yaml
-	BrowserDataPath    string   `mapstructure:"browser_data_path"`    // 浏览器书签/历史 JSON 路径；空 = /etc/devbox/browser.json
-	BrowserInsecureTLS bool     `mapstructure:"browser_insecure_tls"` // 浏览器代理是否跳过远端 TLS 校验（内网自签证书）
-	BackupDataDir      string   `mapstructure:"backup_data_dir"`      // 备份状态与专用 keys 目录；默认 /var/lib/devbox/backup
-	BackupConcurrency  int      `mapstructure:"backup_concurrency"`   // 备份与恢复共享并发上限；默认 2
-	BackupAllowedRoots []string `mapstructure:"backup_allowed_roots"` // 本地目标扩展允许根；work_dir 与 /data 始终包含
+	Enabled              bool     `mapstructure:"enabled"`                // 是否启用本地控制台
+	Port                 int      `mapstructure:"port"`                   // HTTP 监听端口
+	StaticDir            string   `mapstructure:"static_dir"`             // 静态文件目录（空则使用 embed）
+	WorkDir              string   `mapstructure:"work_dir"`               // 文件浏览器工作区根目录；空则默认 /data
+	AllowPrivateNetworks bool     `mapstructure:"allow_private_networks"` // 下载是否允许访问私网地址；默认 false
+	ConsoleURL           string   `mapstructure:"console_url"`            // 外部 Console 地址（用于图标代理，可选）
+	SupervisorSocket     string   `mapstructure:"supervisor_socket"`      // supervisord Unix socket 路径
+	SupervisorConfDir    string   `mapstructure:"supervisor_conf_dir"`    // supervisor conf.d 目录
+	LinksPath            string   `mapstructure:"links_path"`             // 服务导航 YAML 路径；空 = /etc/devbox/links.yaml
+	BrowserDataPath      string   `mapstructure:"browser_data_path"`      // 浏览器书签/历史 JSON 路径；空 = /etc/devbox/browser.json
+	BrowserInsecureTLS   bool     `mapstructure:"browser_insecure_tls"`   // 浏览器代理是否跳过远端 TLS 校验（内网自签证书）
+	TrustedProxies       []string `mapstructure:"trusted_proxies"`        // 可解析 X-Forwarded-For 的可信反向代理 IP/CIDR
+	BackupDataDir        string   `mapstructure:"backup_data_dir"`        // 备份状态与专用 keys 目录；默认 /var/lib/devbox/backup
+	BackupConcurrency    int      `mapstructure:"backup_concurrency"`     // 备份与恢复共享并发上限；默认 2
+	BackupAllowedRoots   []string `mapstructure:"backup_allowed_roots"`   // 本地目标扩展允许根；work_dir 与 /data 始终包含
 }
 
 // KubernetesConfig 可选的 K8s 集成（应用市场 / Pod 管理）。
@@ -50,11 +53,12 @@ type KubernetesConfig struct {
 // ComposeConfig Docker Compose 应用管理（Issue #2）。
 // Compose 与 K8s 并列；Compose 默认启用，Docker 不可用时仅该运行时降级，不影响 K8s。
 type ComposeConfig struct {
-	Enabled      bool                  `mapstructure:"enabled"`       // 默认 true
-	DataDir      string                `mapstructure:"data_dir"`      // 数据根（apps.db + apps/<id>）；默认 /var/lib/devbox
-	DockerSocket string                `mapstructure:"docker_socket"` // Docker daemon unix socket；默认 /var/run/docker.sock
-	Catalogs     []CatalogSourceConfig `mapstructure:"catalogs"`      // 第三方 HTTP/Git catalog source（Issue #2 阶段4 扩展）
-	CatalogPoll  int                   `mapstructure:"catalog_poll"`  // catalog 周期同步间隔（秒）；0=不同步，<=0 关闭周期刷新
+	Enabled               bool                  `mapstructure:"enabled"`                 // 默认 true
+	DataDir               string                `mapstructure:"data_dir"`                // 数据根（apps.db + apps/<id>）；默认 /var/lib/devbox
+	DockerSocket          string                `mapstructure:"docker_socket"`           // Docker daemon unix socket；默认 /var/run/docker.sock
+	MigrationAllowedRoots []string              `mapstructure:"migration_allowed_roots"` // Docker data-root 迁移目标白名单
+	Catalogs              []CatalogSourceConfig `mapstructure:"catalogs"`                // 第三方 HTTP/Git catalog source（Issue #2 阶段4 扩展）
+	CatalogPoll           int                   `mapstructure:"catalog_poll"`            // catalog 周期同步间隔（秒）；0=不同步，<=0 关闭周期刷新
 }
 
 // CatalogSourceConfig 第三方 Docker Compose catalog source 配置。
@@ -118,12 +122,14 @@ func Load(configFile string) (*Config, error) {
 	v.BindEnv("console.browser_insecure_tls", "DEVBOX_CONSOLE_BROWSER_INSECURE_TLS")
 	v.BindEnv("console.backup_data_dir", "DEVBOX_CONSOLE_BACKUP_DATA_DIR")
 	v.BindEnv("console.backup_concurrency", "DEVBOX_CONSOLE_BACKUP_CONCURRENCY")
+	v.BindEnv("console.trusted_proxies", "DEVBOX_CONSOLE_TRUSTED_PROXIES")
 	v.BindEnv("kubernetes.kubeconfig", "DEVBOX_KUBECONFIG")
 	v.BindEnv("kubernetes.namespace", "DEVBOX_NAMESPACE")
 	v.BindEnv("kubernetes.apiserver_url", "DEVBOX_APISERVER_URL")
 	v.BindEnv("compose.enabled", "DEVBOX_COMPOSE_ENABLED")
 	v.BindEnv("compose.data_dir", "DEVBOX_COMPOSE_DATA_DIR")
 	v.BindEnv("compose.docker_socket", "DEVBOX_COMPOSE_DOCKER_SOCKET")
+	v.BindEnv("compose.migration_allowed_roots", "DEVBOX_COMPOSE_MIGRATION_ALLOWED_ROOTS")
 	v.BindEnv("compose.catalog_poll", "DEVBOX_COMPOSE_CATALOG_POLL")
 	v.BindEnv("auth.password", "DEVBOX_AUTH_PASSWORD")
 	v.BindEnv("auth.session_ttl", "DEVBOX_AUTH_SESSION_TTL")
@@ -167,6 +173,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("compose.enabled", true)
 	v.SetDefault("compose.data_dir", "/var/lib/devbox")
 	v.SetDefault("compose.docker_socket", "/var/run/docker.sock")
+	v.SetDefault("compose.migration_allowed_roots", []string{"/data", "/var/lib"})
 	// catalog 周期同步间隔（秒）。0=仅启动时同步一次 + 显式 refresh，不做周期刷新。
 	v.SetDefault("compose.catalog_poll", 300)
 
@@ -182,6 +189,11 @@ func (c *Config) Validate() error {
 	if c.Console.Enabled {
 		if c.Console.Port <= 0 || c.Console.Port > 65535 {
 			return fmt.Errorf("console.port must be between 1 and 65535")
+		}
+	}
+	for i, root := range c.Compose.MigrationAllowedRoots {
+		if !filepath.IsAbs(root) {
+			return fmt.Errorf("compose.migration_allowed_roots[%d] must be an absolute path", i)
 		}
 	}
 	for i, cat := range c.Compose.Catalogs {

@@ -81,7 +81,7 @@ function IframeFace({ app, onMgmt }) {
   );
 }
 
-function AppShellContent({ appId, app, authed, onRequireAuth, onOpenManagement }) {
+function AppShellContent({ appId, app, authed, onRequireAuth, onOpenManagement, onOpenApp }) {
   // Native faces for built-in system tools
   if (appId === 'vscode')    return <VSCodeFace    onMgmt={onOpenManagement}/>;
   if (appId === 'jupyter')   return <JupyterFace   onMgmt={onOpenManagement}/>;
@@ -99,9 +99,9 @@ function AppShellContent({ appId, app, authed, onRequireAuth, onOpenManagement }
   //   if (appId === 'ports') return <PortsFace authed={authed} onRequireAuth={onRequireAuth}/>;
   // 后端 GET /api/v1/ports 仍可用（参考 handlers_extra.go:101 handlePorts）。
   if (appId === 'models')    return <ModelsFace/>;
-  if (appId === 'processes') return <Processes/>;
+  if (appId === 'processes') return <Processes onOpenApp={onOpenApp}/>;
   if (appId === 'disks')     return <DiskManager/>;
-  if (appId === 'network-connections') return <NetworkConnections/>;
+  if (appId === 'network-connections') return <NetworkConnections onOpenApp={onOpenApp}/>;
   if (appId === 'monitoring') return <MonitoringApp/>;
   if (appId === 'ai-activity') return <AIActivity/>;
   if (appId === 'browser')   return <BrowserFace/>;

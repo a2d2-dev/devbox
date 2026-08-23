@@ -56,12 +56,13 @@ func main() {
 	var appController apps.Controller
 	var appCleanup func()
 	if c, cleanup, err := apps.AssembleController(ctx, apps.ControllerConfig{
-		DataDir:           cfg.Compose.DataDir,
-		DockerSocket:      cfg.Compose.DockerSocket,
-		ComposeEnabled:    cfg.Compose.Enabled,
-		Kubeconfig:        cfg.Kubernetes.Kubeconfig,
-		Namespace:         cfg.Kubernetes.Namespace,
-		KubernetesEnabled: true,
+		DataDir:                     cfg.Compose.DataDir,
+		DockerSocket:                cfg.Compose.DockerSocket,
+		DockerMigrationAllowedRoots: cfg.Compose.MigrationAllowedRoots,
+		ComposeEnabled:              cfg.Compose.Enabled,
+		Kubeconfig:                  cfg.Kubernetes.Kubeconfig,
+		Namespace:                   cfg.Kubernetes.Namespace,
+		KubernetesEnabled:           true,
 	}, logger); err != nil {
 		logger.Warn("App controller unavailable; app management disabled", zap.Error(err))
 	} else {
@@ -114,11 +115,14 @@ func main() {
 		Port:                 cfg.Console.Port,
 		StaticDir:            cfg.Console.StaticDir,
 		WorkDir:              cfg.Console.WorkDir,
+		AllowPrivateNetworks: cfg.Console.AllowPrivateNetworks,
+		AppsDir:              filepath.Join(cfg.Compose.DataDir, "apps"),
 		SupervisorSocket:     cfg.Console.SupervisorSocket,
 		SupervisorConfDir:    cfg.Console.SupervisorConfDir,
 		ConsoleURL:           cfg.Console.ConsoleURL,
 		AuthPassword:         cfg.Auth.Password,
 		AuthSessionTTL:       cfg.Auth.SessionTTL,
+		TrustedProxies:       cfg.Console.TrustedProxies,
 		LinksPath:            cfg.Console.LinksPath,
 		BrowserDataPath:      cfg.Console.BrowserDataPath,
 		BrowserInsecureTLS:   cfg.Console.BrowserInsecureTLS,

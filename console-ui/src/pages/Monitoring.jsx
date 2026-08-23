@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
-import { StatusDot, Chip, Sparkline } from '../components/ui'
+import { StatusDot, Chip } from '../components/ui'
 import { TrendChart, makeRateSeries } from '../components/TrendChart'
 import { getAuthToken } from '../hooks/useApi'
+import { startVisiblePolling } from '../lib/visiblePolling'
 
 // Story 9.2-A: 独立「监控」App。
 // 从 Dashboard.jsx 迁移 TrendCard / GpuRow / GpuProcessTable / 数据拉取 + 新增顶部 4 大资源卡。
@@ -297,54 +298,75 @@ function GpuProcessTable({ data, status }) {
   );
 }
 
-// ─── TopResourceBar — Story 9.2-A AC-2 新组件 ──────
-// 4 大资源卡（CPU / GPU / MEM / DISK），仿 edge-console 节点 monitors 页风格。
-// 当前值 + 容量详情；无 GPU 时显示「无 GPU」。
-function TopResourceBar({ cpu, gpuAvg, memPct, memUsed, memTotal, diskPct, diskUsed, diskTotal, hasGpu, gpuCount, gpuModel }) {
-  const Cell = ({ icon, label, pct, value, sub, color }) => {
-    const loading = pct == null;
-    return (
-      <div style={{
-        background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        padding: '14px 16px',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-          <Icon name={icon} size={13} stroke={1.8} style={{ color: loading ? T.ink4 : color }}/>
-          <div style={{ fontSize: 12, fontWeight: 600, color: T.ink }}>{label}</div>
-        </div>
-        <div className="mono tnum" style={{
-          ...T.type.title, fontWeight: 700, color: loading ? T.ink4 : color, lineHeight: 1,
-          letterSpacing: '-0.02em',
-        }}>{value}</div>
-        <div style={{ fontSize: 11, color: T.ink3, marginTop: 6 }}>{sub}</div>
-      </div>
-    );
-  };
+// ─── TopResourceBar — current resource overview ──────
+function ResourceCell({ icon, label, pct, value, sub, color }) {
+  const loading = pct == null
+  return <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: '14px 16px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+      <Icon name={icon} size={13} stroke={1.8} style={{ color: loading ? T.ink4 : color }}/>
+      <div style={{ fontSize: 12, fontWeight: 600, color: T.ink }}>{label}</div>
+    </div>
+    <div className="mono tnum" style={{ ...T.type.title, fontWeight: 700, color: loading ? T.ink4 : color, lineHeight: 1 }}>{value}</div>
+    <div style={{ fontSize: 11, color: T.ink3, marginTop: 6 }}>{sub}</div>
+  </div>
+}
 
+function TopResourceBar({ cpu, memPct, memUsed, memTotal, netIn, netOut, diskRead, diskWrite, uptime }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 12 }}>
-      <Cell icon="cpu" label="CPU 使用率"
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(145px, 1fr))', gap: 10, marginBottom: 12 }}>
+      <ResourceCell icon="cpu" label="CPU 使用率"
         pct={cpu} value={cpu == null ? '—' : `${cpu}%`}
         sub={cpu == null ? '加载中…' : '当前负载'} color={T.blue}/>
-      <Cell icon="bolt" label="GPU 平均"
-        pct={hasGpu ? gpuAvg : 0}
-        value={hasGpu ? (gpuAvg == null ? '—' : `${gpuAvg}%`) : '无 GPU'}
-        sub={hasGpu ? `${gpuCount} × ${gpuModel}` : '本节点未检测到 NVIDIA GPU'}
-        color={T.indigo}/>
-      <Cell icon="memory" label="内存"
+      <ResourceCell icon="memory" label="内存"
         pct={memPct} value={memPct == null ? '—' : `${memPct}%`}
         sub={memUsed != null && memTotal != null ? `${memUsed} GB / ${memTotal} GB` : '加载中…'}
         color={T.teal}/>
-      <Cell icon="hardDrive" label="磁盘"
-        pct={diskPct} value={diskPct == null ? '—' : `${diskPct}%`}
-        sub={diskUsed != null && diskTotal != null ? `${diskUsed} GB / ${diskTotal} GB` : '加载中…'}
-        color={T.amber}/>
+      <ResourceCell icon="network" label="网络"
+        pct={netIn} value={netIn == null ? '—' : `↓ ${formatBytesPerSec(netIn)}`}
+        sub={netOut == null ? '加载中…' : `↑ ${formatBytesPerSec(netOut)}`} color={T.green}/>
+      <ResourceCell icon="hardDrive" label="磁盘读写"
+        pct={diskRead} value={diskRead == null ? '—' : `读 ${formatBytesPerSec(diskRead)}`}
+        sub={diskWrite == null ? '加载中…' : `写 ${formatBytesPerSec(diskWrite)}`} color={T.amber}/>
+      <ResourceCell icon="clock" label="运行时长"
+        pct={uptime ? 1 : null} value={uptime || '—'} sub="系统自上次启动" color={T.indigo}/>
     </div>
   );
 }
 
+function DiskOverview({ inventory, io }) {
+  const disks = Array.isArray(inventory) ? inventory : []
+  const ioRows = Array.isArray(io) ? io : []
+  if (!disks.length && !ioRows.length) {
+    return <div style={{ padding: 28, color: T.ink3, textAlign: 'center' }}>未检测到物理硬盘</div>
+  }
+  const rows = disks.length ? disks : ioRows.map(item => ({ device: item.path, model: item.model, rotational: item.rotational, partitions: [] }))
+  return <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <thead><tr style={{ background: T.surfaceAlt }}>
+        {['硬盘', '容量', '温度', '繁忙度', '读取', '写入', '用途'].map(label => <th key={label} style={{ padding: '9px 12px', color: T.ink3, textAlign: label === '硬盘' || label === '用途' ? 'left' : 'right', fontSize: 10.5 }}>{label}</th>)}
+      </tr></thead>
+      <tbody>{rows.map((disk, index) => {
+        const name = (disk.device || '').replace('/dev/', '')
+        const metrics = ioRows.find(item => item.name === name || item.path === disk.device)
+        const partitions = disk.partitions || []
+        const purposes = partitions.length ? partitions.map(part => part.isSystemDisk ? `${part.mountPoint || part.name}（系统）` : part.mountPoint ? `${part.mountPoint}（数据）` : `${part.name}（未挂载）`) : ['无分区数据']
+        return <tr key={disk.device || name} style={{ borderTop: index ? `1px solid ${T.borderSoft}` : 'none' }}>
+          <td style={{ padding: '11px 12px' }}><div className="mono" style={{ fontWeight: 700 }}>{disk.device || metrics?.path}</div><div style={{ color: T.ink4, marginTop: 2 }}>{disk.model || '型号无数据'} · {disk.rotational ? 'HDD' : 'SSD'}</div></td>
+          <td style={{ padding: '11px 12px', textAlign: 'right' }} className="mono">{disk.sizeBytes ? `${(disk.sizeBytes / 1024 ** 3).toFixed(1)} GB` : '无数据'}</td>
+          <td style={{ padding: '11px 12px', textAlign: 'right' }} className="mono">{metrics?.temperatureStatus === 'available' && metrics.temperatureC != null ? `${metrics.temperatureC.toFixed(1)} °C` : '不支持'}</td>
+          <td style={{ padding: '11px 12px', textAlign: 'right' }} className="mono">{metrics ? `${formatNumber(metrics.utilPercent, 1)}%` : '无数据'}</td>
+          <td style={{ padding: '11px 12px', textAlign: 'right', color: T.teal }} className="mono">{metrics ? formatBytesPerSec(metrics.readBytesPerSec) : '无数据'}</td>
+          <td style={{ padding: '11px 12px', textAlign: 'right', color: T.amber }} className="mono">{metrics ? formatBytesPerSec(metrics.writeBytesPerSec) : '无数据'}</td>
+          <td style={{ padding: '11px 12px', color: T.ink2 }}>{purposes.join(' · ')}</td>
+        </tr>
+      })}</tbody>
+    </table>
+  </div>
+}
+
 // ─── MonitoringApp — 主组件 ─────────────────────────
 export default function MonitoringApp() {
+  const [view, setView] = useState('overview')
   // Story 9.1 时间窗 (沿用 1h/6h/24h)
   const [historyWindow, setHistoryWindow] = useState('1h')
   const HISTORY_WINDOWS = [
@@ -360,34 +382,36 @@ export default function MonitoringApp() {
   const [gpus, setGpus] = useState([]);
   const [gpuHistory, setGpuHistory] = useState(null);
   const [gpuProcs, setGpuProcs] = useState({ data: [], status: 'idle' });
+  const [diskInventory, setDiskInventory] = useState([]);
 
   // 5s 轮询 (从 Dashboard.jsx 迁移)
   useEffect(() => {
     const fetchAll = async () => {
       try {
-        const [mRes, hRes, dRes, gRes] = await Promise.all([
+        const [mRes, hRes, dRes, gRes, disksRes] = await Promise.all([
           authFetchJSON('/api/v1/metrics'),
           authFetchJSON('/api/v1/metrics/history?window=' + historyWindow),
           authFetchJSON('/api/v1/device'),
           authFetchJSON('/api/v1/metrics/history/gpu?window=' + historyWindow),
+          authFetchJSON('/api/v1/disks'),
         ]);
         if (mRes) setMetrics(mRes);
         if (hRes) setHistory(hRes);
         if (gRes) setGpuHistory(gRes);
-        if (dRes) setDevice({ model: dRes.cpuModel, name: dRes.hostname });
+        if (dRes) setDevice({ model: dRes.cpuModel, name: dRes.hostname, uptime: dRes.uptimeHuman });
+        if (Array.isArray(disksRes)) setDiskInventory(disksRes);
         if (mRes && mRes.gpuData) setGpus(mRes.gpuData);
-      } catch {}
+      } catch {
+        return
+      }
     };
-    fetchAll();
-    const id = setInterval(fetchAll, 5000);
-    return () => clearInterval(id);
+    return startVisiblePolling(fetchAll, 5000);
   }, [historyWindow]);
 
   // GPU 进程 (从 Dashboard.jsx 迁移)
   useEffect(() => {
     const hasGpu = gpus.length > 0;
     if (!hasGpu) {
-      setGpuProcs({ data: [], status: 'no-gpu' });
       return;
     }
     let stopped = false;
@@ -405,29 +429,19 @@ export default function MonitoringApp() {
         if (!stopped) setGpuProcs(prev => ({ ...prev, status: 'error' }));
       }
     };
-    fetchGpuProcs();
-    const id = setInterval(fetchGpuProcs, 5000);
-    return () => { stopped = true; clearInterval(id); };
+    const stopPolling = startVisiblePolling(fetchGpuProcs, 5000);
+    return () => { stopped = true; stopPolling(); };
   }, [gpus.length]);
 
   // Derived values (从 Dashboard.jsx 迁移)
   const cpu = metrics ? Math.round(metrics.cpuUsedPercent) : null;
-  const gpuAvg = gpus.length > 0 ? Math.round(gpus.reduce((s, g) => s + g.gpuUtil, 0) / gpus.length) : null;
   const memTotal = metrics ? Math.round(metrics.memoryTotal / (1024*1024*1024)) : null;
   const memUsed = metrics ? Math.round(metrics.memoryUsed / (1024*1024*1024)) : null;
   const memPct = metrics ? Math.round(metrics.memoryUsedPercent) : null;
-  const mainDisk = metrics && metrics.diskData && metrics.diskData.length > 0
-    ? metrics.diskData.reduce((a, b) => (b.total > a.total ? b : a), metrics.diskData[0])
-    : null;
-  const diskPct = mainDisk ? Math.round(mainDisk.usedPercent) : null;
-  const diskUsed = mainDisk ? Math.round(mainDisk.used / (1024*1024*1024)) : null;
-  const diskTotal = mainDisk ? Math.round(mainDisk.total / (1024*1024*1024)) : null;
 
   const cpuSeries = history && history.cpuPercent ? history.cpuPercent : [];
   const gpuSeries = history && history.gpuUtil ? history.gpuUtil : [];
   const memSeries = history && history.memoryPercent ? history.memoryPercent : [];
-  const diskSeries = history && history.diskPercent ? history.diskPercent : [];
-  const gpuMemSeries = history && history.gpuMemPercent ? history.gpuMemPercent : [];
 
   // 网络是累计 bytes，差分算速率 (B/s)，agent 重启时 diff 为负 → clamp 0
   // 采样间隔 historyWindow 决定（后端固定 5s），但 history 端点的步长来自 prometheus
@@ -436,6 +450,7 @@ export default function MonitoringApp() {
   const netRecvRate = makeRateSeries(history?.netBytesRecv, history?.timestamps);
   const diskReadRate = makeRateSeries(history?.diskReadBytes, history?.timestamps);
   const diskWriteRate = makeRateSeries(history?.diskWriteBytes, history?.timestamps);
+  const latest = series => series.length ? series[series.length - 1] : null;
 
   const windowLabel = (HISTORY_WINDOWS.find(w => w.value === historyWindow) || HISTORY_WINDOWS[0]).label;
 
@@ -447,16 +462,24 @@ export default function MonitoringApp() {
       {/* Header strip — 标题 + 时间窗切换（AC-7 仅返回 + 时间窗，不加刷新/导出）*/}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
         <div>
-          <div style={{ ...T.type.heading, color: T.ink }}>监控</div>
+          <div style={{ ...T.type.heading, color: T.ink }}>资源管理</div>
           <div style={{ fontSize: 12, color: T.ink3, marginTop: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span><span className="edge-live-dot" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: T.green, marginRight: 5, verticalAlign: 'middle' }}/>实时刷新中</span>
             <span style={{ color: '#cbd5e1' }}>·</span>
-            <span>采样间隔 5s</span>
+            <span>前台 5s · 后台暂停</span>
             <span style={{ color: '#cbd5e1' }}>·</span>
             <span>{device.model || ''}</span>
           </div>
         </div>
         <div style={{ flex: 1 }}/>
+        <div style={{ display: 'flex', gap: 2, background: T.surfaceAlt, padding: 2, borderRadius: 8, marginRight: 10 }}>
+          {[
+            ['overview', '总览'], ['cpu', 'CPU'], ['memory', '内存'], ['network', '网络'], ['disk', '硬盘'], ['gpu', 'GPU'],
+          ].map(([id, label]) => <button key={id} onClick={() => setView(id)} style={{
+            padding: '6px 10px', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', borderRadius: 6,
+            background: view === id ? T.surface : 'transparent', color: view === id ? T.blueDeep : T.ink3,
+          }}>{label}</button>)}
+        </div>
         <div style={{ display: 'flex', gap: 2, background: T.surfaceAlt, padding: 2, borderRadius: 8 }}>
           {HISTORY_WINDOWS.map(w => (
             <button key={w.value} onClick={() => setHistoryWindow(w.value)} style={{
@@ -470,72 +493,43 @@ export default function MonitoringApp() {
         </div>
       </div>
 
-      {/* AC-2: 顶部 4 大资源卡 */}
-      <TopResourceBar
-        cpu={cpu} gpuAvg={gpuAvg}
-        memPct={memPct} memUsed={memUsed} memTotal={memTotal}
-        diskPct={diskPct} diskUsed={diskUsed} diskTotal={diskTotal}
-        hasGpu={gpus.length > 0}
-        gpuCount={gpus.length}
-        gpuModel={gpus.length > 0 ? gpus[0].productName : ''}/>
-
-      <PerCoreCPUGrid cores={metrics?.cpuPercent}/>
-
-      <DiskIOPanel disks={metrics?.diskIO}/>
-
-      {/* 趋势卡 —— 全部用 TrendChart 组件（自包含 header/chart/X轴/单位 formatter）*/}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <TrendChart title={`CPU 使用率 · 最近 ${windowLabel}`} window={historyWindow}
-          series={cpuSeries} color={T.blue} unit="percent" max={100}/>
-        <TrendChart title={`GPU 使用率 · 最近 ${windowLabel}`} window={historyWindow}
-          series={gpuSeries} color={T.indigo} unit="percent" max={100}/>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <TrendChart title={`内存使用率 · 最近 ${windowLabel}`} window={historyWindow}
-          series={memSeries} color={T.violet} unit="percent" max={100}/>
-        <TrendChart title={`磁盘使用率 · 最近 ${windowLabel}`} window={historyWindow}
-          series={diskSeries} color={T.cyan} unit="percent" max={100}/>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <TrendChart title={`网络入站 · 最近 ${windowLabel}`} window={historyWindow}
-          series={netRecvRate} color={T.green} unit="bytesPerSec"/>
-        <TrendChart title={`网络出站 · 最近 ${windowLabel}`} window={historyWindow}
-          series={netSentRate} color={T.amber} unit="bytesPerSec"/>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <TrendChart title={`磁盘读取 · 最近 ${windowLabel}`} window={historyWindow}
-          series={diskReadRate} color={T.teal} unit="bytesPerSec"/>
-        <TrendChart title={`磁盘写入 · 最近 ${windowLabel}`} window={historyWindow}
-          series={diskWriteRate} color={T.red} unit="bytesPerSec"/>
-      </div>
-
-      {/* GPU 卡详情 (每卡 4 sparkline) */}
-      <div style={{
-        background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        padding: 16, marginBottom: 12,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>GPU 卡详情</div>
-          <div style={{ fontSize: 11.5, color: T.ink3, marginLeft: 10 }}>{gpus.length > 0 ? `${gpus.length} 卡 · ${gpus[0].productName} · 时序 ${historyWindow}` : '本节点未检测到 NVIDIA GPU'}</div>
+      {view === 'overview' && <>
+        <TopResourceBar cpu={cpu} memPct={memPct} memUsed={memUsed} memTotal={memTotal}
+          netIn={latest(netRecvRate)} netOut={latest(netSentRate)}
+          diskRead={latest(diskReadRate)} diskWrite={latest(diskWriteRate)} uptime={device.uptime}/>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <TrendChart title={`CPU 使用率 · 最近 ${windowLabel}`} window={historyWindow} series={cpuSeries} color={T.blue} unit="percent" max={100}/>
+          <TrendChart title={`内存使用率 · 最近 ${windowLabel}`} window={historyWindow} series={memSeries} color={T.violet} unit="percent" max={100}/>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: gpus.length > 1 ? '1fr 1fr' : '1fr', gap: 12 }}>
-          {gpus.length > 0 ? gpus.map((g, idx) => {
-            const hist = (gpuHistory && gpuHistory.perGpu)
-              ? gpuHistory.perGpu.find(h => h.id === String(g.index)) || gpuHistory.perGpu[idx]
-              : null;
-            return (
-              <GpuRow key={g.index} g={{id: g.index, model: g.productName, util: Math.round(g.gpuUtil), memUsed: g.memUsed, memTotal: g.memTotal, temp: g.temperature, power: g.powerDraw, max: g.powerLimit}} live={Math.round(g.gpuUtil)} history={hist}/>
-            );
-          }) : (
-            <div style={{ padding: '24px 0', textAlign: 'center', color: T.ink4, fontSize: 13 }}>本节点未检测到 NVIDIA GPU</div>
-          )}
-        </div>
-      </div>
+      </>}
 
-      {/* GPU 进程表 (仅有 GPU 时渲染) */}
-      {gpus.length > 0 && (
-        <GpuProcessTable data={gpuProcs.data} status={gpuProcs.status}/>
-      )}
+      {view === 'cpu' && <><PerCoreCPUGrid cores={metrics?.cpuPercent}/><TrendChart title={`CPU 使用率 · 最近 ${windowLabel}`} window={historyWindow} series={cpuSeries} color={T.blue} unit="percent" max={100}/></>}
+      {view === 'memory' && <TrendChart title={`内存使用率 · 最近 ${windowLabel}`} window={historyWindow} series={memSeries} color={T.violet} unit="percent" max={100}/>}
+      {view === 'network' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <TrendChart title={`网络入站 · 最近 ${windowLabel}`} window={historyWindow} series={netRecvRate} color={T.green} unit="bytesPerSec"/>
+        <TrendChart title={`网络出站 · 最近 ${windowLabel}`} window={historyWindow} series={netSentRate} color={T.amber} unit="bytesPerSec"/>
+      </div>}
+      {view === 'disk' && <>
+        <DiskOverview inventory={diskInventory} io={metrics?.diskIO}/>
+        <DiskIOPanel disks={metrics?.diskIO}/>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <TrendChart title={`磁盘读取 · 最近 ${windowLabel}`} window={historyWindow} series={diskReadRate} color={T.teal} unit="bytesPerSec"/>
+          <TrendChart title={`磁盘写入 · 最近 ${windowLabel}`} window={historyWindow} series={diskWriteRate} color={T.red} unit="bytesPerSec"/>
+        </div>
+      </>}
+      {view === 'gpu' && <>
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: 16, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.ink, marginBottom: 12 }}>{gpus.length ? `${gpus.length} 张 GPU · ${gpus[0].productName}` : '本节点未检测到 GPU'}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: gpus.length > 1 ? '1fr 1fr' : '1fr', gap: 12 }}>
+            {gpus.map((g, idx) => {
+              const hist = gpuHistory?.perGpu?.find(h => h.id === String(g.index)) || gpuHistory?.perGpu?.[idx]
+              return <GpuRow key={g.index} g={{id: g.index, model: g.productName, memUsed: g.memUsed, memTotal: g.memTotal, temp: g.temperature, power: g.powerDraw, max: g.powerLimit}} live={Math.round(g.gpuUtil)} history={hist}/>
+            })}
+          </div>
+        </div>
+        <TrendChart title={`GPU 使用率 · 最近 ${windowLabel}`} window={historyWindow} series={gpuSeries} color={T.indigo} unit="percent" max={100}/>
+        {gpus.length > 0 && <GpuProcessTable data={gpuProcs.data} status={gpuProcs.status}/>}
+      </>}
     </div>
   );
 }

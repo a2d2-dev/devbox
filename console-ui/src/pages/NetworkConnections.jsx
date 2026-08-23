@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react'
 import { T } from '../tokens'
 import { authFetch } from '../hooks/useApi'
+import { startVisiblePolling } from '../lib/visiblePolling'
 
 const th = {
   padding: '8px 14px', fontSize: 10.5, fontWeight: 600, color: T.ink3,
@@ -29,7 +30,7 @@ function stateBadgeColor(state) {
 const ALL_STATES = ['LISTEN', 'ESTABLISHED', 'TIME_WAIT', 'CLOSE_WAIT',
   'FIN_WAIT1', 'FIN_WAIT2', 'SYN_SENT', 'SYN_RECV', 'CLOSE', 'CLOSING', 'LAST_ACK'];
 
-export default function NetworkConnections() {
+export default function NetworkConnections({ onOpenApp }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -47,9 +48,8 @@ export default function NetworkConnections() {
         .catch(() => { if (!stopped) setError('网络信息读取失败'); })
         .finally(() => { if (!stopped) setLoading(false); });
     }
-    load();
-    const id = setInterval(load, 10000);
-    return () => { stopped = true; clearInterval(id); };
+    const stopPolling = startVisiblePolling(load, 10000);
+    return () => { stopped = true; stopPolling(); };
   }, []);
 
   const visible = items.filter(c => {
@@ -78,6 +78,7 @@ export default function NetworkConnections() {
             </div>
           </div>
           <div style={{ flex: 1 }}/>
+          <button onClick={() => onOpenApp?.({ id: 'processes' })} style={{ ...filterInput, cursor: 'pointer', color: T.blueDeep }}>服务资源</button>
           <div style={{ fontSize: 11.5, color: T.ink3 }}>
             共 <span className="mono tnum" style={{ color: T.ink, fontWeight: 700 }}>{visible.length}</span>
             {visible.length !== items.length && <span> / {items.length}</span>}
