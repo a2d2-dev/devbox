@@ -32,6 +32,12 @@ func TestRegularUserCannotCallPrivilegedWriteEndpoints(t *testing.T) {
 	s.registerAppRoutes()
 	s.registerSupervisorRoutes()
 	s.registerSystemRoutes()
+	s.registerDownloadRoutes()
+	s.registerBackupRoutes()
+	s.registerDockerRoutes()
+	s.registerMaintenanceRoutes()
+	s.registerFileRoutes()
+	s.registerOnboardingRoutes()
 	h := s.authGate(s.mux)
 
 	tests := []struct {
@@ -42,7 +48,28 @@ func TestRegularUserCannotCallPrivilegedWriteEndpoints(t *testing.T) {
 		{"application create", http.MethodPost, "/api/v1/apps", `{}`},
 		{"application install", http.MethodPost, "/api/v1/store/install", `{}`},
 		{"VM control", http.MethodPost, "/api/v1/vms/test/control", `{"action":"start"}`},
+		{"process terminate", http.MethodPost, "/api/v1/processes/123/terminate", `{"startTicks":1}`},
 		{"system audit write", http.MethodPost, "/api/v1/audit/events", `{}`},
+		{"download create", http.MethodPost, "/api/v1/downloads", `{}`},
+		{"download delete file", http.MethodDelete, "/api/v1/downloads/task-1?deleteFile=true", ""},
+		{"file delete", http.MethodPost, "/api/v1/files/delete", `{"source":"my","path":"file.txt","permanent":true,"confirm":true}`},
+		{"file trash", http.MethodGet, "/api/v1/files/trash", ""},
+		{"file share create", http.MethodPost, "/api/v1/files/shares", `{}`},
+		{"backup create", http.MethodPost, "/api/v1/backups", `{}`},
+		{"backup run", http.MethodPost, "/api/v1/backups/task-1/run", ""},
+		{"backup restore", http.MethodPost, "/api/v1/backups/task-1/restore", `{}`},
+		{"Docker service control", http.MethodPost, "/api/v1/docker/service", `{}`},
+		{"Docker autostart", http.MethodPut, "/api/v1/docker/autostart", `{}`},
+		{"Docker migration plan", http.MethodPost, "/api/v1/docker/storage/plan", `{}`},
+		{"Docker migration execute", http.MethodPost, "/api/v1/docker/storage/execute", `{}`},
+		{"WebDAV settings write", http.MethodPut, "/api/v1/maintenance/settings", `{}`},
+		{"SMB preview", http.MethodPost, "/api/v1/maintenance/smb/preview", `[]`},
+		{"SMB apply", http.MethodPost, "/api/v1/maintenance/smb/apply", `[]`},
+		{"maintenance config backup", http.MethodGet, "/api/v1/maintenance/backup?includeSecrets=true", ""},
+		{"maintenance restore preview", http.MethodPost, "/api/v1/maintenance/restore/preview", ""},
+		{"maintenance restore confirm", http.MethodPost, "/api/v1/maintenance/restore/confirm", `{}`},
+		{"maintenance reset", http.MethodPost, "/api/v1/maintenance/reset", `{}`},
+		{"onboarding update", http.MethodPatch, "/api/v1/onboarding", `{}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

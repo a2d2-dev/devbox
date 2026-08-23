@@ -2,211 +2,21 @@ package console
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
-	"github.com/a2d2-dev/devbox/pkg/auth"
 	"go.uber.org/zap"
 )
 
 // registerExtraRoutes 注册文件/模型/告警/端口路由
 func (s *Server) registerExtraRoutes() {
-	s.mux.HandleFunc("/api/v1/files", s.handleFiles)
-	s.mux.HandleFunc("/api/v1/files/upload", s.handleFileUpload)
-	s.mux.HandleFunc("/api/v1/files/content", s.handleFileContent)
+	s.registerFileRoutes()
 	s.mux.HandleFunc("/api/v1/models", s.handleModels)
 	s.mux.HandleFunc("/api/v1/alerts", s.handleAlerts)
 	s.mux.HandleFunc("/api/v1/alerts/", s.requireAdminWrites(s.handleAlertAction))
 	s.mux.HandleFunc("/api/v1/ports", s.handlePorts)
-}
-
-func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
-	if s.fileBrowser == nil {
-		http.Error(w, "file browser not initialized", http.StatusServiceUnavailable)
-		return
-	}
-	path := r.URL.Query().Get("path")
-	allowed, err := s.authorizedFilePaths(r, path, true)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
-		return
-	}
-	entries, err := s.fileBrowser.List(path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if allowed != nil {
-		filtered := entries[:0]
-		for _, entry := range entries {
-			if pathWithinAny(entry.AbsPath, allowed, true) {
-				filtered = append(filtered, entry)
-			}
-		}
-		entries = filtered
-	}
-	s.jsonOK(w, entries)
-}
-
-// handleFileUpload 接收 multipart form (path, name, file)，把文件写到当前目录。
-// 供 Files 页面「粘贴图片」使用，20MB 上限够贴截图，超出返 413。
-func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
-	if s.fileBrowser == nil {
-		http.Error(w, "file browser not initialized", http.StatusServiceUnavailable)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	const maxUpload = 20 << 20
-	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
-	if err := r.ParseMultipartForm(maxUpload); err != nil {
-		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
-		return
-	}
-
-	path := r.FormValue("path")
-	if _, err := s.authorizedFilePaths(r, path, false); err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
-		return
-	}
-	name := r.FormValue("name")
-
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "missing file field", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	if name == "" && header != nil {
-		name = header.Filename
-	}
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	saved, err := s.fileBrowser.Save(path, name, data)
-	if err != nil {
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "file exists"):
-			http.Error(w, msg, http.StatusConflict)
-		case strings.Contains(msg, "access denied"):
-			http.Error(w, msg, http.StatusForbidden)
-		case strings.Contains(msg, "invalid filename"), strings.Contains(msg, "invalid path"),
-			strings.Contains(msg, "not a directory"), strings.Contains(msg, "failed to stat directory"):
-			http.Error(w, msg, http.StatusBadRequest)
-		default:
-			http.Error(w, msg, http.StatusInternalServerError)
-		}
-		return
-	}
-	s.jsonOK(w, map[string]string{"name": saved})
-}
-
-// handleFileContent 直出 dirPath/name 指向的文件，给 Files 页预览用。
-// http.ServeFile 自带 Content-Type / Range 处理，图片/PDF/文本都能直接展。
-func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
-	if s.fileBrowser == nil {
-		http.Error(w, "file browser not initialized", http.StatusServiceUnavailable)
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if _, err := s.authorizedFilePaths(r, r.URL.Query().Get("path"), false); err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
-		return
-	}
-	full, err := s.fileBrowser.ResolveFile(r.URL.Query().Get("path"), r.URL.Query().Get("name"))
-	if err != nil {
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "access denied"):
-			http.Error(w, msg, http.StatusForbidden)
-		case strings.Contains(msg, "file not found"):
-			http.Error(w, msg, http.StatusNotFound)
-		case strings.Contains(msg, "invalid"), strings.Contains(msg, "not a regular file"):
-			http.Error(w, msg, http.StatusBadRequest)
-		default:
-			http.Error(w, msg, http.StatusInternalServerError)
-		}
-		return
-	}
-	http.ServeFile(w, r, full)
-}
-
-func (s *Server) authorizedFilePaths(r *http.Request, requested string, allowAncestor bool) ([]string, error) {
-	if s.users == nil {
-		return nil, nil
-	}
-	p, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || p.IsAdmin() || p.Legacy {
-		return nil, nil
-	}
-	paths, err := s.users.AllowedPaths(r.Context(), p.UserID)
-	if err != nil {
-		return nil, err
-	}
-	work := s.config.WorkDir
-	if work == "" {
-		work = "/data"
-	}
-	target := requested
-	if target == "" {
-		target = work
-	} else if !filepath.IsAbs(target) {
-		target = filepath.Join(work, target)
-	}
-	target = filepath.Clean(target)
-	realTarget, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return nil, errors.New("access denied: path cannot be resolved")
-	}
-	realPaths := make([]string, 0, len(paths))
-	for _, path := range paths {
-		real, err := filepath.EvalSymlinks(path)
-		if err != nil {
-			return nil, errors.New("access denied: assigned path cannot be resolved")
-		}
-		realPaths = append(realPaths, real)
-	}
-	if !pathWithinAny(realTarget, realPaths, allowAncestor) {
-		return nil, errors.New("access denied: path is not assigned to this account")
-	}
-	return realPaths, nil
-}
-
-func pathWithinAny(path string, roots []string, allowAncestor bool) bool {
-	real, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return false
-	}
-	path = real
-	for _, root := range roots {
-		root, err = filepath.EvalSymlinks(root)
-		if err != nil {
-			continue
-		}
-		if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
-			return true
-		}
-		if allowAncestor && strings.HasPrefix(root, path+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {

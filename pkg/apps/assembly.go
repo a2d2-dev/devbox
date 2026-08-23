@@ -15,12 +15,13 @@ import (
 
 // ControllerConfig 装配 Controller 所需的全部配置。
 type ControllerConfig struct {
-	DataDir           string // 数据根
-	DockerSocket      string // Docker daemon unix socket
-	ComposeEnabled    bool
-	Kubeconfig        string
-	Namespace         string
-	KubernetesEnabled bool // 尝试启用 K8s 运行时（不可用则静默降级）
+	DataDir                     string // 数据根
+	DockerSocket                string // Docker daemon unix socket
+	DockerMigrationAllowedRoots []string
+	ComposeEnabled              bool
+	Kubeconfig                  string
+	Namespace                   string
+	KubernetesEnabled           bool // 尝试启用 K8s 运行时（不可用则静默降级）
 }
 
 // AssembleController 构造并启动 Controller（含 worker 崩溃恢复）。
@@ -62,12 +63,17 @@ func AssembleController(ctx context.Context, cfg ControllerConfig, logger *zap.L
 
 	var prechecker composePrechecker
 	var takeoverRenderer takeoverPrechecker
+	dockerManager := NewDockerManager(cfg.DockerSocket, cfg.DockerMigrationAllowedRoots...)
 	if cr, ok := adapters[RuntimeCompose].(*composeRuntime); ok {
 		prechecker = cr
 		takeoverRenderer = cr
+		runner := realDockerCommandRunner{}
+		dockerManager = newDockerManagerWithDeps(cr.engine, &systemDockerServiceHost{runner: runner}, &osDockerStorage{daemonPath: defaultDaemonJSON}, runner)
+		dockerManager.allowedRoots = dockerMigrationAllowedRoots(cfg.DockerMigrationAllowedRoots)
 	}
 	controller := NewController(repo, paths, adapters, worker, logger,
-		WithPrechecker(prechecker), WithTakeoverPrechecker(takeoverRenderer))
+		WithPrechecker(prechecker), WithTakeoverPrechecker(takeoverRenderer),
+		WithDockerManager(dockerManager))
 	cleanup := func() { _ = repo.Close() }
 	return controller, cleanup, nil
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/a2d2-dev/devbox/pkg/apps"
+	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
 	"go.uber.org/zap"
 )
 
@@ -148,6 +149,11 @@ func (s *Server) installResolvedVersion(w http.ResponseWriter, r *http.Request, 
 		writeAppErr(w, err)
 		return
 	}
+	s.recordEvent(r, eventlog.Input{
+		Level: "info", Module: "apps", Event: "从应用市场安装应用", EventType: "APP_INSTALL", Outcome: "accepted",
+		ResourceKind: "application", ResourceID: desired.ID,
+		Payload: map[string]any{"source": source.Kind, "store_id": source.StoreID, "catalog_id": source.CatalogID, "version": source.Version, "task_id": task.ID},
+	})
 	s.jsonStatus(w, http.StatusAccepted, apps.StoreInstallResult{
 		TaskID:   task.ID,
 		AppID:    desired.ID,

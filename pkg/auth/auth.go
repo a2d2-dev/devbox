@@ -35,12 +35,13 @@ type session struct {
 }
 
 type Auth struct {
-	password        string
-	sessionTTL      time.Duration
-	users           *users.Store
-	usersConfigured bool
-	mu              sync.RWMutex
-	sessions        map[string]session
+	password         string
+	sessionTTL       time.Duration
+	users            *users.Store
+	usersConfigured  bool
+	mu               sync.RWMutex
+	sessions         map[string]session
+	onSessionRemoved func(string)
 }
 
 func New(cfg Config) *Auth {
@@ -102,10 +103,7 @@ func (a *Auth) VerifyCredentials(username, password string) (string, Principal, 
 		allowLegacy = err == nil && (n == 0 || username == "" || strings.EqualFold(username, "admin"))
 	}
 	if allowLegacy {
-		if username == "" {
-			username = "admin"
-		}
-		p := Principal{Username: username, DisplayName: username, Role: users.RoleAdmin, Legacy: true}
+		p := Principal{Username: "admin", DisplayName: "admin", Role: users.RoleAdmin, Legacy: true}
 		return a.issue(p), p, true
 	}
 	if !enabled {
@@ -146,9 +144,7 @@ func (a *Auth) Principal(token string) (Principal, bool) {
 		return Principal{}, false
 	}
 	if time.Now().After(sess.expires) {
-		a.mu.Lock()
-		delete(a.sessions, token)
-		a.mu.Unlock()
+		a.removeSession(token)
 		return Principal{}, false
 	}
 	return sess.principal, true
@@ -160,12 +156,16 @@ func (a *Auth) RevokeUser(userID string) {
 	if userID == "" {
 		return
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	tokens := make([]string, 0)
 	for token, sess := range a.sessions {
 		if sess.principal.UserID == userID {
-			delete(a.sessions, token)
+			tokens = append(tokens, token)
 		}
+	}
+	a.mu.RUnlock()
+	for _, token := range tokens {
+		a.removeSession(token)
 	}
 }
 
@@ -184,6 +184,35 @@ func tokenFromRequest(r *http.Request) string {
 	return token
 }
 
+// SetSessionRemovedHook registers cleanup invoked after expiry or explicit logout.
+func (a *Auth) SetSessionRemovedHook(hook func(string)) {
+	a.mu.Lock()
+	a.onSessionRemoved = hook
+	a.mu.Unlock()
+}
+
+// RevokeToken removes a session token. It accepts bare and Bearer forms.
+func (a *Auth) RevokeToken(token string) bool {
+	token = strings.TrimSpace(strings.TrimPrefix(token, "Bearer "))
+	if token == "" {
+		return false
+	}
+	return a.removeSession(token)
+}
+
+func (a *Auth) removeSession(token string) bool {
+	a.mu.Lock()
+	_, existed := a.sessions[token]
+	delete(a.sessions, token)
+	hook := a.onSessionRemoved
+	a.mu.Unlock()
+	if existed && hook != nil {
+		hook(token)
+	}
+	return existed
+}
+
+// Middleware HTTP 中间件，检查 Authorization header
 func (a *Auth) Middleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !a.Available() {

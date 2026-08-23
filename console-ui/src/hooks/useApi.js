@@ -4,19 +4,32 @@ const API = '/api/v1';
 
 // ─── Auth token management ──────────────────────────────────────
 
-let _token = localStorage.getItem('edge_token') || '';
+const TOKEN_KEY = 'edge_token';
+let _token = localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || '';
+let _authRequired = true;
+let _expiryNotified = false;
 
-export function setAuthToken(t) {
-  _token = t || '';
-  if (t) localStorage.setItem('edge_token', t);
-  else localStorage.removeItem('edge_token');
+export function setAuthToken(t, persistence = 'persistent') {
+	_token = t || '';
+	localStorage.removeItem(TOKEN_KEY);
+	sessionStorage.removeItem(TOKEN_KEY);
+	if (t) {
+		const storage = persistence === 'session' ? sessionStorage : localStorage;
+		storage.setItem(TOKEN_KEY, t);
+	}
+	_expiryNotified = false;
 }
 
 export function getAuthToken() { return _token; }
 
+export function setAuthRequired(required) {
+	_authRequired = required;
+}
+
 export function clearAuth() {
-  _token = '';
-  localStorage.removeItem('edge_token');
+	_token = '';
+	localStorage.removeItem(TOKEN_KEY);
+	sessionStorage.removeItem(TOKEN_KEY);
 }
 
 function authHeaders() {
@@ -26,34 +39,64 @@ function authHeaders() {
 let _onAuthExpired = null;
 export function setOnAuthExpired(cb) { _onAuthExpired = cb; }
 
-// 连续 401 计数 — 累计达到阈值才登出，避免单次偶发 401 (云端 token 校验抖动 /
-// 缓存失效瞬间 / 网络 race) 把用户踢出登录。
-// 任何 2xx 成功响应重置计数。
-const MAX_CONSECUTIVE_401 = 3;
-let _consecutive401 = 0;
-
-// authFetch 通用 fetch wrapper —— 自动注入 Bearer token + 累计 401 触发清登录
+// authFetch 通用 fetch wrapper —— 自动注入 Bearer token；认证中间件返回 401 时
+// 立即清理会话。通知只触发一次，避免多个轮询请求同时过期造成登录页回跳循环。
 // 凡是调 /api/v1/* 受保护接口的页面必须用这个，不要用 raw fetch
 // （raw fetch 会被 middleware 拦 401 + 页面空白；见 2026-06-22 进程/磁盘/网络/告警/设置 5 页空白事件）
 export async function authFetch(url, opts = {}) {
   // 未登录短路：App.jsx 里的 hooks (useMetrics/useApps/…) 写在 early-return 之前，
   // 登录前会先跑一遍。这时不发网络，返合成 401 让 usePoll 走 error 分支即可，
   // 避免登录页/初始加载在 devtool 里堆一片 401 噪音。
-  if (!_token) {
-    return new Response(null, { status: 401, statusText: 'no token (pre-login)' });
+	if (!_token && _authRequired) {
+		return new Response(null, { status: 401, statusText: 'no token (pre-login)' });
+	}
+	const resp = await fetch(url, { ...opts, headers: { ...authHeaders(), ...opts.headers } });
+	if (resp.status === 401 && _token && !_expiryNotified) {
+		_expiryNotified = true;
+		clearAuth();
+		if (_onAuthExpired) _onAuthExpired();
+	}
+	return resp;
+}
+
+export async function downloadRequest(path = '', opts = {}) {
+  const response = await authFetch(API + '/downloads' + path, opts);
+  const contentType = response.headers.get('content-type') || '';
+  const body = contentType.includes('application/json') ? await response.json() : await response.text();
+  if (!response.ok) {
+    const error = new Error(body?.error || body || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
-  const resp = await fetch(url, { ...opts, headers: { ...authHeaders(), ...opts.headers } });
-  if (resp.status === 401 && _token) {
-    _consecutive401 += 1;
-    if (_consecutive401 >= MAX_CONSECUTIVE_401) {
-      _consecutive401 = 0;
-      clearAuth();
-      if (_onAuthExpired) _onAuthExpired();
-    }
-  } else if (resp.ok) {
-    _consecutive401 = 0;
-  }
-  return resp;
+  return body;
+}
+
+export function useDownloads(interval = 1000) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick(value => value + 1), []);
+
+  useEffect(() => {
+    let active = true;
+    let timer;
+    const load = async () => {
+      try {
+        const next = await downloadRequest();
+        if (active) { setData(next); setError(null); }
+      } catch (requestError) {
+        if (active) setError(requestError);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    if (interval > 0) timer = setInterval(load, interval);
+    return () => { active = false; if (timer) clearInterval(timer); };
+  }, [interval, tick]);
+
+  return { data, loading, error, refresh };
 }
 
 // ─── Internal helpers ────────────────────────────────────────────
@@ -95,24 +138,28 @@ function usePoll(url, { interval = 0, fallback = null, transform } = {}) {
   useEffect(() => {
     mountedRef.current = true;
     let timer = null;
+    let inFlight = false;
 
     if (!url) {
       return () => { mountedRef.current = false; };
     }
 
     async function doFetch() {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const r = await authFetch(API + url);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const json = await r.json();
         if (!mountedRef.current) return;
-        setData(transform ? transform(json) : json);
+        setData((previous) => transform ? transform(json, previous) : json);
         setError(null);
       } catch (err) {
         if (!mountedRef.current) return;
         setError(err);
         // keep previous data (or fallback) on error
       } finally {
+        inFlight = false;
         if (mountedRef.current) setLoading(false);
       }
     }
@@ -290,8 +337,8 @@ export function useMetricsHistory(interval = 5000) {
 
 // ─── Apps ────────────────────────────────────────────────────────
 
-export function useApps(interval = 10000) {
-  return usePoll('/apps', {
+export function useApps(interval = 10000, enabled = true) {
+	return usePoll(enabled ? '/apps' : null, {
     interval,
     fallback: [],
     transform: (apps) => {
@@ -348,6 +395,67 @@ export function useApps(interval = 10000) {
       }));
     },
   });
+}
+
+// ─── Docker overview / host runtime settings ───────────────────
+
+export function useDockerOverview(interval = 5000) {
+  return usePoll('/docker/overview', { interval, fallback: null });
+}
+
+export function useDockerStats(interval = 3000) {
+  const empty = { available: false, cpuPercent: 0, memoryUsageBytes: 0, memoryLimitBytes: 0,
+    networkRxBytes: 0, networkTxBytes: 0, containers: 0 };
+  return usePoll('/docker/stats', {
+    interval,
+    fallback: { current: empty, history: { cpu: [], memory: [], rx: [], tx: [], times: [] } },
+    transform: (sample, previous) => {
+      const prior = previous?.history || { cpu: [], memory: [], rx: [], tx: [], times: [] };
+      if (!sample?.available || !sample.sampledAt || prior.times.at(-1) === sample.sampledAt) {
+        return { current: sample || empty, history: prior };
+      }
+      const trim = (values, value) => [...values, value].slice(-24);
+      const memory = sample.memoryLimitBytes > 0 ? sample.memoryUsageBytes / sample.memoryLimitBytes * 100 : 0;
+      return { current: sample, history: {
+        cpu: trim(prior.cpu, sample.cpuPercent || 0), memory: trim(prior.memory, memory),
+        rx: trim(prior.rx, sample.networkRxBytes || 0), tx: trim(prior.tx, sample.networkTxBytes || 0),
+        times: trim(prior.times, sample.sampledAt),
+      } };
+    },
+  });
+}
+
+export async function dockerServiceAction(action) {
+  const r = await authFetch(`${API}/docker/service`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+export async function setDockerAutostart(enabled) {
+  const r = await authFetch(`${API}/docker/autostart`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !!enabled }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+export async function planDockerMigration(targetPath) {
+  const r = await authFetch(`${API}/docker/storage/plan`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetPath }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
+}
+
+export async function executeDockerMigration(targetPath, planId) {
+  const r = await authFetch(`${API}/docker/storage/execute`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetPath, planId, confirm: true }),
+  });
+  if (!r.ok) throw await readErr(r);
+  return r.json();
 }
 
 // ─── App detail (含 env + deployValues，AppMgmtDrawer 打开时拉一次) ───
@@ -736,6 +844,7 @@ async function readErr(r) {
         err.message = j.error;
         if (typeof j.reason === 'string') err.reason = j.reason;
         if (j.detail) err.detail = j.detail;
+        if (j.preflight) err.preflight = j.preflight;
         if (Array.isArray(j.findings)) err.findings = j.findings;
         return err;
       }
@@ -911,6 +1020,45 @@ export function refreshCatalogSource(id) { return catalogSourceMutation(`/${enco
 // useCatalogApps：GET /catalogs/apps → []StoreApp（带 catalogId/catalogName/installable/installed）。
 export function useCatalogApps(interval = 30000) {
   return usePoll('/catalogs/apps', { interval, fallback: [] });
+}
+
+// ─── Backup tasks (Issue #17) ──────────────────────────────────
+
+export function useBackups(interval = 3000) {
+  return usePoll('/backups', { interval, fallback: [] });
+}
+
+export function useBackupHistory(taskId, interval = 3000) {
+  return usePoll(taskId ? `/backups/${encodeURIComponent(taskId)}/history` : null, { interval, fallback: [] });
+}
+
+export function useBackupVersions(taskId) {
+  return usePoll(taskId ? `/backups/${encodeURIComponent(taskId)}/versions` : null, { fallback: [] });
+}
+
+async function backupRequest(path, method = 'GET', body) {
+  const options = { method, headers: {} };
+  if (body !== undefined) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(body);
+  }
+  const response = await authFetch(`${API}${path}`, options);
+  if (!response.ok) throw await readErr(response);
+  return response.json();
+}
+
+export function preflightBackup(task) { return backupRequest('/backups/preflight', 'POST', task); }
+export function createBackup(task) { return backupRequest('/backups', 'POST', task); }
+export function runBackup(id) { return backupRequest(`/backups/${encodeURIComponent(id)}/run`, 'POST'); }
+export function pauseBackup(id, paused) { return backupRequest(`/backups/${encodeURIComponent(id)}/pause`, 'POST', { paused }); }
+export function fetchBackupLog(taskId, historyId) {
+  return backupRequest(`/backups/${encodeURIComponent(taskId)}/history/${encodeURIComponent(historyId)}/log`);
+}
+export function previewBackupRestore(taskId, request) {
+  return backupRequest(`/backups/${encodeURIComponent(taskId)}/restore/preview`, 'POST', request);
+}
+export function restoreBackup(taskId, request) {
+  return backupRequest(`/backups/${encodeURIComponent(taskId)}/restore`, 'POST', request);
 }
 
 // refreshCatalogs：POST /catalogs 显式刷新所有已配置 source（不接受 URL 入参）。

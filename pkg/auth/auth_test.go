@@ -67,3 +67,13 @@ func TestConfiguredUserStoreFailureFailsClosed(t *testing.T) {
 	require.Contains(t, w.Body.String(), "user_database_unavailable")
 	require.False(t, called)
 }
+
+func TestExpiredSessionNotifiesCleanup(t *testing.T) {
+	a := New(Config{Password: "pw", SessionTTL: -1})
+	removed := ""
+	a.SetSessionRemovedHook(func(token string) { removed = token })
+	token, ok := a.Verify("pw")
+	require.True(t, ok)
+	require.False(t, a.ValidateToken(token))
+	require.Equal(t, token, removed)
+}
