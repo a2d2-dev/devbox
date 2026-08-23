@@ -58,6 +58,10 @@ import { TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakToggle, TweakCol
 import { useMetrics, useMetricsHistory, useApps, useAlerts, useDevice, setAuthToken, getAuthToken, clearAuth, setOnAuthExpired } from './hooks/useApi'
 import { SYSTEM_APPS } from './data/systemApps'
 import { AnimatePresence } from './motion'
+import { ShortcutHelpDialog } from './components/ShortcutHelpDialog'
+import { shortcutRegistry } from './shortcuts/shortcuts'
+import { useGlobalShortcuts } from './shortcuts/useGlobalShortcuts'
+import { useOverlayStack } from './overlays/OverlayProvider'
 
 const TWEAK_DEFAULTS = {
   "preset": "platform-dark",
@@ -144,6 +148,7 @@ function clampGeo(g, vw, vh) {
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(() => !!getAuthToken());
   const [loginUser, setLoginUser] = useState('');
+  const overlayStack = useOverlayStack();
 
   const handleLogin = (token, username) => {
     setAuthToken(token);
@@ -254,6 +259,7 @@ export default function App() {
   const [authReason, setAuthReason] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [uninstalled, setUninstalled] = useState(() => new Set());
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
 
   // Launch an app: add to running set + focus its window.
   // New apps default to full-screen; already-running apps keep their last mode.
@@ -365,6 +371,29 @@ export default function App() {
   // device 必须在 LoginScreen early-return 前定义（line 290 引用它）
   const device = liveDevice || {};
 
+  const shortcutDockApps = useMemo(() => openApps
+    .map(id => appById[id])
+    .filter(Boolean), [openApps, appById]);
+  const appShortcutRegistry = shortcutHelpOpen
+    ? shortcutRegistry.filter(shortcut => shortcut.action === 'toggle-shortcut-help')
+    : shortcutRegistry;
+  useGlobalShortcuts({
+    enabled: loggedIn && (!overlayStack.hasLayers || shortcutHelpOpen),
+    registry: appShortcutRegistry,
+    actions: {
+      'toggle-shortcut-help': () => setShortcutHelpOpen(open => !open),
+      'show-desktop': showDesktop,
+      'minimize-window': minimizeWindow,
+      'toggle-maximized': () => setMaximized(current => !current),
+      'close-window': closeWindow,
+      'focus-dock-app': (index) => {
+        const app = shortcutDockApps[index];
+        if (app) focusApp(app.id);
+      },
+    },
+    context: { activeId, dockApps: shortcutDockApps },
+  });
+
   if (!loggedIn) {
     return (
       <ToastProvider>
@@ -432,6 +461,7 @@ export default function App() {
           online={t.online}
           lastSync="5 分钟前"
           onOpenAlerts={() => launchApp({ id: 'alerts' })}
+          onOpenShortcutHelp={() => setShortcutHelpOpen(true)}
           loginUser={loginUser}
           onLogout={handleLogout}
         />
@@ -543,6 +573,13 @@ export default function App() {
 
       {/* [Story 4.2 Disabled] AuthModal "节点访问授权" 入口删除 (LF 报告冲突 2026-06-21)
           受控开发界面下登录是唯一身份门槛，退出在右上头像下拉 */}
+
+      {shortcutHelpOpen && (
+        <ShortcutHelpDialog
+          onClose={() => setShortcutHelpOpen(false)}
+          context={{ activeId, dockApps }}
+        />
+      )}
 
       {/* Tweaks panel */}
       <TweaksPanel title="Tweaks">

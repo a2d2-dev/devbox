@@ -81,7 +81,7 @@ function IframeFace({ app, onMgmt }) {
   );
 }
 
-function AppShell({ appId, app, authed, onRequireAuth, onOpenManagement }) {
+function AppShellContent({ appId, app, authed, onRequireAuth, onOpenManagement }) {
   // Native faces for built-in system tools
   if (appId === 'vscode')    return <VSCodeFace    onMgmt={onOpenManagement}/>;
   if (appId === 'jupyter')   return <JupyterFace   onMgmt={onOpenManagement}/>;
@@ -108,6 +108,10 @@ function AppShell({ appId, app, authed, onRequireAuth, onOpenManagement }) {
   // Generic iframe fallback for any installed app with a HostPort
   if (app) return <IframeFace app={app} onMgmt={onOpenManagement}/>;
   return null;
+}
+
+function AppShell(props) {
+  return <AppShellContent {...props}/>;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -145,7 +149,7 @@ function VSCodeFace({ onMgmt }) {
   ];
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#1e1e1e', color: '#cccccc', overflow: 'hidden' }}>
+    <div data-shortcut-scope="editor" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#1e1e1e', color: '#cccccc', overflow: 'hidden' }}>
       {/* Title bar with menu */}
       <div style={{
         height: 30, background: '#252526', borderBottom: '1px solid #1e1e1e',
@@ -428,7 +432,7 @@ function CodeLine({ kw, kw2, fn, str, str2, comment, txt, txt2, txt2b, rest, res
 // ═══════════════════════════════════════════════════════════════
 function JupyterFace({ onMgmt }) {
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f6f6f6', overflow: 'hidden' }}>
+    <div data-shortcut-scope="editor" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f6f6f6', overflow: 'hidden' }}>
       {/* Menu bar */}
       <div style={{
         height: 30, background: '#fafafa', borderBottom: '1px solid #d8d8d8',

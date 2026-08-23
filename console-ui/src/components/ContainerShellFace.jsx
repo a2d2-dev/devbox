@@ -158,7 +158,7 @@ export default function ContainerShellFace({ appId, app }) {
   }, [appId, isRunning])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%',
+    <div data-shortcut-scope="terminal" style={{ display: 'flex', flexDirection: 'column', height: '100%',
       background: '#0b1220', overflow: 'hidden' }}>
       {/* 状态栏 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8,

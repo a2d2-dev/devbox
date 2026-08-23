@@ -6,12 +6,19 @@ import { codeInspectorPlugin } from 'code-inspector-plugin'
 
 const apiTarget = process.env.DEVBOX_API_TARGET || 'http://localhost:9090'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.js',
+    css: false,
+    restoreMocks: true,
+    exclude: ['e2e/**', 'node_modules/**', 'src/lib/compose.test.js'],
+  },
   plugins: [
-    codeInspectorPlugin({ bundler: 'vite' }),
-    ccPromptPlugin({ inspector: false }),
+    mode !== 'test' && codeInspectorPlugin({ bundler: 'vite' }),
+    mode !== 'test' && ccPromptPlugin({ inspector: false }),
     react(),
-  ],
+  ].filter(Boolean),
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -28,4 +35,4 @@ export default defineConfig({
       '/app-icons': apiTarget,
     },
   },
-})
+}))
