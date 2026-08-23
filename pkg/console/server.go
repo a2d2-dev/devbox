@@ -124,6 +124,7 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 		// devbox 侧固定返回"离线"占位，无敏感数据，公开访问以避免登录页 401 噪音。
 		if !strings.HasPrefix(p, "/api/v1/") ||
 			strings.HasPrefix(p, "/api/v1/auth/") ||
+			strings.HasPrefix(p, "/api/v1/files/public/") ||
 			p == "/api/v1/health" ||
 			p == "/api/v1/device" ||
 			p == "/api/v1/cloud/status" ||
