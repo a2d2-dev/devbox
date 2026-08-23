@@ -1,667 +1,459 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
-import { StatusDot, Chip, Sparkline } from '../components/ui'
-import { useMetrics, authFetch } from '../hooks/useApi'
+import { authFetch } from '../hooks/useApi'
 import { FileIcon } from '../components/AppShell'
 import { useToast } from '../components/toastContext'
 
-const btnSecondary = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  borderRadius: 7, border: `1px solid ${T.border}`,
-  background: 'white', color: T.ink2, cursor: 'pointer',
-  fontSize: 12.5, fontWeight: 500,
-};
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'])
+const button = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+  height: 30, padding: '0 10px', borderRadius: 6, border: `1px solid ${T.border}`,
+  background: '#fff', color: T.ink2, fontSize: 12, fontWeight: 550, cursor: 'pointer',
+}
+const iconButton = { ...button, width: 30, padding: 0 }
 
-const btnPrimary = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  borderRadius: 7, border: 'none',
-  background: T.blue, color: 'white', cursor: 'pointer',
-  fontSize: 12.5, fontWeight: 600,
-  height: 32, padding: '0 14px',
-};
-
-const th = { padding: '8px 14px', fontSize: 10.5, fontWeight: 600, color: T.ink3,
-  letterSpacing: '0.04em', textTransform: 'uppercase' };
-
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif']);
-function isImageType(t) { return t && IMAGE_EXTS.has(t.toLowerCase()); }
-
-// 复制到剪贴板：优先走 Clipboard API，非安全上下文/无权限时用 textarea 兜底。
-async function copyText(text) {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (_) {}
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch (_) { return false; }
+function formatSize(value) {
+  if (value == null || value === '') return ''
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = Number(value)
+  let index = 0
+  while (size >= 1000 && index < units.length - 1) { size /= 1000; index += 1 }
+  return `${index === 0 ? size : size.toFixed(1)} ${units[index]}`
 }
 
-function _fmtSize(b) {
-  if (b >= 1e12) return (b/1e12).toFixed(1)+' TB';
-  if (b >= 1e9) return (b/1e9).toFixed(1)+' GB';
-  if (b >= 1e6) return (b/1e6).toFixed(1)+' MB';
-  if (b >= 1e3) return (b/1e3).toFixed(1)+' KB';
-  return b+' B';
+function formatDate(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { hour12: false })
 }
 
-// 详情面板用的完整时间戳，例：2026-07-05 14:32:18
-function _fmtDateTime(d) {
-  if (!d) return '';
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ` +
-         `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+function parentPath(path) { const parts = path.split('/').filter(Boolean); parts.pop(); return parts.join('/') }
+function entryKey(entry) { return entry.id || `${entry.source}:${entry.path}` }
+
+async function apiJSON(url, options) {
+  const response = await authFetch(url, options)
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(body.message || body.code || `请求失败 (${response.status})`)
+  return body
 }
 
-// 文件种类的可读名称，参考 Finder 的 “Kind” 字段
-const KIND_MAP = {
-  dir: '文件夹',
-  png: 'PNG 图像', jpg: 'JPEG 图像', jpeg: 'JPEG 图像', gif: 'GIF 图像',
-  webp: 'WebP 图像', svg: 'SVG 矢量图', bmp: 'BMP 图像', ico: '图标',
-  avif: 'AVIF 图像',
-  txt: '纯文本', md: 'Markdown 文档', json: 'JSON 数据', yaml: 'YAML 配置',
-  yml: 'YAML 配置', toml: 'TOML 配置', xml: 'XML 文档', csv: 'CSV 表格',
-  log: '日志文件',
-  pdf: 'PDF 文档', zip: 'ZIP 压缩包', tar: 'TAR 归档', gz: 'GZIP 压缩',
-  go: 'Go 源码', py: 'Python 源码', js: 'JavaScript 源码',
-  jsx: 'React 源码', ts: 'TypeScript 源码', tsx: 'TSX 源码',
-  sh: 'Shell 脚本', ipynb: 'Jupyter Notebook',
-};
-function fileKind(type) {
-  if (!type) return '文件';
-  const k = KIND_MAP[type.toLowerCase()];
-  return k || (type.toUpperCase() + ' 文件');
-}
-
-// 详情面板里 label / value 一行的通用样式
-function DetailRow({ label, value }) {
+function SidebarRow({ icon, label, active, disabled, detail, onClick }) {
   return (
-    <div style={{
-      display: 'flex', gap: 10, padding: '6px 0', fontSize: 11.5,
-      borderBottom: `1px dashed ${T.borderSoft}`,
-    }}>
-      <div style={{ width: 68, flexShrink: 0, color: T.ink4, fontWeight: 500 }}>{label}</div>
-      <div style={{ flex: 1, color: T.ink2, minWidth: 0 }}>{value}</div>
+    <button
+      type="button" disabled={disabled && !onClick} onClick={onClick}
+      className={!active ? 'edge-row-hover' : undefined}
+      style={{
+        width: '100%', minHeight: 32, display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 10px', border: 0, borderRadius: 5, textAlign: 'left',
+        background: active ? T.blueSoft : 'transparent', color: active ? T.blueDeep : (disabled ? T.ink4 : T.ink2),
+        fontSize: 12.5, fontWeight: active ? 650 : 500, cursor: onClick ? 'pointer' : 'default',
+        '--edge-row-hover-bg': T.surface,
+      }}>
+      <Icon name={icon} size={14} stroke={1.8}/>
+      <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      {detail && <span style={{ fontSize: 9.5, color: T.ink4 }}>{detail}</span>}
+    </button>
+  )
+}
+
+function SectionLabel({ children }) {
+  return <div style={{ padding: '12px 10px 5px', fontSize: 10, color: T.ink4, fontWeight: 700, textTransform: 'uppercase' }}>{children}</div>
+}
+
+function EmptyState({ icon = 'folder', title, message }) {
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 32, textAlign: 'center' }}>
+      <Icon name={icon} size={36} stroke={1.3} style={{ color: T.ink4 }}/>
+      <div style={{ marginTop: 12, fontSize: 14, color: T.ink, fontWeight: 650 }}>{title}</div>
+      <div style={{ marginTop: 6, maxWidth: 360, fontSize: 12, color: T.ink3, lineHeight: 1.6 }}>{message}</div>
     </div>
-  );
+  )
 }
 
 export default function FilesFace() {
-  const [items, setItems] = useState([]);
-  // curPath 是相对工作目录的路径（空 = 工作区根）。后端用 console.workDir
-  // chroot，前端绝不发起绝对路径（防 leak 宿主目录结构）。
-  const [curPath, setCurPath] = useState('');
-  const [selected, setSelected] = useState(null);
-  const [error, setError] = useState(null); // { code, message }
-  const toast = useToast();
-  const [preview, setPreview] = useState(null); // { name, url, status: 'loading'|'ok'|'err' }
-  const [showDetails, setShowDetails] = useState(true); // 右侧详情面板开关，类似 Finder 的显示简介
-  const [uploading, setUploading] = useState(false);
-  // 让 paste 事件稳定触发：容器可 focus + 挂载后自动拿焦点
-  const rootRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const { data: metricsData } = useMetrics(10000);
-  const dsk = metricsData?.metrics?.dsk;
-  const diskPct = dsk?.pct || 0;
-  const diskUsed = dsk?.used || 0;
-  const diskTotal = dsk?.total || 0;
+  const toast = useToast()
+  const rootRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const [history, setHistory] = useState([{ source: 'my', path: '' }])
+  const [historyIndex, setHistoryIndex] = useState(0)
+  const [sources, setSources] = useState([])
+  const [sourceID, setSourceID] = useState('my')
+  const [path, setPath] = useState('')
+  const [view, setView] = useState('source')
+  const [items, setItems] = useState([])
+  const [selected, setSelected] = useState(new Set())
+  const [query, setQuery] = useState('')
+  const [sortBy, setSortBy] = useState('name')
+  const [sortOrder, setSortOrder] = useState('asc')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [uploading, setUploading] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [preview, setPreview] = useState(null)
 
-  // 面包屑：根 = 「工作区」，中段以相对路径分段，每段 clickable。
-  const breadcrumbSegments = curPath ? curPath.split('/').filter(Boolean) : [];
+  const source = sources.find(item => item.id === sourceID)
+  const capabilities = source?.capabilities || {}
+  const selectedItems = useMemo(() => items.filter(item => selected.has(entryKey(item))), [items, selected])
+  const one = selectedItems.length === 1 ? selectedItems[0] : null
 
-  // 加载指定目录的条目。返回一个 cancel 函数，供 useEffect 用。
-  const loadDir = useCallback((path) => {
-    setError(null);
-    let cancelled = false;
-    let resetTimer = null;
-
-    authFetch('/api/v1/files?path=' + encodeURIComponent(path))
-      .then(async r => {
-        if (cancelled) return null;
-        if (r.ok) return r.json();
-        let body = null;
-        try { body = await r.json(); } catch (_) {}
-        if (r.status === 403 && body?.code === 'PATH_FORBIDDEN') {
-          setError({ code: 'PATH_FORBIDDEN', message: '无权访问该路径（工作区外）' });
-          resetTimer = setTimeout(() => { if (!cancelled) setCurPath(''); }, 1500);
-        } else if (r.status === 404 && body?.code === 'PATH_NOT_FOUND') {
-          setError({ code: 'PATH_NOT_FOUND', message: '路径不存在' });
-        }
-        return null;
-      })
-      .then(d => {
-        if (cancelled) return;
-        if (d && Array.isArray(d)) setItems(d.map(e => {
-          const md = e.modified ? new Date(e.modified) : null;
-          return {
-            name: e.name,
-            type: e.isDir ? 'dir' : e.type,
-            size: e.isDir ? '' : _fmtSize(e.size),
-            sizeBytes: e.isDir ? null : e.size, // 原始字节数，详情面板显示 “12,345 字节”
-            count: e.count,
-            absPath: e.absPath,
-            modified: md ? md.toLocaleDateString('zh-CN') : '',
-            modifiedFull: md ? _fmtDateTime(md) : '', // 详情面板用的完整时间戳
-          };
-        }));
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-      if (resetTimer !== null) clearTimeout(resetTimer);
-    };
-  }, []);
+  const reload = useCallback(() => setRefreshKey(value => value + 1), [])
 
   useEffect(() => {
-    const cancel = loadDir(curPath);
-    return cancel;
-  }, [curPath, loadDir]);
+    let cancelled = false
+    apiJSON('/api/v1/files/sources').then(data => {
+      if (!cancelled) setSources(Array.isArray(data) ? data : [])
+    }).catch(err => { if (!cancelled) setError(err.message) })
+    return () => { cancelled = true }
+  }, [refreshKey])
 
-  // 挂载后主动聚焦容器，避免 body 无焦点时 window paste 事件不触发
-  useEffect(() => { rootRef.current?.focus(); }, []);
-
-  const uploadFiles = useCallback(async (files) => {
-    const selectedFiles = Array.from(files || []).filter(Boolean);
-    if (selectedFiles.length === 0 || uploading) return;
-
-    setUploading(true);
-    let okCount = 0;
-    let lastName = '';
-    try {
-      for (const file of selectedFiles) {
-        const fd = new FormData();
-        fd.append('path', curPath);
-        fd.append('name', file.name);
-        fd.append('file', file, file.name);
-
-        const r = await authFetch('/api/v1/files/upload', { method: 'POST', body: fd });
-        if (!r.ok) {
-          let msg = `上传失败 (${r.status})`;
-          if (r.status === 403) msg = '目标目录无写入权限';
-          else if (r.status === 413) msg = '文件超过 20MB 上限';
-          else if (r.status === 400) msg = '文件名或目标路径无效';
-          toast.err(msg);
-          return;
-        }
-        const body = await r.json().catch(() => ({}));
-        lastName = body.name || file.name;
-        okCount += 1;
-      }
-
-      toast.ok(okCount === 1 ? `已上传 ${lastName}` : `已上传 ${okCount} 个文件`);
-      if (lastName) setSelected(lastName);
-      loadDir(curPath);
-    } catch (_) {
-      toast.err('上传失败');
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  }, [curPath, loadDir, toast, uploading]);
-
-  // selected 变化时拉图片 blob 做预览（authFetch 走 Authorization header，
-  // 所以不能直接 <img src=/api/...>，得先拉成 blob URL）。非图片文件不预览。
-  // 直接看文件名扩展名，不依赖 items 状态（避免粘贴瞬间 items 未刷新的 race）。
   useEffect(() => {
-    if (!selected) { setPreview(null); return; }
-    const dot = selected.lastIndexOf('.');
-    const ext = dot > 0 ? selected.slice(dot + 1) : '';
-    if (!isImageType(ext)) { setPreview(null); return; }
-
-    let cancelled = false;
-    let objectURL = null;
-    setPreview({ name: selected, url: null, status: 'loading' });
-    authFetch('/api/v1/files/content?path=' + encodeURIComponent(curPath) +
-              '&name=' + encodeURIComponent(selected))
-      .then(async r => {
-        if (cancelled) return;
-        if (!r.ok) {
-          console.error('[Files] preview fetch HTTP', r.status, 'name=', selected, 'path=', curPath);
-          setPreview({ name: selected, url: null, status: 'err' });
-          return;
-        }
-        const blob = await r.blob();
-        if (cancelled) return;
-        objectURL = URL.createObjectURL(blob);
-        setPreview({ name: selected, url: objectURL, status: 'ok' });
-      })
-      .catch(err => {
-        console.error('[Files] preview fetch failed', err);
-        if (!cancelled) setPreview({ name: selected, url: null, status: 'err' });
-      });
-
-    return () => {
-      cancelled = true;
-      if (objectURL) URL.revokeObjectURL(objectURL);
-    };
-  }, [selected, curPath]);
-
-  // 剪贴板粘贴图片：Ctrl+V 时若剪贴板里有图，POST /api/v1/files/upload 建文件。
-  // 输入框/可编辑元素上不拦，让原生粘贴走。
-  useEffect(() => {
-    async function onPaste(e) {
-      const t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-
-      const items = e.clipboardData?.items || [];
-      const imgItem = Array.from(items).find(it => it.type && it.type.startsWith('image/'));
-      if (!imgItem) return;
-      e.preventDefault();
-
-      const blob = imgItem.getAsFile();
-      if (!blob) return;
-
-      const ext = (blob.type.split('/')[1] || 'png').split(';')[0];
-      const d = new Date();
-      const pad = n => String(n).padStart(2, '0');
-      const stamp = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-      const name = `screenshot-${stamp}.${ext}`;
-
-      const fd = new FormData();
-      fd.append('path', curPath);
-      fd.append('name', name);
-      fd.append('file', blob, name);
-
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setLoading(true); setError('')
       try {
-        const r = await authFetch('/api/v1/files/upload', { method: 'POST', body: fd });
-        if (r.ok) {
-          // 后端冲突时会自动加序号，最终名以响应为准
-          const body = await r.json().catch(() => ({}));
-          const finalName = body.name || name;
-          toast.ok(`已粘贴 ${finalName}`);
-          setSelected(finalName);
-          loadDir(curPath);
-        } else if (r.status === 409) {
-          toast.warn('同名文件已存在');
-        } else if (r.status === 403) {
-          toast.err('目标目录无写入权限');
-        } else if (r.status === 413) {
-          toast.err('图片超过 20MB 上限');
-        } else {
-          toast.err(`粘贴失败 (${r.status})`);
+        let url
+        if (view === 'source') {
+          if (source && !source.available) { setItems([]); setLoading(false); return }
+          const params = new URLSearchParams({ source: sourceID, path, sort: sortBy, order: sortOrder })
+          if (query.trim()) {
+            params.set('q', query.trim())
+            url = `/api/v1/files/search?${params}`
+          } else url = `/api/v1/files?${params}`
+        } else if (view === 'trash') {
+          url = `/api/v1/files/trash?q=${encodeURIComponent(query.trim())}`
+        } else if (view === 'favorites') url = '/api/v1/files/favorites'
+        else if (view === 'recent') url = '/api/v1/files/recent'
+        else url = '/api/v1/files/shares'
+        const data = await apiJSON(url)
+        if (!cancelled) {
+          const next = Array.isArray(data) ? data : []
+          const filtered = view !== 'source' && view !== 'trash' && query.trim()
+            ? next.filter(item => `${item.name || ''} ${item.path || item.originalPath || ''}`.toLowerCase().includes(query.trim().toLowerCase()))
+            : next
+          setItems(filtered)
+          setSelected(new Set())
         }
-      } catch (_) {
-        toast.err('粘贴失败');
-      }
+      } catch (err) { if (!cancelled) { setItems([]); setError(err.message) } }
+      finally { if (!cancelled) setLoading(false) }
+    }, query ? 220 : 0)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [view, sourceID, path, query, sortBy, sortOrder, refreshKey, source])
+
+  const navigate = useCallback((nextSource, nextPath, push = true) => {
+    setView('source'); setSourceID(nextSource); setPath(nextPath); setQuery(''); setSelected(new Set())
+    if (push) {
+      const nextHistory = history.slice(0, historyIndex + 1)
+      nextHistory.push({ source: nextSource, path: nextPath })
+      setHistory(nextHistory)
+      setHistoryIndex(nextHistory.length - 1)
     }
-    window.addEventListener('paste', onPaste);
-    return () => window.removeEventListener('paste', onPaste);
-  }, [curPath, loadDir, toast]);
+  }, [history, historyIndex])
+
+  const goHistory = direction => {
+    const index = historyIndex + direction
+    const target = history[index]
+    if (!target) return
+    setHistoryIndex(index)
+    navigate(target.source, target.path, false)
+  }
+
+  const openCollection = nextView => {
+    setView(nextView); setPath(''); setQuery(''); setSelected(new Set()); setMoreOpen(false)
+  }
+
+  const post = async (url, body) => apiJSON(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+
+  const uploadFiles = useCallback(async fileList => {
+    const files = Array.from(fileList || [])
+    if (!files.length || uploading || view !== 'source' || !capabilities.upload) return
+    setUploading(true)
+    try {
+      for (const file of files) {
+        const form = new FormData()
+        form.append('source', sourceID); form.append('path', path); form.append('name', file.name); form.append('file', file, file.name)
+        await apiJSON('/api/v1/files/upload', { method: 'POST', body: form })
+      }
+      toast.ok(files.length === 1 ? `已上传 ${files[0].name}` : `已上传 ${files.length} 个文件`)
+      reload()
+    } catch (err) { toast.err(err.message) }
+    finally { setUploading(false); if (fileInputRef.current) fileInputRef.current.value = '' }
+  }, [uploading, view, capabilities.upload, sourceID, path, toast, reload])
+
+  useEffect(() => {
+    const onPaste = event => {
+      if (event.target?.matches?.('input, textarea, [contenteditable="true"]')) return
+      const image = Array.from(event.clipboardData?.items || []).find(item => item.type?.startsWith('image/'))?.getAsFile()
+      if (!image || view !== 'source' || !capabilities.upload) return
+      event.preventDefault()
+      const ext = (image.type.split('/')[1] || 'png').split(';')[0]
+      const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+      uploadFiles([new File([image], `screenshot-${stamp}.${ext}`, { type: image.type })])
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [view, capabilities.upload, uploadFiles])
+
+  useEffect(() => {
+    if (!one || one.isDir || !IMAGE_EXTS.has((one.type || one.name?.split('.').pop() || '').toLowerCase()) || !one.source || !one.path) return undefined
+    let cancelled = false
+    let objectURL = ''
+    const key = entryKey(one)
+    authFetch(`/api/v1/files/content?source=${encodeURIComponent(one.source)}&path=${encodeURIComponent(one.path)}`)
+      .then(response => response.ok ? response.blob() : null)
+      .then(blob => { if (blob && !cancelled) { objectURL = URL.createObjectURL(blob); setPreview({ key, url: objectURL }) } })
+      .catch(() => {})
+    return () => { cancelled = true; if (objectURL) URL.revokeObjectURL(objectURL) }
+    // previewURL is intentionally managed by this effect's cleanup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [one?.source, one?.path, one?.isDir, one?.type, one?.name])
+
+  const createFolder = async () => {
+    const name = window.prompt('新文件夹名称')?.trim()
+    if (!name) return
+    try { await post('/api/v1/files/mkdir', { source: sourceID, path, name }); toast.ok(`已创建 ${name}`); reload() }
+    catch (err) { toast.err(err.message) }
+  }
+
+  const rename = async () => {
+    const name = window.prompt('新名称', one?.name)?.trim()
+    if (!name || !one) return
+    try { await post('/api/v1/files/rename', { source: one.source, path: one.path, name }); toast.ok('已重命名'); reload() }
+    catch (err) { toast.err(err.message) }
+  }
+
+  const transfer = async copy => {
+    if (!one) return
+    const destination = window.prompt(copy ? '复制到目录（相对来源根）' : '移动到目录（相对来源根）', '')
+    if (destination == null) return
+    try { await post('/api/v1/files/transfer', { source: one.source, path: one.path, destination, copy }); toast.ok(copy ? '已复制' : '已移动'); reload() }
+    catch (err) { toast.err(err.message) }
+  }
+
+  const download = async () => {
+    if (!one || one.isDir) return
+    try {
+      const response = await authFetch(`/api/v1/files/download?source=${encodeURIComponent(one.source)}&path=${encodeURIComponent(one.path)}`)
+      if (!response.ok) throw new Error(`下载失败 (${response.status})`)
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a'); link.href = url; link.download = one.name; link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (err) { toast.err(err.message) }
+  }
+
+  const toggleFavorite = async enabled => {
+    if (!one) return
+    try { await post('/api/v1/files/favorites', { source: one.source, path: one.path, enabled }); toast.ok(enabled ? '已收藏' : '已取消收藏'); reload() }
+    catch (err) { toast.err(err.message) }
+  }
+
+  const createShare = async () => {
+    if (!one || one.isDir) return
+    const choice = window.prompt('有效期：1h、24h、7d，留空表示永久', '24h')
+    if (choice == null) return
+    const values = { '': 0, '1h': 3600, '24h': 86400, '7d': 604800 }
+    if (!(choice in values)) { toast.err('有效期仅支持 1h、24h、7d 或留空'); return }
+    try {
+      const share = await post('/api/v1/files/shares', { source: one.source, path: one.path, expiresIn: values[choice] })
+      const url = `${window.location.origin}${share.url}`
+      const copied = await copyText(url)
+      toast.ok(copied ? '外链已创建并复制' : `外链已创建：${url}`)
+    } catch (err) { toast.err(err.message) }
+  }
+
+  const deleteSelected = async () => {
+    if (!selectedItems.length) return
+    const permanent = !capabilities.trash
+    const message = permanent
+      ? `此来源不支持回收站，将永久删除 ${selectedItems.length} 项。此操作不可撤销，确认继续？`
+      : `将 ${selectedItems.length} 项移入回收站？`
+    if (!window.confirm(message)) return
+    try {
+      for (const item of selectedItems) await post('/api/v1/files/delete', { source: item.source, path: item.path, permanent, confirm: permanent })
+      toast.ok(permanent ? '已永久删除' : '已移入回收站'); reload()
+    } catch (err) { toast.err(err.message) }
+  }
+
+  const restoreTrash = async () => {
+    try { for (const item of selectedItems) await post('/api/v1/files/trash/restore', { id: item.id }); toast.ok('已恢复到原路径'); reload() }
+    catch (err) { toast.err(err.message) }
+  }
+
+  const purgeTrash = async () => {
+    if (!window.confirm(`永久删除选中的 ${selectedItems.length} 项？此操作不可撤销。`)) return
+    try { for (const item of selectedItems) await post('/api/v1/files/trash/purge', { id: item.id, confirm: true }); toast.ok('已永久删除'); reload() }
+    catch (err) { toast.err(err.message) }
+  }
+
+  const emptyTrash = async () => {
+    if (!window.confirm('清空回收站？所有内容将永久删除且无法恢复。')) return
+    try { await post('/api/v1/files/trash/empty', { confirm: true }); toast.ok('回收站已清空'); reload() }
+    catch (err) { toast.err(err.message) }
+  }
+
+  const revokeShare = async () => {
+    if (!one || !window.confirm(`撤销「${one.name}」的外链？`)) return
+    try { await apiJSON(`/api/v1/files/shares/${encodeURIComponent(one.id)}`, { method: 'DELETE' }); toast.ok('外链已撤销'); reload() }
+    catch (err) { toast.err(err.message) }
+  }
+
+  const openEntry = entry => {
+    if (view === 'source' && entry.isDir) navigate(entry.source, entry.path)
+    else if ((view === 'favorites' || view === 'recent') && entry.isDir) navigate(entry.source, entry.path)
+    else if ((view === 'favorites' || view === 'recent') && !entry.isDir) {
+      setSourceID(entry.source); setSelected(new Set([entryKey(entry)]))
+    }
+  }
+
+  const external = sources.filter(item => item.kind === 'external')
+  const network = sources.filter(item => item.kind === 'network')
+  const configured = sources.filter(item => ['personal', 'configured'].includes(item.kind))
+  const apps = sources.find(item => item.kind === 'applications')
+  const breadcrumbs = path.split('/').filter(Boolean)
+  const previewURL = one && preview?.key === entryKey(one) ? preview.url : ''
+  const viewTitle = { trash: '回收站', favorites: '我的收藏', recent: '最近访问', shares: '外链管理' }[view]
+  const empty = !loading && !error && items.length === 0
 
   return (
-    <div
-      ref={rootRef}
-      tabIndex={0}
-      style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surface, overflow: 'hidden', outline: 'none' }}>
-      {/* Toolbar */}
-      <div style={{
-        padding: '10px 18px', borderBottom: `1px solid ${T.border}`,
-        display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
-      }}>
-        <button
-          disabled={breadcrumbSegments.length === 0}
-          onClick={() => {
-            const parts = curPath.split('/').filter(Boolean);
-            parts.pop();
-            setCurPath(parts.join('/'));
-          }}
-          className="edge-press edge-btn-secondary"
-          style={{ ...btnSecondary, height: 30, padding: '0 10px',
-            opacity: breadcrumbSegments.length === 0 ? 0.4 : 1,
-            cursor: breadcrumbSegments.length === 0 ? 'not-allowed' : 'pointer' }}>
-          <Icon name="chevLeft" size={12} stroke={2}/>
-        </button>
-        <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px' }}>
-          <Icon name="chevRight" size={12} stroke={2}/>
-        </button>
-        <button onClick={() => setCurPath(p => p)} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px' }}>
-          <Icon name="refresh" size={12} stroke={1.8}/>
-        </button>
-        {/* Breadcrumb: 工作区 > seg1 > seg2 ... 每段 clickable，根节点 = 「工作区」 */}
-        <div style={{
-          flex: 1, display: 'flex', alignItems: 'center', gap: 4,
-          padding: '0 12px', height: 30, borderRadius: 6,
-          background: T.surfaceAlt, border: `1px solid ${T.border}`,
-          fontFamily: 'ui-monospace, monospace', fontSize: 12, color: T.ink,
-        }}>
-          <Icon name="folder" size={12} stroke={1.8} style={{ color: T.ink4 }}/>
-          <span onClick={() => setCurPath('')} style={{
-            cursor: 'pointer',
-            color: breadcrumbSegments.length === 0 ? T.blueDeep : T.ink,
-            fontWeight: breadcrumbSegments.length === 0 ? 600 : 500,
-          }}>工作区</span>
-          {breadcrumbSegments.map((seg, i) => {
-            const isLast = i === breadcrumbSegments.length - 1;
-            const targetPath = breadcrumbSegments.slice(0, i + 1).join('/');
-            return (
-              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ color: T.ink4 }}>/</span>
-                <span
-                  onClick={() => setCurPath(targetPath)}
-                  style={{
-                    cursor: 'pointer',
-                    color: isLast ? T.blueDeep : T.ink,
-                    fontWeight: isLast ? 600 : 500,
-                  }}>{seg}</span>
-              </span>
-            );
-          })}
+    <div ref={rootRef} tabIndex={0} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: T.surface, overflow: 'hidden', outline: 'none' }}>
+      <div style={{ minHeight: 50, padding: '9px 14px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+        <button title="后退" aria-label="后退" disabled={historyIndex === 0} onClick={() => goHistory(-1)} style={{ ...iconButton, opacity: historyIndex === 0 ? .4 : 1 }}><Icon name="chevLeft" size={13}/></button>
+        <button title="前进" aria-label="前进" disabled={historyIndex >= history.length - 1} onClick={() => goHistory(1)} style={{ ...iconButton, opacity: historyIndex >= history.length - 1 ? .4 : 1 }}><Icon name="chevRight" size={13}/></button>
+        <button title="刷新" aria-label="刷新" onClick={reload} style={iconButton}><Icon name="refresh" size={13}/></button>
+        <div style={{ minWidth: 180, flex: 1, height: 30, display: 'flex', alignItems: 'center', gap: 5, padding: '0 10px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.surfaceAlt, fontSize: 12 }}>
+          {view === 'source' ? <>
+            <span onClick={() => navigate(sourceID, '')} style={{ cursor: 'pointer', fontWeight: 650, color: T.blueDeep }}>{source?.name || '文件'}</span>
+            {breadcrumbs.map((part, index) => <span key={`${part}-${index}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="chevRight" size={10}/><span onClick={() => navigate(sourceID, breadcrumbs.slice(0, index + 1).join('/'))} style={{ cursor: 'pointer' }}>{part}</span></span>)}
+          </> : <span style={{ fontWeight: 650 }}>{viewTitle}</span>}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6,
-          padding: '0 10px', height: 30, borderRadius: 6,
-          background: T.surfaceAlt, border: `1px solid ${T.border}`,
-          fontSize: 12, color: T.ink, width: 240 }}>
-          <Icon name="search" size={12} stroke={1.8} style={{ color: T.ink4 }}/>
-          <input placeholder="搜索文件…" style={{
-            flex: 1, border: 'none', outline: 'none', fontSize: 12, background: 'transparent',
-          }}/>
+        <div style={{ width: 210, height: 30, display: 'flex', alignItems: 'center', gap: 6, padding: '0 9px', border: `1px solid ${T.border}`, borderRadius: 6, background: '#fff' }}>
+          <Icon name="search" size={13} style={{ color: T.ink4 }}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder={view === 'trash' ? '搜索回收站' : '搜索当前范围'} style={{ minWidth: 0, flex: 1, border: 0, outline: 0, background: 'transparent', fontSize: 12 }}/>
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          onChange={(e) => uploadFiles(e.target.files)}
-          style={{ display: 'none' }}
-        />
-        <button
-          disabled={uploading}
-          onClick={() => fileInputRef.current?.click()}
-          className="edge-press edge-btn-primary"
-          style={{ ...btnPrimary, height: 30, padding: '0 12px',
-            opacity: uploading ? 0.65 : 1,
-            cursor: uploading ? 'wait' : 'pointer' }}>
-          <Icon name="download" size={12} stroke={2}/>{uploading ? '上传中' : '上传'}
-        </button>
-        <button
-          title={showDetails ? '隐藏详情' : '显示详情'}
-          onClick={() => setShowDetails(v => !v)}
-          className="edge-press edge-btn-secondary"
-          style={{
-            ...btnSecondary, height: 30, padding: '0 10px',
-            background: showDetails ? T.blueSoft : 'white',
-            color: showDetails ? T.blueDeep : T.ink2,
-            borderColor: showDetails ? T.blueDeep : T.border,
-          }}>
-          <Icon name="sidebar" size={12} stroke={1.8}/>
-        </button>
+        {view === 'source' && <>
+          <button disabled={!capabilities.mkdir} onClick={createFolder} style={{ ...button, opacity: capabilities.mkdir ? 1 : .45 }}><Icon name="plus" size={12}/>新建文件夹</button>
+          <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={event => uploadFiles(event.target.files)}/>
+          <button disabled={!capabilities.upload || uploading} onClick={() => fileInputRef.current?.click()} style={{ ...button, background: T.blue, color: '#fff', borderColor: T.blue, opacity: capabilities.upload ? 1 : .45 }}><Icon name="upload" size={12}/>{uploading ? '上传中' : '上传'}</button>
+        </>}
+        {view === 'trash' && <button disabled={!items.length} onClick={emptyTrash} style={{ ...button, color: '#b42318', opacity: items.length ? 1 : .45 }}><Icon name="trash" size={12}/>清空</button>}
       </div>
 
-      {/* Disk usage strip */}
-      <div style={{
-        padding: '10px 18px', background: T.surfaceAlt,
-        borderBottom: `1px solid ${T.borderSoft}`, flexShrink: 0,
-        display: 'flex', alignItems: 'center', gap: 14, fontSize: 11.5,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Icon name="hardDrive" size={13} stroke={1.8} style={{ color: T.amber }}/>
-          <span style={{ color: T.ink2, fontWeight: 600 }}>
-            {curPath ? `工作区 / ${curPath}` : '工作区'}
-          </span>
-        </div>
-        <div style={{ flex: 1, height: 6, background: '#fef3c7', borderRadius: 3,
-          overflow: 'hidden', position: 'relative' }}>
-          <div style={{ width: diskPct + '%', height: '100%', background: T.amber }}/>
-        </div>
-        <span className="mono tnum" style={{ color: T.ink, fontWeight: 600 }}>{diskUsed} GB / {diskTotal} GB</span>
-        <span style={{ color: T.ink3 }}>({diskPct}% 已用)</span>
-        <button className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 24, padding: '0 8px', fontSize: 11 }}>
-          <Icon name="sparkle" size={11} stroke={1.8}/>分析占用
-        </button>
-      </div>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+        <aside style={{ width: 210, flexShrink: 0, overflowY: 'auto', padding: '5px 8px 14px', borderRight: `1px solid ${T.border}`, background: T.surfaceAlt }}>
+          <SectionLabel>位置</SectionLabel>
+          {configured.map(item => <SidebarRow key={item.id} icon="folder" label={item.name} active={view === 'source' && sourceID === item.id} disabled={!item.available} detail={!item.available ? '不可用' : ''} onClick={() => navigate(item.id, '')}/>)}
+          <SidebarRow icon="layers" label={apps?.name || '应用文件'} active={view === 'source' && sourceID === 'apps'} disabled={!apps?.available} detail={!apps?.available ? '未配置' : ''} onClick={() => navigate('apps', '')}/>
+          <SectionLabel>挂载</SectionLabel>
+          {external.map(item => <SidebarRow key={item.id} icon="hardDrive" label={item.name} active={view === 'source' && sourceID === item.id} onClick={() => navigate(item.id, '')}/>)}
+          {!external.length && <SidebarRow icon="hardDrive" label="外接存储" disabled detail="未检测到"/>}
+          {network.map(item => <SidebarRow key={item.id} icon="network" label={item.name} active={view === 'source' && sourceID === item.id} onClick={() => navigate(item.id, '')}/>)}
+          {!network.length && <SidebarRow icon="network" label="远程挂载" disabled detail="未挂载"/>}
+          <SectionLabel>集合</SectionLabel>
+          <SidebarRow icon="star" label="我的收藏" active={view === 'favorites'} onClick={() => openCollection('favorites')}/>
+          <SidebarRow icon="history" label="最近访问" active={view === 'recent'} onClick={() => openCollection('recent')}/>
+          <SidebarRow icon="trash" label="回收站" active={view === 'trash'} onClick={() => openCollection('trash')}/>
+          <SidebarRow icon="link" label="外链管理" active={view === 'shares'} onClick={() => openCollection('shares')}/>
+        </aside>
 
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Sidebar shortcuts */}
-        <div style={{ width: 200, flexShrink: 0, borderRight: `1px solid ${T.borderSoft}`,
-          background: T.surfaceAlt, padding: '12px 8px' }}>
-          <div style={{ fontSize: 10.5, color: T.ink3, fontWeight: 600,
-            letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 10px 6px' }}>快速访问</div>
-          {/* 受控开发界面方向（2026-06-20）：侧栏只显示「工作区」单根节点。
-              宿主路径快捷入口（/, /data, /home, /tmp, /var/log, /opt）已移除，
-              防止用户认为可以访问宿主任意目录。后端 chroot 校验同步生效，
-              即使 URL 注入也会返 403 PATH_FORBIDDEN。
-              「云端」段（HuggingFace / MinIO）未实现后端，先一并隐藏。 */}
-          <div onClick={() => setCurPath('')} className={curPath !== '' ? 'edge-row-hover' : undefined} style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '6px 10px', borderRadius: 6, fontSize: 12.5,
-            color: curPath === '' ? T.blueDeep : T.ink, cursor: 'pointer',
-            background: curPath === '' ? T.blueSoft : 'transparent',
-            fontWeight: curPath === '' ? 600 : 500,
-            '--edge-row-hover-bg': T.surface,
-          }}>
-            <Icon name="folder" size={13} stroke={1.8} style={{ color: curPath === '' ? T.blueDeep : T.ink3 }}/>
-            工作区
+        <main style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ minHeight: 41, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 7, borderBottom: `1px solid ${T.borderSoft}`, background: '#fff' }}>
+            {view === 'source' && <>
+              <button disabled={!one || one.isDir} onClick={download} style={{ ...button, opacity: one && !one.isDir ? 1 : .45 }}><Icon name="download" size={12}/>下载</button>
+              <button disabled={!one || !capabilities.favorite} onClick={() => toggleFavorite(true)} style={{ ...button, opacity: one && capabilities.favorite ? 1 : .45 }}><Icon name="star" size={12}/>收藏</button>
+              <button disabled={!one || one.isDir || !capabilities.share} onClick={createShare} style={{ ...button, opacity: one && !one.isDir && capabilities.share ? 1 : .45 }}><Icon name="link" size={12}/>分享</button>
+              <button disabled={!selectedItems.length || !capabilities.delete} onClick={deleteSelected} style={{ ...button, color: '#b42318', opacity: selectedItems.length && capabilities.delete ? 1 : .45 }}><Icon name="trash" size={12}/>删除</button>
+              <div style={{ position: 'relative' }}>
+                <button disabled={!one} onClick={() => setMoreOpen(value => !value)} style={{ ...button, opacity: one ? 1 : .45 }}>更多<Icon name="chevDown" size={11}/></button>
+                {moreOpen && one && <div style={{ position: 'absolute', zIndex: 20, top: 34, left: 0, width: 150, padding: 4, border: `1px solid ${T.border}`, borderRadius: 6, background: '#fff', boxShadow: '0 8px 24px rgba(15,23,42,.15)' }}>
+                  <MenuButton label="重命名" disabled={!capabilities.rename} onClick={() => { setMoreOpen(false); rename() }}/>
+                  <MenuButton label="移动到…" disabled={!capabilities.move} onClick={() => { setMoreOpen(false); transfer(false) }}/>
+                  <MenuButton label="复制到…" disabled={!capabilities.copy} onClick={() => { setMoreOpen(false); transfer(true) }}/>
+                  {one.absPath && (
+                    <MenuButton label="复制完整路径" onClick={async () => { setMoreOpen(false); await copyText(one.absPath); toast.ok('路径已复制') }}/>
+                  )}
+                </div>}
+              </div>
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: T.ink4 }}>{source?.available ? `${items.length} 项` : ''}</span>
+              <select value={sortBy} onChange={event => setSortBy(event.target.value)} aria-label="排序字段" style={{ ...button, outline: 0 }}><option value="name">名称</option><option value="size">大小</option><option value="time">时间</option></select>
+              <button title="切换排序方向" aria-label="切换排序方向" onClick={() => setSortOrder(value => value === 'asc' ? 'desc' : 'asc')} style={iconButton}><Icon name={sortOrder === 'asc' ? 'arrowUp' : 'arrowDown'} size={12}/></button>
+            </>}
+            {view === 'trash' && <><button disabled={!selectedItems.length} onClick={restoreTrash} style={{ ...button, opacity: selectedItems.length ? 1 : .45 }}><Icon name="refresh" size={12}/>恢复</button><button disabled={!selectedItems.length} onClick={purgeTrash} style={{ ...button, color: '#b42318', opacity: selectedItems.length ? 1 : .45 }}><Icon name="trash" size={12}/>永久删除</button></>}
+            {view === 'favorites' && <><button disabled={!one} onClick={() => toggleFavorite(false)} style={{ ...button, opacity: one ? 1 : .45 }}><Icon name="star" size={12}/>取消收藏</button><button disabled={!one} onClick={() => one && navigate(one.source, one.isDir ? one.path : parentPath(one.path))} style={{ ...button, opacity: one ? 1 : .45 }}><Icon name="folder" size={12}/>打开所在位置</button></>}
+            {view === 'recent' && <button disabled={!one} onClick={() => one && navigate(one.source, one.isDir ? one.path : parentPath(one.path))} style={{ ...button, opacity: one ? 1 : .45 }}><Icon name="folder" size={12}/>打开所在位置</button>}
+            {view === 'shares' && <button disabled={!one} onClick={revokeShare} style={{ ...button, color: '#b42318', opacity: one ? 1 : .45 }}><Icon name="x" size={12}/>撤销外链</button>}
           </div>
-        </div>
 
-        {/* Error banner (chroot violation / not found) */}
-        {error && (
-          <div style={{
-            position: 'absolute', top: 10, right: 16, zIndex: 10,
-            padding: '8px 14px', borderRadius: 6,
-            background: error.code === 'PATH_FORBIDDEN' ? '#fef2f2' : '#fffbeb',
-            border: `1px solid ${error.code === 'PATH_FORBIDDEN' ? '#fecaca' : '#fde68a'}`,
-            color: error.code === 'PATH_FORBIDDEN' ? '#991b1b' : '#92400e',
-            fontSize: 12, fontWeight: 500,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-          }}>
-            {error.message}
-            {error.code === 'PATH_FORBIDDEN' && (
-              <span style={{ marginLeft: 6, fontWeight: 400, opacity: 0.7 }}>(自动回到工作区)</span>
-            )}
-          </div>
-        )}
-        {/* File list */}
-        <div style={{ flex: 1, overflow: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-            <thead>
-              <tr style={{ background: T.surfaceAlt, borderBottom: `1px solid ${T.border}` }}>
-                <th style={{ ...th, width: 36 }}><input type="checkbox" disabled/></th>
-                <th style={{ ...th, textAlign: 'left' }}>名称</th>
-                <th style={{ ...th, textAlign: 'right' }}>大小</th>
-                <th style={{ ...th, textAlign: 'right' }}>修改时间</th>
-                <th style={{ ...th, textAlign: 'right' }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((f, i) => {
-                const on = selected === f.name;
-                return (
-                  <tr key={f.name} onClick={() => setSelected(f.name)}
-                    onDoubleClick={() => { if (f.type === 'dir') setCurPath(curPath ? `${curPath}/${f.name}` : f.name); }}
-                    style={{
-                    background: on ? '#eff4ff' : 'transparent',
-                    borderTop: `1px solid ${T.borderSoft}`, cursor: 'pointer',
-                  }}>
-                    <td style={{ padding: '8px 14px' }}><input type="checkbox" disabled checked={on}/></td>
-                    <td style={{ padding: '8px 14px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <FileIcon type={f.type} size={14}/>
-                        <span style={{ color: T.ink, fontWeight: f.type === 'dir' ? 600 : 500 }}>{f.name}</span>
-                        {f.type === 'dir' && <span style={{ fontSize: 11, color: T.ink4 }}>· {f.count} 项</span>}
-                      </div>
-                    </td>
-                    <td style={{ padding: '8px 14px', textAlign: 'right', color: T.ink3 }} className="mono">{f.size}</td>
-                    <td style={{ padding: '8px 14px', textAlign: 'right', color: T.ink3 }} className="mono">{f.modified || ''}</td>
-                    <td style={{ padding: '8px 14px', textAlign: 'right' }}>
-                      {f.absPath && (
-                        <button
-                          title={`复制路径: ${f.absPath}`}
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            const ok = await copyText(f.absPath);
-                            if (ok) toast.ok(`已复制路径 ${f.absPath}`);
-                            else toast.err('复制失败');
-                          }}
-                          style={{
-                            border: 'none', background: 'transparent', cursor: 'pointer',
-                            color: T.ink4, padding: 2, display: 'inline-flex',
-                          }}>
-                          <Icon name="copy" size={13} stroke={1.8}/>
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Details panel：仿 Mac Finder “显示简介”。选中任意文件时展开右侧栏，
-            图片显示预览，其余显示大号类型图标，下方统一给出元数据字段。 */}
-        {showDetails && selected && (() => {
-          const item = items.find(f => f.name === selected);
-          if (!item) return null;
-          const isImg = item.type !== 'dir' && isImageType(item.type);
-          return (
-            <div style={{
-              width: 320, flexShrink: 0, borderLeft: `1px solid ${T.borderSoft}`,
-              background: T.surfaceAlt, display: 'flex', flexDirection: 'column',
-              overflow: 'hidden',
-            }}>
-              {/* 标题栏 */}
-              <div style={{
-                padding: '10px 14px', borderBottom: `1px solid ${T.borderSoft}`,
-                fontSize: 11.5, fontWeight: 600, color: T.ink2,
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}>
-                <Icon name="info" size={13} stroke={1.8} style={{ color: T.ink3 }}/>
-                <span style={{ flex: 1 }}>简介</span>
-                <button
-                  title="关闭详情"
-                  onClick={() => setShowDetails(false)}
-                  style={{
-                    border: 'none', background: 'transparent', cursor: 'pointer',
-                    color: T.ink3, padding: 2, display: 'inline-flex',
-                  }}>
-                  <Icon name="x" size={13} stroke={1.8}/>
-                </button>
-              </div>
-
-              {/* 预览区：图片显示真图，其它显示大号类型图标 */}
-              <div style={{
-                flexShrink: 0, height: 200,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                padding: 14, overflow: 'hidden',
-                background: isImg
-                  ? 'repeating-conic-gradient(#f1f5f9 0% 25%, #ffffff 0% 50%) 50% / 16px 16px'
-                  : T.surface,
-                borderBottom: `1px solid ${T.borderSoft}`,
-              }}>
-                {isImg ? (
-                  <>
-                    {(!preview || preview.name !== selected || preview.status === 'loading') && (
-                      <div style={{ fontSize: 12, color: T.ink3 }}>加载中…</div>
-                    )}
-                    {preview?.name === selected && preview.status === 'err' && (
-                      <div style={{ fontSize: 12, color: '#991b1b' }}>预览加载失败</div>
-                    )}
-                    {preview?.name === selected && preview.status === 'ok' && preview.url && (
-                      <img src={preview.url} alt={selected} style={{
-                        maxWidth: '100%', maxHeight: '100%', objectFit: 'contain',
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRadius: 4,
-                      }}/>
-                    )}
-                  </>
-                ) : (
-                  <div style={{
-                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
-                  }}>
-                    <FileIcon type={item.type} size={72}/>
-                    <div style={{ fontSize: 11, color: T.ink4 }}>无预览</div>
-                  </div>
-                )}
-              </div>
-
-              {/* 文件名 + 类型摘要 */}
-              <div style={{
-                padding: '12px 14px 8px', borderBottom: `1px solid ${T.borderSoft}`,
-              }}>
-                <div style={{
-                  fontSize: 13, fontWeight: 600, color: T.ink,
-                  overflowWrap: 'anywhere', lineHeight: 1.35,
-                }} title={item.name}>{item.name}</div>
-                <div style={{ marginTop: 4, fontSize: 11.5, color: T.ink3 }}>
-                  {fileKind(item.type)}
-                  {item.sizeBytes != null && <> · <span className="mono">{item.size}</span></>}
-                  {item.type === 'dir' && item.count != null && <> · {item.count} 项</>}
-                </div>
-              </div>
-
-              {/* 详细字段：仿 Finder 的信息面板 */}
-              <div style={{ flex: 1, overflow: 'auto', padding: '10px 14px' }}>
-                <DetailRow label="种类" value={fileKind(item.type)}/>
-                {item.sizeBytes != null && (
-                  <DetailRow
-                    label="大小"
-                    value={
-                      <span className="mono">
-                        {item.size}
-                        {item.sizeBytes >= 1000 && (
-                          <span style={{ color: T.ink4 }}> ({item.sizeBytes.toLocaleString()} 字节)</span>
-                        )}
-                      </span>
-                    }/>
-                )}
-                {item.type === 'dir' && item.count != null && (
-                  <DetailRow label="项目数" value={<span className="mono">{item.count}</span>}/>
-                )}
-                {item.modifiedFull && (
-                  <DetailRow label="修改时间" value={<span className="mono">{item.modifiedFull}</span>}/>
-                )}
-                {item.absPath && (
-                  <DetailRow
-                    label="位置"
-                    value={
-                      <div style={{
-                        display: 'flex', alignItems: 'flex-start', gap: 4,
-                      }}>
-                        <span className="mono" style={{
-                          flex: 1, overflowWrap: 'anywhere', lineHeight: 1.4,
-                        }}>{item.absPath}</span>
-                        <button
-                          title={`复制路径: ${item.absPath}`}
-                          onClick={async () => {
-                            const ok = await copyText(item.absPath);
-                            if (ok) toast.ok(`已复制路径 ${item.absPath}`);
-                            else toast.err('复制失败');
-                          }}
-                          style={{
-                            border: 'none', background: 'transparent', cursor: 'pointer',
-                            color: T.ink3, padding: 2, display: 'inline-flex', flexShrink: 0,
-                          }}>
-                          <Icon name="copy" size={12} stroke={1.8}/>
-                        </button>
-                      </div>
-                    }/>
-                )}
-              </div>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
+            <div style={{ minWidth: 0, flex: 1, overflow: 'auto' }}>
+              {source && view === 'source' && !source.available ? <EmptyState icon="folder" title={`${source.name}不可用`} message={source.reason || '请先配置并挂载对应目录。'}/>
+                : loading ? <EmptyState icon="refresh" title="正在加载" message=""/>
+                : error ? <EmptyState icon="alertTri" title="无法加载文件" message={error}/>
+                : empty ? <EmptyState icon={view === 'trash' ? 'trash' : view === 'shares' ? 'link' : 'folder'} title={view === 'trash' ? '回收站为空' : view === 'shares' ? '暂无外链' : query ? '没有匹配结果' : '这里还没有文件'} message={view === 'source' && source?.kind === 'applications' ? 'Compose 应用数据目录中暂无可管理文件。' : ''}/>
+                : <FileTable view={view} items={items} selected={selected} setSelected={setSelected} onOpen={openEntry}/>}
             </div>
-          );
-        })()}
-        {/* 未选中 / 详情关闭时占位提示，仅在详情开着但没选文件时显示 */}
-        {showDetails && !selected && (
-          <div style={{
-            width: 320, flexShrink: 0, borderLeft: `1px solid ${T.borderSoft}`,
-            background: T.surfaceAlt, display: 'flex', alignItems: 'center',
-            justifyContent: 'center', padding: 20, textAlign: 'center',
-          }}>
-            <div style={{ fontSize: 12, color: T.ink4 }}>
-              <Icon name="info" size={24} stroke={1.5} style={{ color: T.ink4, display: 'block', margin: '0 auto 8px' }}/>
-              选中文件后<br/>此处显示详细信息
-            </div>
+            {one && view !== 'trash' && view !== 'shares' && <aside style={{ width: 260, flexShrink: 0, borderLeft: `1px solid ${T.borderSoft}`, background: T.surfaceAlt, overflow: 'auto' }}>
+              <div style={{ height: 170, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 14, borderBottom: `1px solid ${T.borderSoft}`, background: '#fff' }}>
+                {previewURL
+                  ? <img src={previewURL} alt={one.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}/>
+                  : <FileIcon type={one.isDir ? 'dir' : one.type} size={64}/>
+                }
+              </div>
+              <div style={{ padding: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 650, color: T.ink, overflowWrap: 'anywhere' }}>{one.name}</div>
+                <Detail label="位置" value={one.path || one.originalPath}/><Detail label="大小" value={formatSize(one.size) || '—'}/><Detail label="时间" value={formatDate(one.modified || one.openedAt || one.addedAt) || '—'}/>
+              </div>
+            </aside>}
           </div>
-        )}
+        </main>
       </div>
     </div>
-  );
+  )
+}
+
+function MenuButton({ label, disabled, onClick }) {
+  return <button type="button" disabled={disabled} onClick={onClick} style={{ width: '100%', height: 30, padding: '0 9px', border: 0, borderRadius: 4, background: 'transparent', color: disabled ? T.ink4 : T.ink2, textAlign: 'left', fontSize: 12, cursor: disabled ? 'not-allowed' : 'pointer' }}>{label}</button>
+}
+
+function Detail({ label, value }) {
+  return <div style={{ display: 'flex', gap: 8, marginTop: 10, fontSize: 11.5 }}><span style={{ width: 42, flexShrink: 0, color: T.ink4 }}>{label}</span><span style={{ minWidth: 0, color: T.ink2, overflowWrap: 'anywhere' }}>{value}</span></div>
+}
+
+function FileTable({ view, items, selected, setSelected, onOpen }) {
+  const allSelected = items.length > 0 && items.every(item => selected.has(entryKey(item)))
+  const toggle = (key, checked) => setSelected(current => { const next = new Set(current); if (checked) next.add(key); else next.delete(key); return next })
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontSize: 12.5 }}>
+      <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: T.surfaceAlt }}><tr style={{ borderBottom: `1px solid ${T.border}` }}>
+        <th style={{ width: 42, padding: '8px 12px' }}><input aria-label="全选" type="checkbox" checked={allSelected} onChange={event => setSelected(event.target.checked ? new Set(items.map(entryKey)) : new Set())}/></th>
+        <Header width="auto">名称</Header><Header width="28%">位置</Header><Header width="100px">大小</Header><Header width="155px">{view === 'trash' ? '删除时间' : view === 'shares' ? '有效期' : '时间'}</Header>
+      </tr></thead>
+      <tbody>{items.map(item => {
+        const key = entryKey(item); const active = selected.has(key)
+        const type = item.isDir ? 'dir' : (item.type || 'file')
+        const location = item.originalPath || item.path || ''
+        const time = item.deletedAt || item.expiresAt || item.openedAt || item.addedAt || item.modified
+        return <tr key={key} onClick={() => toggle(key, !active)} onDoubleClick={() => onOpen(item)} style={{ height: 39, borderBottom: `1px solid ${T.borderSoft}`, background: active ? T.blueSoft : '#fff', cursor: 'pointer' }}>
+          <td style={{ padding: '8px 12px', textAlign: 'center' }}><input aria-label={`选择 ${item.name}`} type="checkbox" checked={active} onClick={event => event.stopPropagation()} onChange={event => toggle(key, event.target.checked)}/></td>
+          <td style={{ padding: '8px 10px', overflow: 'hidden' }}><div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}><FileIcon type={type} size={15}/><span title={item.name} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: T.ink, fontWeight: item.isDir ? 650 : 500 }}>{item.name}</span></div></td>
+          <td title={location} style={{ padding: '8px 10px', color: T.ink3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{location}</td>
+          <td className="mono" style={{ padding: '8px 10px', color: T.ink3, textAlign: 'right' }}>{item.isDir ? '' : formatSize(item.size)}</td>
+          <td className="mono" style={{ padding: '8px 10px', color: T.ink3, textAlign: 'right', whiteSpace: 'nowrap' }}>{item.expiresAt === null ? '永久' : formatDate(time)}</td>
+        </tr>
+      })}</tbody>
+    </table>
+  )
+}
+
+function Header({ children, width }) { return <th style={{ width, padding: '8px 10px', textAlign: 'left', color: T.ink4, fontSize: 10.5, fontWeight: 700 }}>{children}</th> }
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true } catch {
+    try {
+      const area = document.createElement('textarea'); area.value = text; area.style.position = 'fixed'; area.style.opacity = '0'; document.body.appendChild(area); area.select()
+      const copied = document.execCommand('copy'); area.remove(); return copied
+    } catch { return false }
+  }
 }

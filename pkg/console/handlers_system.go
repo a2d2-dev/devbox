@@ -18,6 +18,7 @@ import (
 
 // registerSystemRoutes 注册系统级查询路由。
 func (s *Server) registerSystemRoutes() {
+	s.registerDesktopStatusRoutes()
 	s.mux.HandleFunc("/api/v1/processes", s.handleProcesses)
 	s.mux.HandleFunc("/api/v1/processes/", s.handleProcessDetail)
 	s.mux.HandleFunc("/api/v1/disks", s.handleDisks)

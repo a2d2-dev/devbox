@@ -5,19 +5,32 @@ const API = '/api/v1';
 
 // ─── Auth token management ──────────────────────────────────────
 
-let _token = localStorage.getItem('edge_token') || '';
+const TOKEN_KEY = 'edge_token';
+let _token = localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || '';
+let _authRequired = true;
+let _expiryNotified = false;
 
-export function setAuthToken(t) {
-  _token = t || '';
-  if (t) localStorage.setItem('edge_token', t);
-  else localStorage.removeItem('edge_token');
+export function setAuthToken(t, persistence = 'persistent') {
+	_token = t || '';
+	localStorage.removeItem(TOKEN_KEY);
+	sessionStorage.removeItem(TOKEN_KEY);
+	if (t) {
+		const storage = persistence === 'session' ? sessionStorage : localStorage;
+		storage.setItem(TOKEN_KEY, t);
+	}
+	_expiryNotified = false;
 }
 
 export function getAuthToken() { return _token; }
 
+export function setAuthRequired(required) {
+	_authRequired = required;
+}
+
 export function clearAuth() {
-  _token = '';
-  localStorage.removeItem('edge_token');
+	_token = '';
+	localStorage.removeItem(TOKEN_KEY);
+	sessionStorage.removeItem(TOKEN_KEY);
 }
 
 function authHeaders() {
@@ -27,33 +40,23 @@ function authHeaders() {
 let _onAuthExpired = null;
 export function setOnAuthExpired(cb) { _onAuthExpired = cb; }
 
-// 连续 401 计数 — 累计达到阈值才登出，避免单次偶发 401 (云端 token 校验抖动 /
-// 缓存失效瞬间 / 网络 race) 把用户踢出登录。
-// 任何 2xx 成功响应重置计数。
-const MAX_CONSECUTIVE_401 = 3;
-let _consecutive401 = 0;
-
-// authFetch 通用 fetch wrapper —— 自动注入 Bearer token + 累计 401 触发清登录
+// authFetch 通用 fetch wrapper —— 自动注入 Bearer token；认证中间件返回 401 时
+// 立即清理会话。通知只触发一次，避免多个轮询请求同时过期造成登录页回跳循环。
 // 凡是调 /api/v1/* 受保护接口的页面必须用这个，不要用 raw fetch
 // （raw fetch 会被 middleware 拦 401 + 页面空白；见 2026-06-22 进程/磁盘/网络/告警/设置 5 页空白事件）
 export async function authFetch(url, opts = {}) {
   // 未登录短路：App.jsx 里的 hooks (useMetrics/useApps/…) 写在 early-return 之前，
   // 登录前会先跑一遍。这时不发网络，返合成 401 让 usePoll 走 error 分支即可，
   // 避免登录页/初始加载在 devtool 里堆一片 401 噪音。
-  if (!_token) {
-    return new Response(null, { status: 401, statusText: 'no token (pre-login)' });
-  }
-  const resp = await fetch(url, { ...opts, headers: { ...authHeaders(), ...opts.headers } });
-  if (resp.status === 401 && _token) {
-    _consecutive401 += 1;
-    if (_consecutive401 >= MAX_CONSECUTIVE_401) {
-      _consecutive401 = 0;
-      clearAuth();
-      if (_onAuthExpired) _onAuthExpired();
-    }
-  } else if (resp.ok) {
-    _consecutive401 = 0;
-  }
+	if (!_token && _authRequired) {
+		return new Response(null, { status: 401, statusText: 'no token (pre-login)' });
+	}
+	const resp = await fetch(url, { ...opts, headers: { ...authHeaders(), ...opts.headers } });
+	if (resp.status === 401 && _token && !_expiryNotified) {
+		_expiryNotified = true;
+		clearAuth();
+		if (_onAuthExpired) _onAuthExpired();
+	}
   return resp;
 }
 
@@ -283,8 +286,8 @@ export function useMetricsHistory(interval = 5000) {
 
 // ─── Apps ────────────────────────────────────────────────────────
 
-export function useApps(interval = 10000) {
-  return usePoll('/apps', {
+export function useApps(interval = 10000, enabled = true) {
+	return usePoll(enabled ? '/apps' : null, {
     interval,
     fallback: [],
     transform: (apps) => {
