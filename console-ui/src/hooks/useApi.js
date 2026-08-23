@@ -57,7 +57,47 @@ export async function authFetch(url, opts = {}) {
 		clearAuth();
 		if (_onAuthExpired) _onAuthExpired();
 	}
-  return resp;
+	return resp;
+}
+
+export async function downloadRequest(path = '', opts = {}) {
+  const response = await authFetch(API + '/downloads' + path, opts);
+  const contentType = response.headers.get('content-type') || '';
+  const body = contentType.includes('application/json') ? await response.json() : await response.text();
+  if (!response.ok) {
+    const error = new Error(body?.error || body || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+export function useDownloads(interval = 1000) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick(value => value + 1), []);
+
+  useEffect(() => {
+    let active = true;
+    let timer;
+    const load = async () => {
+      try {
+        const next = await downloadRequest();
+        if (active) { setData(next); setError(null); }
+      } catch (requestError) {
+        if (active) setError(requestError);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    if (interval > 0) timer = setInterval(load, interval);
+    return () => { active = false; if (timer) clearInterval(timer); };
+  }, [interval, tick]);
+
+  return { data, loading, error, refresh };
 }
 
 // ─── Internal helpers ────────────────────────────────────────────
