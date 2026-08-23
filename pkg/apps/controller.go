@@ -675,6 +675,13 @@ func (s *service) Validate(ctx context.Context, req ValidateRequest) (ValidateRe
 		return res, nil
 	}
 	for _, f := range findings {
+		if (req.Source.Kind == SourceStore || req.Source.Kind == SourceCatalog) &&
+			f.Field == "image" && f.Level == RiskWarning {
+			f.Level = RiskBlocked
+			f.Message = "商店/catalog 包禁止使用 latest/main 等可变镜像标签"
+			res.Risks = append(res.Risks, f)
+			continue
+		}
 		switch f.Level {
 		case RiskBlocked, RiskConfirmation:
 			res.Risks = append(res.Risks, f)

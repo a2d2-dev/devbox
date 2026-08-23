@@ -34,6 +34,7 @@ type stubController struct {
 	removeErr  error
 
 	validateResult apps.ValidateResult
+	lastValidate   apps.ValidateRequest
 	capability     apps.CapabilityReport
 
 	task    apps.Task
@@ -71,7 +72,8 @@ func (s *stubController) Logs(_ context.Context, _ string, opts apps.LogOptions)
 	s.lastLogOptions = opts
 	return s.logs, s.logsErr
 }
-func (s *stubController) Validate(context.Context, apps.ValidateRequest) (apps.ValidateResult, error) {
+func (s *stubController) Validate(_ context.Context, req apps.ValidateRequest) (apps.ValidateResult, error) {
+	s.lastValidate = req
 	return s.validateResult, nil
 }
 func (s *stubController) Apply(_ context.Context, d apps.DesiredApplication, opts apps.ApplyOptions) (apps.Task, error) {

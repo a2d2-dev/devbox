@@ -370,7 +370,7 @@ const SAMPLE = `services:
     ports: ["8080:80"]
 `;
 
-function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
+export function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
   const [source, setSource] = useState('paste'); // 'paste' | 'upload'
   const [name, setName] = useState('');
   const [compose, setCompose] = useState(SAMPLE);

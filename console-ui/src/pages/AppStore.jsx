@@ -16,9 +16,10 @@ import { T } from '../tokens'
 import { Icon } from '../icons'
 import { StatusDot, Chip, Card } from '../components/ui'
 import {
-  useApps, useStoreApps, useCatalogApps, useCatalogSources,
+  useApps, useAppCapability, useStoreApps, useCatalogApps, useCatalogSources,
   useCatalogSourceConfigs, testCatalogSource, createCatalogSource, updateCatalogSource, deleteCatalogSource, refreshCatalogSource,
-  getStoreVersion, getCatalogVersion, installStoreApp, installCatalogApp, refreshCatalogs,
+  getStoreVersion, getCatalogVersion, preflightStoreApp, preflightCatalogApp,
+  installStoreApp, installCatalogApp, refreshCatalogs,
   useTask,
 } from '../hooks/useApi'
 import { btnSecondary, btnPrimary } from '../components/AppWindow'
@@ -27,6 +28,9 @@ import {
   compareVersions, parseRawValue, fieldLabel, coerceValueForSubmit, missingRequiredFields,
 } from '../lib/compose'
 import { useToast } from '../components/toastContext'
+import UninstallDialog from '../components/UninstallDialog'
+import { CreateDialog } from './ComposeManager'
+import { normalizeCategory, deriveAppCenterStatus, APP_STATUS, sortNewest, sourceTrust } from '../lib/appcenter'
 
 // ─── 视觉：按 app id/name/category 推断图标/渐变（保持现有设计语言）────────
 function guessAppStyle(id, name, category) {
@@ -58,8 +62,10 @@ function guessAppStyle(id, name, category) {
   return catStyles[category] || { icon: 'apps', bg: 'linear-gradient(160deg,#64748b,#334155)' };
 }
 
-const CAT_LABEL = { 'ai-inference': 'AI 推理', 'ai-tools': 'AI 工具', 'dev-environment': '开发环境', 'database': '存储' };
-const CAT_ICON = { 'ai-inference': 'sparkle', 'ai-tools': 'wrench', 'dev-environment': 'code', 'database': 'database' };
+const CAT_ICON = {
+  AI: 'sparkle', '影音娱乐': 'play', '下载工具': 'download', '备份同步': 'refresh',
+  '开发工具': 'code', '数据存储': 'database', '网络服务': 'network', '实用效率': 'wrench',
+};
 
 // ─── DeployDialog：统一安装表单（平台 / catalog 分流）──────────────
 // 版本详情由后端取（valuesSchema/defaultValues）；compose 模板 json:"-" 不回前端。
@@ -72,6 +78,8 @@ function DeployDialog({ app, onClose, onSuccess }) {
   const [riskFindings, setRiskFindings] = useState([]);
   const [confirmRisky, setConfirmRisky] = useState(false);
   const [showPwd, setShowPwd] = useState({});
+  const [preflight, setPreflight] = useState(null);
+  const [preflighting, setPreflighting] = useState(false);
 
   const isCatalog = app.origin === 'catalog';
 
@@ -103,8 +111,32 @@ function DeployDialog({ app, onClose, onSuccess }) {
     setValues((prev) => ({ ...prev, [key]: val }));
     setRiskFindings([]);
     setConfirmRisky(false);
+    setPreflight(null);
     setError(null);
   };
+
+  function convertedValues() {
+    const converted = {};
+    (schema?.fields || []).forEach((f) => { converted[f.key] = coerceValueForSubmit(f, values[f.key]); });
+    return converted;
+  }
+
+  async function handlePreflight() {
+    const fields = schema?.fields || [];
+    const missing = missingRequiredFields(fields, values);
+    if (missing.length > 0) { setError(`请填写必填项: ${missing.join(', ')}`); return; }
+    setPreflighting(true); setError(null); setPreflight(null); setRiskFindings([]); setConfirmRisky(false);
+    try {
+      const payload = isCatalog
+        ? { sourceId: app.sourceId, appId: app.id, version: app.ver || '', values: convertedValues() }
+        : { appId: app.id, version: app.ver || '', values: convertedValues() };
+      const result = isCatalog ? await preflightCatalogApp(payload) : await preflightStoreApp(payload);
+      setPreflight(result);
+      setRiskFindings(result.risks || []);
+      if (!result.ok) setError((result.errors || []).join('；') || '安装预检未通过');
+    } catch (e) { setError(e.message || '安装预检失败'); }
+    finally { setPreflighting(false); }
+  }
 
   async function handleSubmit() {
     const fields = schema?.fields || [];
@@ -112,8 +144,8 @@ function DeployDialog({ app, onClose, onSuccess }) {
     if (missing.length > 0) { setError(`请填写必填项: ${missing.join(', ')}`); return; }
     setSubmitting(true); setError(null);
     try {
-      const converted = {};
-      fields.forEach((f) => { converted[f.key] = coerceValueForSubmit(f, values[f.key]); });
+      if (!preflight?.ok) { setError('请先完成安装预检'); return; }
+      const converted = convertedValues();
       const payload = isCatalog
         ? { sourceId: app.sourceId, appId: app.id, version: app.ver || '', values: converted, confirmRisky }
         : { appId: app.id, version: app.ver || '', values: converted, confirmRisky };
@@ -216,6 +248,25 @@ function DeployDialog({ app, onClose, onSuccess }) {
               })}
             </div>
           )}
+          {preflight && (
+            <div style={{ marginTop: 14, padding: 12, borderRadius: 8, background: T.surfaceAlt, border: `1px solid ${T.borderSoft}` }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginBottom: 8 }}>安装影响预检</div>
+              {(preflight.services || []).map((service) => (
+                <div key={service.name} style={{ padding: '7px 0', borderTop: `1px solid ${T.borderSoft}`, fontSize: 11.5, color: T.ink2 }}>
+                  <div><strong>{service.name}</strong> · <span className="mono">{service.image || '未声明镜像'}</span></div>
+                  <div style={{ color: T.ink3, marginTop: 3 }}>
+                    端口：{service.ports?.length ? service.ports.join(', ') : '无宿主端口'} · 存储：{service.volumes?.length ? service.volumes.join(', ') : '无挂载'}
+                  </div>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: T.ink3, marginTop: 7 }}>
+                依赖 {(preflight.services || []).length} 个服务
+                {preflight.networks?.length ? ` · 网络 ${preflight.networks.join(', ')}` : ''}
+                {preflight.secrets?.length ? ` · Secret ${preflight.secrets.join(', ')}（值不回显）` : ''}
+              </div>
+              {(preflight.warnings || []).map((warning, i) => <div key={i} style={{ color: '#92400e', fontSize: 11, marginTop: 5 }}>警告：{warning}</div>)}
+            </div>
+          )}
           {error && !notInstallable && (
             <div style={{ fontSize: 12, color: '#ef4444', marginTop: 10, padding: '8px 10px', background: '#fef2f2', borderRadius: 6 }}>{error}</div>
           )}
@@ -239,9 +290,13 @@ function DeployDialog({ app, onClose, onSuccess }) {
 
         <div style={{ padding: '12px 20px', borderTop: `1px solid ${T.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button onClick={onClose} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 34, padding: '0 16px' }}>取消</button>
-          <button onClick={handleSubmit} disabled={submitting || loading || notInstallable || hasBlockedRisk || (hasConfirmableRisk && !confirmRisky)}
+          <button onClick={handlePreflight} disabled={preflighting || submitting || loading || notInstallable}
+            className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 34, padding: '0 14px' }}>
+            <Icon name="shield" size={13} stroke={2}/>{preflighting ? '检查中...' : preflight ? '重新预检' : '检查安装影响'}
+          </button>
+          <button onClick={handleSubmit} disabled={submitting || loading || notInstallable || !preflight?.ok || hasBlockedRisk || (hasConfirmableRisk && !confirmRisky)}
             className="edge-press edge-btn-primary"
-            style={{ ...btnPrimary, height: 34, padding: '0 20px', opacity: (submitting || loading || notInstallable || hasBlockedRisk || (hasConfirmableRisk && !confirmRisky)) ? 0.6 : 1 }}>
+            style={{ ...btnPrimary, height: 34, padding: '0 20px', opacity: (submitting || loading || notInstallable || !preflight?.ok || hasBlockedRisk || (hasConfirmableRisk && !confirmRisky)) ? 0.6 : 1 }}>
             <Icon name="download" size={13} stroke={2}/>{submitting ? '部署中...' : confirmRisky ? '确认风险并部署' : '确认部署'}
           </button>
         </div>
@@ -251,20 +306,28 @@ function DeployDialog({ app, onClose, onSuccess }) {
 }
 
 // DeployStatus：轮询安装 Task（后端 store/catalog install 返回 202+Task）。
-function DeployStatus({ taskId }) {
+function DeployStatus({ taskId, onRetry, onCleanup }) {
   const { task } = useTask(taskId, 1500);
   const phase = !task || !task.status ? 'Pending'
     : task.status === 'succeeded' ? 'Running'
-    : task.status === 'failed' ? 'Failed' : 'Pending';
-  const label = { Pending: '部署中', Running: '已部署', Failed: '部署失败' }[phase];
+    : ['failed', 'canceled', 'superseded'].includes(task.status) ? 'Failed' : 'Pending';
+  const stageLabel = {
+    validating: '校验配置', resolving: '解析依赖', pulling: '拉取镜像', applying: '创建服务',
+    'waiting-health': '等待健康', verifying: '验证结果', 'cleaning-up': '清理资源',
+  }[task?.phase] || '等待执行';
+  const label = { Pending: `部署中 · ${stageLabel}`, Running: '已部署', Failed: '部署失败' }[phase];
   const message = task?.message || '';
   const toneMap = { Pending: '#f59e0b', Running: '#10b981', Failed: '#ef4444' };
   const color = toneMap[phase] || T.ink3;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: T.surfaceAlt, border: `1px solid ${T.borderSoft}` }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 12px', borderRadius: 8, background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`, flex: 1 }}>
       <StatusDot tone={phase === 'Running' ? 'green' : phase === 'Failed' ? 'red' : 'amber'} size={8}/>
       <span style={{ fontSize: 12.5, fontWeight: 600, color }}>{label}</span>
-      {message && <span style={{ fontSize: 11, color: T.ink3 }}>— {message}</span>}
+      {message && <span style={{ fontSize: 11, color: T.ink3 }}>· {message}</span>}
+      {phase === 'Failed' && <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+        <button onClick={onRetry} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px' }}><Icon name="refresh" size={11}/>重试</button>
+        <button onClick={onCleanup} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 28, padding: '0 10px', color: '#b91c1c' }}><Icon name="trash" size={11}/>清理</button>
+      </div>}
     </div>
   );
 }
@@ -273,6 +336,14 @@ function DeployStatus({ taskId }) {
 function AppStoreDetail({ app, onBack, onOpenApp }) {
   const [showDeploy, setShowDeploy] = useState(false);
   const [deployResult, setDeployResult] = useState(null);
+  const [uninstall, setUninstall] = useState(null);
+  const trust = sourceTrust(app);
+  const status = APP_STATUS[app.status] || APP_STATUS['not-installed'];
+  const deployed = app.deployedApp;
+  const webEndpoint = deployed?.observed?.endpoints?.find((endpoint) => /^https?:/i.test(endpoint.url || ''));
+  const uninstallApp = deployed || (deployResult ? {
+    id: deployResult.appId, name: app.name, version: app.ver, runtime: 'compose', icon: app.icon, bg: app.bg,
+  } : null);
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.surfaceAlt, overflow: 'auto' }}>
@@ -301,39 +372,40 @@ function AppStoreDetail({ app, onBack, onOpenApp }) {
               <Chip tone={app.runtime === 'compose' ? 'blue' : 'gray'}>{app.runtime === 'compose' ? 'Docker Compose' : 'Kubernetes'}</Chip>
               <Chip tone="gray"><span className="mono">{app.ver}</span></Chip>
               {app.cat && <Chip tone="blue">{app.cat}</Chip>}
-              <Chip tone={app.origin === 'catalog' ? 'violet' : 'blue'}>
-                {app.origin === 'catalog' ? (app.sourceName || '第三方 Catalog') : '平台商店'}
-              </Chip>
-              {(app.installed || deployResult) && <Chip tone="green"><StatusDot tone="green" size={6}/>{deployResult ? '已部署' : '已安装'}</Chip>}
+              <Chip tone={trust.tone}>{trust.sourceLabel}</Chip>
+              <Chip tone={app.origin === 'catalog' ? 'amber' : 'green'}><Icon name="shield" size={11}/>{trust.trustLabel}</Chip>
+              <Chip tone={status.tone}><StatusDot tone={status.tone} size={6}/>{status.label}</Chip>
             </div>
             <div style={{ fontSize: 12, color: T.ink3, marginTop: 6, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {app.provider && <><span>提供方 <span style={{ color: T.ink2, fontWeight: 600 }}>{app.provider}</span></span><span style={{ color: '#cbd5e1' }}>·</span></>}
-              {app.date && <span>更新于 <span className="mono">{app.date}</span></span>}
+              {app.publishedAt && <span>发布于 <span className="mono">{new Date(app.publishedAt).toLocaleDateString('zh-CN')}</span></span>}
             </div>
             <div style={{ fontSize: 13, color: T.ink2, marginTop: 12, lineHeight: 1.7 }}>{app.desc}</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, alignItems: 'flex-end' }}>
-            {app.installable ? (
+            {(app.installable || app.installed) ? (
               <button onClick={() => setShowDeploy(true)} className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 36, padding: '0 18px' }}>
-                <Icon name="download" size={13} stroke={2}/>{app.upgradable ? `升级到 ${app.ver}` : app.installed ? '重新部署' : '部署'}
+                <Icon name="download" size={13} stroke={2}/>{app.upgradable ? `更新到 ${app.ver}` : app.installed ? '重新安装' : '安装'}
               </button>
             ) : (
               <div title={app.notInstallableReason || ''} style={{ fontSize: 11.5, color: T.ink3, padding: '8px 12px', borderRadius: 8, background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`, maxWidth: 180, textAlign: 'center' }}>
                 {app.notInstallableReason || '仅 Kubernetes 环境支持'}
               </div>
             )}
-            {app.installed && app.installable && (
+            {app.installed && (
               <button onClick={() => onOpenApp && onOpenApp({ id: app.devboxId || app.id })} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 14px' }}>
-                <Icon name="play" size={12} stroke={2}/>打开应用
+                <Icon name="apps" size={12} stroke={2}/>管理
               </button>
             )}
+            {webEndpoint && <a href={webEndpoint.url} target="_blank" rel="noreferrer" className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 14px', textDecoration: 'none' }}><Icon name="external" size={12}/>打开</a>}
+            {app.installed && uninstallApp && <button onClick={() => setUninstall(uninstallApp)} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 14px', color: '#b91c1c' }}><Icon name="trash" size={12}/>卸载</button>}
           </div>
         </div>
 
         {deployResult && (
           <Card title="部署状态" padding={16} style={{ marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <DeployStatus taskId={deployResult.taskId}/>
+              <DeployStatus taskId={deployResult.taskId} onRetry={() => setShowDeploy(true)} onCleanup={() => uninstallApp && setUninstall(uninstallApp)}/>
               <span style={{ fontSize: 12, color: T.ink3 }} className="mono">{deployResult.appId || deployResult.name}</span>
             </div>
           </Card>
@@ -346,13 +418,20 @@ function AppStoreDetail({ app, onBack, onOpenApp }) {
         </Card>
       </div>
 
-      {showDeploy && <DeployDialog app={app} onClose={() => setShowDeploy(false)} onSuccess={(result) => { setShowDeploy(false); setDeployResult(result); }}/>}
+      {showDeploy && (
+        <DeployDialog app={app} onClose={() => setShowDeploy(false)} onSuccess={(result) => { setShowDeploy(false); setDeployResult(result); }}/>
+      )}
+      {uninstall && (
+        <UninstallDialog app={uninstall} trackTask onClose={() => setUninstall(null)} onDone={() => { setUninstall(null); setDeployResult(null); onBack(); }}/>
+      )}
     </div>
   );
 }
 
 // ─── 列表卡片 ────────────────────────────────────────────────────
 function StoreCard({ app, onOpen, onOpenApp }) {
+  const status = APP_STATUS[app.status] || APP_STATUS['not-installed'];
+  const trust = sourceTrust(app);
   return (
     <div onClick={onOpen} className="edge-row-hover" role="button" tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }}
@@ -372,17 +451,12 @@ function StoreCard({ app, onOpen, onOpenApp }) {
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{app.name}</div>
-            {app.installed && !app.upgradable && (
-              <span style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', fontWeight: 600, flexShrink: 0 }}>已安装</span>
-            )}
-            {app.upgradable && (
-              <span title={`已装 ${app.installedVersion} → ${app.ver}`} style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', fontWeight: 600, flexShrink: 0 }}>可升级</span>
-            )}
+            <Chip tone={status.tone}><StatusDot tone={status.tone} size={5}/>{status.label}</Chip>
           </div>
           <div style={{ fontSize: 11, color: T.ink3, marginTop: 3, display: 'flex', gap: 6, alignItems: 'center' }}>
             <span className="mono">{app.ver}</span>
             <span style={{ color: '#cbd5e1' }}>·</span>
-            <span>{app.origin === 'catalog' ? (app.sourceName || 'Catalog') : '平台'}</span>
+            <span title={trust.trustLabel}>{trust.sourceLabel} · {trust.trustLabel}</span>
           </div>
         </div>
       </div>
@@ -398,14 +472,16 @@ function StoreCard({ app, onOpen, onOpenApp }) {
           {app.runtime === 'compose' ? 'Compose' : 'K8s'}
         </span>
         <div style={{ flex: 1 }}/>
-        {!app.installable
-          ? <span title={app.notInstallableReason || ''} style={{ fontSize: 10.5, color: '#b45309', fontWeight: 600, flexShrink: 0 }}>{app.runtime === 'compose' ? '暂不可安装' : '仅 Kubernetes'}</span>
-          : app.installed
+        {app.status === 'incompatible'
+          ? <span title={app.notInstallableReason || ''} style={{ fontSize: 10.5, color: '#b91c1c', fontWeight: 600, flexShrink: 0 }}>查看兼容性</span>
+          : app.status === 'installing'
+            ? <span style={{ fontSize: 10.5, color: '#1d4ed8', fontWeight: 600, flexShrink: 0 }}>查看进度</span>
+            : app.installed
             ? <button onClick={(e) => { e.stopPropagation(); onOpenApp && onOpenApp({ id: app.devboxId || app.id }); }} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
-                <Icon name="play" size={11} stroke={2}/>打开
+                <Icon name="apps" size={11} stroke={2}/>管理
               </button>
             : <button onClick={(e) => { e.stopPropagation(); onOpen(); }} className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
-                <Icon name="download" size={11} stroke={2}/>部署
+                <Icon name="download" size={11} stroke={2}/>安装
               </button>}
       </div>
     </div>
@@ -512,6 +588,35 @@ function CatalogSourcesPanel({ configs, onRefresh, onConfigsChanged, refreshing 
   );
 }
 
+function AppCenterSettings({ configs, sources, refreshHours, setRefreshHours, onRefresh, onConfigsChanged, refreshing, onBack }) {
+  return (
+    <div style={{ flex: 1, overflow: 'auto', background: T.surfaceAlt }}>
+      <div style={{ padding: '14px 24px', background: T.surface, borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button onClick={onBack} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 10px' }}><Icon name="chevDown" size={12} style={{ transform: 'rotate(90deg)' }}/>返回应用中心</button>
+        <strong style={{ fontSize: 14, color: T.ink }}>应用中心设置</strong>
+      </div>
+      <div style={{ maxWidth: 820, padding: 24 }}>
+        <section style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.ink, marginBottom: 6 }}>更新检查</div>
+          <div style={{ fontSize: 12, color: T.ink3, marginBottom: 10 }}>应用中心打开期间，按此频率刷新 catalog 元数据；已安装应用不会自动升级。</div>
+          <select value={refreshHours} onChange={(event) => setRefreshHours(Number(event.target.value))}
+            aria-label="更新检查频率" style={{ width: 240, height: 36, borderRadius: 7, border: `1px solid ${T.border}`, background: T.surface, padding: '0 10px', color: T.ink }}>
+            <option value={0}>仅手动检查</option>
+            <option value={1}>每小时</option>
+            <option value={6}>每 6 小时</option>
+            <option value={24}>每天</option>
+          </select>
+        </section>
+        <section>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.ink, marginBottom: 10 }}>Catalog 来源</div>
+          <CatalogSourcesPanel configs={Array.isArray(configs) && configs.length > 0 ? configs : sources.map((s) => ({ id: s.sourceId, name: s.sourceName, kind: s.kind, url: '', enabled: true, managedBy: 'config', readOnly: true, status: s.status }))}
+            onRefresh={onRefresh} onConfigsChanged={onConfigsChanged} refreshing={refreshing}/>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 // ─── AppStore 主组件 ─────────────────────────────────────────────
 export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
   const [cat, setCat] = useState('all');
@@ -520,9 +625,19 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
   const [q, setQ] = useState('');
   const [detail, setDetail] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showManual, setShowManual] = useState(false);
+  const [refreshHours, setRefreshHours] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem('devbox.appCenter.refreshHours') ?? 6);
+      return [0, 1, 6, 24].includes(value) ? value : 6;
+    }
+    catch { return 6; }
+  });
   const toast = useToast();
 
   const { data: deployedApps } = useApps(10000);
+  const { data: capability } = useAppCapability();
   const { data: platformRaw, error: storeErr, refresh: refreshStore } = useStoreApps();
   const { data: catalogRaw, error: catalogErr, refresh: refreshCatalogApps } = useCatalogApps();
   const { data: catalogSources, refresh: refreshSources } = useCatalogSources();
@@ -537,8 +652,9 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
     const m = {};
     (deployedApps || []).forEach((d) => {
       if (!d.source || (d.runtime || 'kubernetes') !== 'compose') return;
-      if (d.source.kind === 'store') m[`store:${d.source.storeId}`] = { version: d.source.version || d.version, devboxId: d.id };
-      if (d.source.kind === 'catalog') m[`catalog:${d.source.catalogId}:${d.source.storeId}`] = { version: d.source.version || d.version, devboxId: d.id };
+      const hit = { version: d.source.version || d.version, devboxId: d.id, app: d };
+      if (d.source.kind === 'store') m[`store:${d.source.storeId}`] = hit;
+      if (d.source.kind === 'catalog') m[`catalog:${d.source.catalogId}:${d.source.storeId}`] = hit;
     });
     return m;
   }, [deployedApps]);
@@ -551,14 +667,16 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
       const installedVersion = hit?.version || null;
       const upgradable = installedVersion != null && a.version != null && compareVersions(installedVersion, a.version) < 0;
       const { bg, icon } = guessAppStyle(a.id, a.name, a.category);
+      const installed = installedVersion != null;
+      const status = deriveAppCenterStatus({ installed, upgradable, installable: a.installable === true, taskStatus: hit?.app?.lastTask?.status });
       out.push({
-        id: a.id, name: a.name, cat: CAT_LABEL[a.category] || a.category, ver: a.version,
+        id: a.id, name: a.name, cat: normalizeCategory(a.category), ver: a.version,
         desc: a.description || '', iconUrl: a.icon, icon, bg, provider: a.provider,
         runtime: a.runtime || 'kubernetes', installable: a.installable === true,
         notInstallableReason: a.notInstallableReason || '',
         origin: 'platform', sourceId: '', sourceName: '平台商店',
-        installed: installedVersion != null, installedVersion, upgradable, devboxId: hit?.devboxId,
-        pinned: a.pinned, date: '',
+        installed, installedVersion, upgradable, devboxId: hit?.devboxId, deployedApp: hit?.app, status,
+        pinned: a.pinned, publishedAt: a.publishedAt || '', sourceType: a.sourceType, trustLevel: a.trustLevel,
       });
     });
     (catalogApps || []).forEach((a) => {
@@ -566,14 +684,16 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
       const installedVersion = hit?.version || null;
       const upgradable = installedVersion != null && a.version != null && compareVersions(installedVersion, a.version) < 0;
       const { bg, icon } = guessAppStyle(a.id, a.name, a.category);
+      const installed = installedVersion != null;
+      const status = deriveAppCenterStatus({ installed, upgradable, installable: a.installable === true, taskStatus: hit?.app?.lastTask?.status });
       out.push({
-        id: a.id, name: a.name, cat: CAT_LABEL[a.category] || a.category, ver: a.version,
+        id: a.id, name: a.name, cat: normalizeCategory(a.category), ver: a.version,
         desc: a.description || '', iconUrl: a.icon, icon, bg, provider: a.provider,
         runtime: a.runtime || 'compose', installable: a.installable === true,
         notInstallableReason: a.notInstallableReason || '',
         origin: 'catalog', sourceId: a.catalogId, sourceName: a.catalogName,
-        installed: installedVersion != null, installedVersion, upgradable, devboxId: hit?.devboxId,
-        pinned: a.pinned, date: '',
+        installed, installedVersion, upgradable, devboxId: hit?.devboxId, deployedApp: hit?.app, status,
+        pinned: a.pinned, publishedAt: a.publishedAt || '', sourceType: a.sourceType, trustLevel: a.trustLevel,
       });
     });
     return out;
@@ -590,17 +710,17 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
 
   const allCount = storeApps.length;
   const installedCount = storeApps.filter((a) => a.installed).length;
-  const upgradableCount = storeApps.filter((a) => a.upgradable).length;
+  const latestCount = storeApps.length;
 
-  const list = storeApps.filter((a) => {
+  const filteredList = storeApps.filter((a) => {
     if (tab === 'installed' && !a.installed) return false;
-    if (tab === 'upgradable' && !a.upgradable) return false;
     if (sourceFilter === 'platform' && a.origin !== 'platform') return false;
     if (sourceFilter !== 'all' && sourceFilter !== 'platform' && a.sourceId !== sourceFilter) return false;
     if (cat !== 'all' && a.cat !== cat) return false;
     if (q && !a.name.toLowerCase().includes(q.toLowerCase()) && !(a.desc || '').includes(q)) return false;
     return true;
   });
+  const list = tab === 'latest' ? sortNewest(filteredList) : filteredList;
 
   // 状态：未配置任何来源 / 平台错误 / catalog 单源错误但缓存可用。
   const noSourcesConfigured = !platformApps && !catalogApps && sources.length === 0 && !storeErr && !catalogErr;
@@ -624,13 +744,33 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
     }
   }
 
+  useEffect(() => {
+    try { localStorage.setItem('devbox.appCenter.refreshHours', String(refreshHours)); } catch { /* storage may be disabled */ }
+  }, [refreshHours]);
+
+  useEffect(() => {
+    if (!authed || refreshHours <= 0) return undefined;
+    const timer = window.setInterval(() => {
+      refreshCatalogs().then(() => {
+        refreshSources(); refreshSourceConfigs(); refreshCatalogApps(); refreshStore();
+      }).catch(() => { /* source health is surfaced by the settings page */ });
+    }, refreshHours * 60 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [authed, refreshHours, refreshSources, refreshSourceConfigs, refreshCatalogApps, refreshStore]);
+
   if (detail) {
     return <AppStoreDetail app={detail} onBack={() => setDetail(null)} onOpenApp={onOpenApp}/>;
   }
 
+  if (showSettings) {
+    return <AppCenterSettings configs={catalogSourceConfigs} sources={sources} refreshHours={refreshHours} setRefreshHours={setRefreshHours}
+      onRefresh={onRefresh} onConfigsChanged={() => { refreshSourceConfigs(); refreshSources(); refreshCatalogApps(); }} refreshing={refreshing}
+      onBack={() => setShowSettings(false)}/>;
+  }
+
   // 来源筛选选项：全部 / 平台商店 / 各 catalog source。
   const sourceOptions = [{ id: 'all', label: '全部来源' }];
-  if (platformApps && platformApps.length > 0) sourceOptions.push({ id: 'platform', label: '平台商店' });
+  if (platformApps && platformApps.length > 0) sourceOptions.push({ id: 'platform', label: 'DevBox 官方' });
   sources.forEach((s) => sourceOptions.push({ id: s.sourceId, label: s.sourceName || s.sourceId }));
 
   return (
@@ -656,7 +796,8 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
         </div>
 
         <div style={{ height: 1, background: T.borderSoft, margin: '16px 8px' }}/>
-        <CatalogSourcesPanel configs={Array.isArray(catalogSourceConfigs) && catalogSourceConfigs.length > 0 ? catalogSourceConfigs : sources.map((s) => ({ id: s.sourceId, name: s.sourceName, kind: s.kind, url: '', enabled: true, managedBy: 'config', readOnly: true, status: s.status }))} onRefresh={onRefresh} onConfigsChanged={() => { refreshSourceConfigs(); refreshSources(); refreshCatalogApps(); }} refreshing={refreshing}/>
+        <button onClick={() => { if (!authed) onRequireAuth?.(); else setShowManual(true); }} className="edge-press edge-btn-primary" style={{ ...btnPrimary, width: '100%', height: 34, justifyContent: 'flex-start' }}><Icon name="plus" size={13}/>手动安装</button>
+        <button onClick={() => setShowSettings(true)} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, width: '100%', height: 34, marginTop: 7, justifyContent: 'flex-start' }}><Icon name="gear" size={13}/>设置</button>
 
         {/* 单源错误但缓存可用提示 */}
         {sources.some((s) => s.status?.state === 'error') && (
@@ -669,12 +810,18 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
       {/* Main */}
       <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
         <TabBar
-          tabs={[{ id: 'all', label: '全部', count: allCount }, { id: 'installed', label: '已安装', count: installedCount }, { id: 'upgradable', label: '可升级', count: upgradableCount }]}
+          tabs={[{ id: 'all', label: '全部', count: allCount }, { id: 'latest', label: '最新发布', count: latestCount }, { id: 'installed', label: '已安装', count: installedCount }]}
           active={tab} onChange={setTab}
           style={{ gap: 4, marginBottom: 16, borderBottom: `1px solid ${T.borderSoft}` }}
           itemStyle={{ padding: '10px 16px 12px', fontSize: 13, marginBottom: -1 }}
           renderLabel={(t2, on) => (<>{t2.label}<span style={{ fontSize: 11, color: T.ink4, fontWeight: 500, padding: '1px 6px', borderRadius: 3, background: on ? T.blueSoft : T.surfaceAlt }} className="mono tnum">{t2.count}</span></>)}
         />
+
+        {tab === 'latest' && storeApps.some((app) => !app.publishedAt) && (
+          <div style={{ margin: '-6px 0 12px', fontSize: 11.5, color: T.ink3 }}>
+            部分 catalog 未提供发布时间：有时间的条目按发布时间倒序，其余按版本号与名称降级排序。
+          </div>
+        )}
 
         {/* Toolbar: 来源筛选 + 搜索 + 同步 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -748,8 +895,8 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
               </>
             ) : (
               <>
-                <Icon name={tab === 'upgradable' ? 'check' : tab === 'installed' ? 'apps' : 'search'} size={28} stroke={1.5} style={{ color: T.ink4, marginBottom: 8 }}/>
-                <div>{tab === 'upgradable' ? '所有已安装应用都是最新版本' : tab === 'installed' ? '本节点尚未安装任何应用' : '没有匹配的应用'}</div>
+                <Icon name={tab === 'installed' ? 'apps' : 'search'} size={28} stroke={1.5} style={{ color: T.ink4, marginBottom: 8 }}/>
+                <div>{tab === 'installed' ? '本节点尚未安装任何应用' : '没有匹配的应用'}</div>
               </>
             )}
           </div>
@@ -759,6 +906,10 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
           <span style={{ height: 1, width: 60, background: T.border }}/>已加载全部<span style={{ height: 1, width: 60, background: T.border }}/>
         </div>
       </div>
+      {showManual && (
+        <CreateDialog composeCap={capability?.compose} onClose={() => setShowManual(false)}
+          onOpenStore={() => setShowManual(false)} onDeployed={() => { setShowManual(false); }}/>
+      )}
     </div>
   );
 }

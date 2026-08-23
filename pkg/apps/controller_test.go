@@ -438,6 +438,19 @@ func TestControllerValidate(t *testing.T) {
 	assert.True(t, len(res.Risks) > 0)
 }
 
+func TestControllerValidateStoreMutableImageIsBlocked(t *testing.T) {
+	ctrl, _, _, _ := newTestController(t, nil)
+	res, err := ctrl.Validate(context.Background(), ValidateRequest{
+		ComposeContent: "services:\n  web:\n    image: nginx:latest\n",
+		Source:         ApplicationSource{Kind: SourceStore, StoreID: "nginx"},
+	})
+	require.NoError(t, err)
+	assert.False(t, res.OK)
+	require.Len(t, res.Risks, 1)
+	assert.Equal(t, RiskBlocked, res.Risks[0].Level)
+	assert.Equal(t, "image", res.Risks[0].Field)
+}
+
 func TestControllerValidateAndApplyDeploymentSettings(t *testing.T) {
 	ctrl, _, _, paths := newTestController(t, map[RuntimeKind]runtimeAdapter{RuntimeCompose: &fakeAdapter{kind: RuntimeCompose}})
 	ctx := context.Background()

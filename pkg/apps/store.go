@@ -99,9 +99,10 @@ type storeAppsResponse struct {
 
 type storeAppItem struct {
 	Metadata struct {
-		Name        string            `json:"name"`
-		Labels      map[string]string `json:"labels"`
-		Annotations map[string]string `json:"annotations"`
+		Name              string            `json:"name"`
+		Labels            map[string]string `json:"labels"`
+		Annotations       map[string]string `json:"annotations"`
+		CreationTimestamp string            `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Status struct {
 		LatestVersion string `json:"latestVersion"`
@@ -159,6 +160,9 @@ func (s *StoreManager) ListStoreApps(ctx context.Context) ([]StoreApp, error) {
 			Installable:          installable,
 			NotInstallableReason: reason,
 			Pinned:               item.Metadata.Labels["app.theriseunion.io/pinned"] == "true",
+			PublishedAt:          orStr(item.Metadata.Annotations["app.theriseunion.io/published-at"], item.Metadata.CreationTimestamp),
+			SourceType:           "official",
+			TrustLevel:           "reviewed",
 		}
 		if app.Name == "" {
 			app.Name = item.Metadata.Name

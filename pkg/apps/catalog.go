@@ -138,6 +138,7 @@ type catalogEntry struct {
 	Category    string `json:"category,omitempty"`
 	Provider    string `json:"provider,omitempty"`
 	Pinned      bool   `json:"pinned,omitempty"`
+	PublishedAt string `json:"publishedAt,omitempty"`
 	// Compose 模板来源二选一：ComposeTemplate 内联；Compose 为相对 manifest 的路径
 	// （由 source 解析为 URL 拉取）。两者都空则该版本不可安装。
 	ComposeTemplate string                     `json:"composeTemplate,omitempty"`
@@ -455,6 +456,9 @@ func storeAppFromEntry(srcID, srcName string, e catalogEntry) StoreApp {
 		Runtimes:     []string{string(RuntimeCompose)},
 		Installable:  true, // Docker 可用性由 handler 用 capability 覆盖
 		Pinned:       e.Pinned,
+		PublishedAt:  latest.PublishedAt,
+		SourceType:   "community",
+		TrustLevel:   "unverified",
 		CatalogID:    srcID,
 		CatalogName:  srcName,
 	}
@@ -478,6 +482,7 @@ func mergeCatalogEntry(parent, child catalogEntry) catalogEntry {
 	child.Icon = orStr(strings.TrimSpace(child.Icon), parent.Icon)
 	child.Category = orStr(strings.TrimSpace(child.Category), parent.Category)
 	child.Provider = orStr(strings.TrimSpace(child.Provider), parent.Provider)
+	child.PublishedAt = orStr(strings.TrimSpace(child.PublishedAt), parent.PublishedAt)
 	if len(child.ValuesSchema) == 0 {
 		child.ValuesSchema = parent.ValuesSchema
 	}

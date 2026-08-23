@@ -210,11 +210,13 @@ func (s *Server) registerRoutes() {
 	// 应用商店路由（阶段4 Compose 商店统一）
 	s.mux.HandleFunc("/api/v1/store/apps", s.handleStoreApps)
 	s.mux.HandleFunc("/api/v1/store/version", s.handleStoreVersion)
+	s.mux.HandleFunc("/api/v1/store/preflight", s.handleStorePreflight)
 	s.mux.HandleFunc("/api/v1/store/install", s.handleStoreInstall)
 	// 第三方 catalog 路由（阶段4 扩展：HTTP/Git 文件原生 catalog source）
 	s.mux.HandleFunc("/api/v1/catalogs", s.handleCatalogs)
 	s.mux.HandleFunc("/api/v1/catalogs/apps", s.handleCatalogApps)
 	s.mux.HandleFunc("/api/v1/catalogs/version", s.handleCatalogVersion)
+	s.mux.HandleFunc("/api/v1/catalogs/preflight", s.handleCatalogPreflight)
 	s.mux.HandleFunc("/api/v1/catalogs/install", s.handleCatalogInstall)
 	s.mux.HandleFunc("/api/v1/catalogs/sources", s.handleCatalogSources)
 	s.mux.HandleFunc("/api/v1/catalogs/sources/", s.handleCatalogSources)
