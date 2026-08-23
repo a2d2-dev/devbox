@@ -120,6 +120,8 @@ func main() {
 		AuthPassword:         cfg.Auth.Password,
 		AuthSessionTTL:       cfg.Auth.SessionTTL,
 		LinksPath:            cfg.Console.LinksPath,
+		BrowserDataPath:      cfg.Console.BrowserDataPath,
+		BrowserInsecureTLS:   cfg.Console.BrowserInsecureTLS,
 		Catalogs:             catalogs,
 		CatalogSourceManager: catalogSourceManager,
 	}, col, appController, storeMgr)
