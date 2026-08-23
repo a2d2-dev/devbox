@@ -14,6 +14,7 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/files"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func testFileServer(t *testing.T, password string) (*Server, *files.Browser, string) {
@@ -23,6 +24,18 @@ func testFileServer(t *testing.T, password string) (*Server, *files.Browser, str
 	s := &Server{mux: http.NewServeMux(), fileBrowser: browser, auth: auth.New(auth.Config{Password: password, SessionTTL: 3600})}
 	s.registerFileRoutes()
 	return s, browser, root
+}
+
+func TestNewServerUsesConfiguredComposeAppsDir(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "work")
+	appsDir := filepath.Join(t.TempDir(), "compose-data", "apps")
+	require.NoError(t, os.MkdirAll(workDir, 0o755))
+	require.NoError(t, os.MkdirAll(appsDir, 0o755))
+
+	server := NewServer(zap.NewNop(), Config{WorkDir: workDir, AppsDir: appsDir}, nil, nil, nil)
+	source, err := server.fileBrowser.Source("apps")
+	require.NoError(t, err)
+	assert.Equal(t, appsDir, source.Root)
 }
 
 func TestPublicShareBypassesAuthThenExpiresOrRevokes(t *testing.T) {

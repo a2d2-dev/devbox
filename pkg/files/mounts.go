@@ -64,6 +64,15 @@ func (b *Browser) isForeignMount(source Source, candidate string) bool {
 	return withinMountRoots(b.foreignMountRoots(source), candidate)
 }
 
+func (b *Browser) containsForeignMount(source Source, candidate string) bool {
+	for _, root := range b.foreignMountRoots(source) {
+		if pathWithin(candidate, root) {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *Browser) foreignMountRoots(source Source) []string {
 	var roots []string
 	for _, mount := range discoverMountSources(b.mountsFile, b.rootDir, b.appsDir) {

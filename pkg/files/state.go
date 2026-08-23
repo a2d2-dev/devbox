@@ -120,11 +120,16 @@ func (b *Browser) SetFavorite(sourceID, path string, enabled bool) error {
 	if err != nil {
 		return err
 	}
-	full, clean, err := b.resolve(source, path, false)
+	_, clean, err := b.resolve(source, path, false)
 	if err != nil {
 		return err
 	}
-	info, err := os.Stat(full)
+	root, err := os.OpenRoot(source.Root)
+	if err != nil {
+		return fileError("SOURCE_UNAVAILABLE", "open source root: %v", err)
+	}
+	defer root.Close()
+	info, err := root.Stat(rootPath(clean))
 	if err != nil {
 		return fileError("PATH_NOT_FOUND", "favorite target not found")
 	}
@@ -186,11 +191,21 @@ func (b *Browser) CreateShare(sourceID, path string, ttl time.Duration) (Created
 	if err != nil {
 		return CreatedShare{}, err
 	}
-	full, clean, err := b.resolve(source, path, false)
+	_, clean, err := b.resolve(source, path, false)
 	if err != nil {
 		return CreatedShare{}, err
 	}
-	info, err := os.Stat(full)
+	root, err := os.OpenRoot(source.Root)
+	if err != nil {
+		return CreatedShare{}, fileError("SOURCE_UNAVAILABLE", "open source root: %v", err)
+	}
+	file, err := root.Open(rootPath(clean))
+	root.Close()
+	if err != nil {
+		return CreatedShare{}, fileError("NOT_FILE", "only regular files can be shared")
+	}
+	info, err := file.Stat()
+	file.Close()
 	if err != nil || !info.Mode().IsRegular() {
 		return CreatedShare{}, fileError("NOT_FILE", "only regular files can be shared")
 	}
@@ -265,9 +280,9 @@ func (b *Browser) RevokeShare(id string) error {
 	return b.saveStateLocked(state)
 }
 
-func (b *Browser) ResolveShare(token string) (string, string, error) {
+func (b *Browser) OpenShare(token string) (*os.File, string, os.FileInfo, error) {
 	if len(token) < 32 || len(token) > 128 {
-		return "", "", fileError("SHARE_NOT_FOUND", "share not found")
+		return nil, "", nil, fileError("SHARE_NOT_FOUND", "share not found")
 	}
 	hash := sha256.Sum256([]byte(token))
 	wanted := hex.EncodeToString(hash[:])
@@ -275,25 +290,25 @@ func (b *Browser) ResolveShare(token string) (string, string, error) {
 	state, err := b.loadStateLocked()
 	b.mu.Unlock()
 	if err != nil {
-		return "", "", err
+		return nil, "", nil, err
 	}
 	for _, share := range state.Shares {
 		if len(wanted) != len(share.TokenHash) || subtle.ConstantTimeCompare([]byte(wanted), []byte(share.TokenHash)) != 1 {
 			continue
 		}
 		if share.ExpiresAt != nil && !share.ExpiresAt.After(b.now()) {
-			return "", "", fileError("SHARE_EXPIRED", "share has expired")
+			return nil, "", nil, fileError("SHARE_EXPIRED", "share has expired")
 		}
-		full, err := b.ResolveDownload(share.Source, share.Path)
+		file, info, err := b.OpenDownload(share.Source, share.Path)
 		if err != nil {
-			return "", "", err
+			return nil, "", nil, err
 		}
-		return full, share.Name, nil
+		return file, share.Name, info, nil
 	}
-	return "", "", fileError("SHARE_NOT_FOUND", "share not found")
+	return nil, "", nil, fileError("SHARE_NOT_FOUND", "share not found")
 }
 
-func (b *Browser) appendAudit(action, source, path string) error {
+func (b *Browser) appendAuditEvent(action, source, path, result string, operationErr error) error {
 	if err := os.MkdirAll(b.stateDir, 0o700); err != nil {
 		return fileError("IO_ERROR", "create audit directory: %v", err)
 	}
@@ -302,7 +317,12 @@ func (b *Browser) appendAudit(action, source, path string) error {
 		Action string    `json:"action"`
 		Source string    `json:"source"`
 		Path   string    `json:"path,omitempty"`
-	}{At: b.now().UTC(), Action: action, Source: source, Path: path}
+		Result string    `json:"result,omitempty"`
+		Error  string    `json:"error,omitempty"`
+	}{At: b.now().UTC(), Action: action, Source: source, Path: path, Result: result}
+	if operationErr != nil {
+		event.Error = operationErr.Error()
+	}
 	data, _ := json.Marshal(event)
 	f, err := os.OpenFile(filepath.Join(b.stateDir, "audit.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {

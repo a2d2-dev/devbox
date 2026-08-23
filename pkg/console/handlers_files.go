@@ -168,15 +168,16 @@ func (s *Server) serveManagedFile(w http.ResponseWriter, r *http.Request, attach
 	if !requireMethod(w, r, http.MethodGet) || !s.fileReady(w) {
 		return
 	}
-	full, err := s.fileBrowser.ResolveDownload(r.URL.Query().Get("source"), requestedFilePath(r))
+	file, info, err := s.fileBrowser.OpenDownload(r.URL.Query().Get("source"), requestedFilePath(r))
 	if err != nil {
 		writeFileError(w, err)
 		return
 	}
+	defer file.Close()
 	if attachment {
-		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(full)}))
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": info.Name()}))
 	}
-	http.ServeFile(w, r, full)
+	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 
 func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
@@ -452,12 +453,13 @@ func (s *Server) handlePublicShare(w http.ResponseWriter, r *http.Request) {
 		writeFileError(w, filemanagerError("SHARE_NOT_FOUND", "share not found"))
 		return
 	}
-	full, name, err := s.fileBrowser.ResolveShare(token)
+	file, name, info, err := s.fileBrowser.OpenShare(token)
 	if err != nil {
 		writeFileError(w, err)
 		return
 	}
+	defer file.Close()
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 	w.Header().Set("Cache-Control", "private, no-store")
-	http.ServeFile(w, r, full)
+	http.ServeContent(w, r, name, info.ModTime(), file)
 }

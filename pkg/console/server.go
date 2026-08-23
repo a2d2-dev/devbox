@@ -39,6 +39,8 @@ type Config struct {
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
+	// AppsDir 是 Compose 受管应用文件根，由 compose.data_dir 派生。
+	AppsDir string `mapstructure:"-"`
 	// BrowserDataPath 浏览器应用的书签/历史 JSON 路径；空 = /etc/devbox/browser.json。
 	BrowserDataPath string `mapstructure:"browser_data_path"`
 	// BrowserInsecureTLS 浏览器代理是否跳过远端 TLS 校验（内网自签证书场景），默认 false。
@@ -83,7 +85,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		storeManager:         storeMgr,
 		catalogs:             cfg.Catalogs,
 		catalogSourceManager: cfg.CatalogSourceManager,
-		fileBrowser:          files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
+		fileBrowser:          files.NewBrowser(files.Config{RootDir: cfg.WorkDir, AppsDir: cfg.AppsDir}),
 		modelScanner:         models.NewScanner(models.Config{}),
 		alertEngine:          alerts.NewEngine(col),
 		auth: auth.New(auth.Config{

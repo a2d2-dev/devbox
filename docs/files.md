@@ -10,7 +10,7 @@ DevBox 文件管理采用 fnOS 的“位置 + 集合”信息架构，但按单�
 | 团队文件 | 不保留；DevBox 无多用户/团队空间 | - | - |
 | 外接存储 | 自动发现 `/proc/mounts` 中 `/media`、`/mnt`、`/run/media`、`/Volumes` 下的挂载点 | 否 | 否 |
 | 远程挂载 | 自动发现 NFS、CIFS/SMB、SSHFS、Ceph、9P 等已挂载文件系统 | 否 | 否 |
-| 应用文件 | Compose 默认数据根 `/var/lib/devbox/apps` | 是 | 否 |
+| 应用文件 | `compose.data_dir/apps`，默认 `/var/lib/devbox/apps` | 是 | 否 |
 
 外接和远程来源只负责查看与下载，不提供修改操作。应用文件允许修改，但不使用主数据根的回收站；删除会明确提示并要求二次确认后永久执行。
 
@@ -20,7 +20,7 @@ DevBox 文件管理采用 fnOS 的“位置 + 集合”信息架构，但按单�
 
 “他人共享 / 我的共享”依赖用户体系，DevBox 当前是单用户环境，因此合并为“外链管理”：创建只读下载 token、选择有效期、查看和撤销。
 
-应用文件对应 `pkg/apps.Paths.AppDir` 的父目录。当前文件模块使用 Compose 默认 `data_dir=/var/lib/devbox`；若部署修改了 `compose.data_dir`，文件来源尚不会自动推导该自定义值。该限制是为了遵守 Issue #11 的改动范围，不扩展 `pkg/config` 与 `cmd` 装配。
+应用文件对应 `pkg/apps.Paths.AppDir` 的父目录；服务启动时从 `compose.data_dir` 推导，因此自定义 Compose 数据根会同步反映到文件来源。
 
 ## 文件能力
 
@@ -47,7 +47,9 @@ DevBox 文件管理采用 fnOS 的“位置 + 集合”信息架构，但按单�
 
 普通删除先以随机 ID 将内容原子移动到 `.trash/files/`，`index.json` 记录来源、原相对路径和删除时间。恢复时重新校验原路径；父目录不存在会安全重建，原路径已被占用则返回冲突，不覆盖新内容。
 
-永久删除、回收站单项永久删除、清空回收站均要求 HTTP 请求显式携带 `confirm: true`，前端也会二次确认。危险操作追加写入 `.devbox-files/audit.jsonl`。
+永久清理先把索引项标记为 `pendingPurge` 并持久化，再删除实际内容；pending 项不再出现在回收站列表中。删除失败时保留 pending 状态，使用同一 ID 重试即可继续清理，避免内容已删除但索引仍显示的幽灵条目。清空回收站使用相同的两阶段顺序。
+
+永久删除、回收站单项永久删除、清空回收站均要求 HTTP 请求显式携带 `confirm: true`，前端也会二次确认。永久删除在执行前记录审计意图；危险操作结束后追加 `success` 或 `failure` 结果到 `.devbox-files/audit.jsonl`。
 
 ## 外链安全
 
@@ -65,9 +67,11 @@ GET /api/v1/files/public/{token}
 
 1. 拒绝绝对路径、卷名、NUL、反斜杠和规范化后含 `..` 的路径。
 2. 来源 ID 必须来自当前配置或 `/proc/mounts` 发现结果。
-3. 逐段 `Lstat`，拒绝任意 symlink，包括仍位于根内的 symlink；因此 symlink 逃逸不会进入目标。
-4. 创建目标只允许末段不存在，父目录必须已通过同一逐段校验。
-5. 根目录本身先 `EvalSymlinks` 后再做 `filepath.Rel` 边界确认。
+3. 逐段 `Lstat` 拒绝任意 symlink，包括仍位于根内的 symlink；创建目标只允许末段不存在。
+4. 实际读取、写入、递归遍历与删除使用 Go `os.Root` 的目录 fd 语义；即使校验后父目录被替换为 symlink，也不能越出来源根。
+5. 重命名、移动与恢复在 Linux 上使用 `renameat2(RENAME_NOREPLACE)`，目标并发出现时返回冲突而不覆盖。文件系统不支持该操作时，普通文件回退为 `linkat + unlinkat`；目录明确返回不支持。
+6. 下载和公开外链从已校验并打开的文件 fd 通过 `http.ServeContent` 输出，不按路径二次打开。
+7. 外接/网络挂载点及其祖先目录不能从父来源执行递归复制或删除。
 
 此策略有意不透明跟随 symlink，让读取和修改操作共享同一条可审计规则。
 

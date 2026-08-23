@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -97,6 +98,10 @@ type Browser struct {
 	mountsFile  string
 	mu          sync.Mutex
 	now         func() time.Time
+	// These hooks provide deterministic filesystem-race injection points for tests.
+	beforeSourceOpen func()
+	beforeRename     func()
+	beforeRemove     func()
 }
 
 func NewBrowser(cfg Config) *Browser {
@@ -273,9 +278,22 @@ func (b *Browser) ListSource(sourceID, path, sortBy, order string) ([]FileEntry,
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(full)
+	root, err := os.OpenRoot(source.Root)
+	if err != nil {
+		return nil, fileError("SOURCE_UNAVAILABLE", "open source root: %v", err)
+	}
+	defer root.Close()
+	dir, err := root.Open(rootPath(clean))
+	if err != nil {
+		return nil, fileError("IO_ERROR", "open directory: %v", err)
+	}
+	entries, err := dir.ReadDir(-1)
+	closeErr := dir.Close()
 	if err != nil {
 		return nil, fileError("IO_ERROR", "read directory: %v", err)
+	}
+	if closeErr != nil {
+		return nil, fileError("IO_ERROR", "close directory: %v", closeErr)
 	}
 	foreignMounts := b.foreignMountRoots(source)
 	result := make([]FileEntry, 0, len(entries))
@@ -300,8 +318,11 @@ func (b *Browser) ListSource(sourceID, path, sortBy, order string) ([]FileEntry,
 		item := FileEntry{Name: entry.Name(), Path: rel, Source: source.ID, IsDir: entry.IsDir(), Size: info.Size(), Modified: info.ModTime(), AbsPath: filepath.Join(full, entry.Name())}
 		if entry.IsDir() {
 			item.Type = "dir"
-			if children, readErr := os.ReadDir(filepath.Join(full, entry.Name())); readErr == nil {
-				item.Count = len(children)
+			if childDir, openErr := root.Open(rootPath(filepath.Join(clean, entry.Name()))); openErr == nil {
+				if children, readErr := childDir.ReadDir(-1); readErr == nil {
+					item.Count = len(children)
+				}
+				childDir.Close()
 			}
 		} else {
 			item.Type = fileType(entry.Name())
@@ -355,7 +376,7 @@ func (b *Browser) Search(sourceID, path, query string) ([]FileEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	base, baseRel, err := b.resolve(source, path, false)
+	_, baseRel, err := b.resolve(source, path, false)
 	if err != nil {
 		return nil, err
 	}
@@ -365,14 +386,20 @@ func (b *Browser) Search(sourceID, path, query string) ([]FileEntry, error) {
 	}
 	results := make([]FileEntry, 0)
 	foreignMounts := b.foreignMountRoots(source)
-	err = filepath.WalkDir(base, func(current string, entry os.DirEntry, walkErr error) error {
+	root, err := os.OpenRoot(source.Root)
+	if err != nil {
+		return nil, fileError("SOURCE_UNAVAILABLE", "open source root: %v", err)
+	}
+	defer root.Close()
+	walkBase := rootPath(baseRel)
+	err = fs.WalkDir(root.FS(), walkBase, func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
-		if current == base {
+		if current == walkBase {
 			return nil
 		}
-		relFromBase, _ := filepath.Rel(base, current)
+		relFromBase, _ := filepath.Rel(walkBase, current)
 		depth := len(strings.Split(relFromBase, string(filepath.Separator)))
 		if depth > maxSearchDepth {
 			if entry.IsDir() {
@@ -386,7 +413,8 @@ func (b *Browser) Search(sourceID, path, query string) ([]FileEntry, error) {
 			}
 			return nil
 		}
-		if withinMountRoots(foreignMounts, current) {
+		absoluteCurrent := filepath.Join(source.Root, filepath.FromSlash(current))
+		if withinMountRoots(foreignMounts, absoluteCurrent) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -406,7 +434,7 @@ func (b *Browser) Search(sourceID, path, query string) ([]FileEntry, error) {
 			return nil
 		}
 		rel := filepath.ToSlash(filepath.Join(baseRel, relFromBase))
-		item := FileEntry{Name: entry.Name(), Path: rel, Source: source.ID, IsDir: entry.IsDir(), Size: info.Size(), Modified: info.ModTime(), AbsPath: current}
+		item := FileEntry{Name: entry.Name(), Path: rel, Source: source.ID, IsDir: entry.IsDir(), Size: info.Size(), Modified: info.ModTime(), AbsPath: absoluteCurrent}
 		if entry.IsDir() {
 			item.Type = "dir"
 		} else {
@@ -432,6 +460,17 @@ func validName(name string) error {
 	return nil
 }
 
+func (b *Browser) resolveTarget(source Source, parent, name string) (string, string, error) {
+	if err := validName(name); err != nil {
+		return "", "", err
+	}
+	parentClean, err := normalizeRelative(parent)
+	if err != nil {
+		return "", "", err
+	}
+	return b.resolve(source, filepath.Join(parentClean, name), true)
+}
+
 func (b *Browser) Save(dirPath, name string, data []byte) (string, error) {
 	return b.SaveSource("my", dirPath, name, data)
 }
@@ -441,14 +480,17 @@ func (b *Browser) SaveSource(sourceID, dirPath, name string, data []byte) (strin
 	if err != nil {
 		return "", err
 	}
-	if err := validName(name); err != nil {
-		return "", err
-	}
-	dir, _, err := b.resolve(source, dirPath, false)
+	_, targetClean, err := b.resolveTarget(source, dirPath, name)
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Stat(dir)
+	root, err := os.OpenRoot(source.Root)
+	if err != nil {
+		return "", fileError("SOURCE_UNAVAILABLE", "open source root: %v", err)
+	}
+	defer root.Close()
+	dirClean := filepath.Dir(targetClean)
+	info, err := root.Stat(rootPath(dirClean))
 	if err != nil || !info.IsDir() {
 		return "", fileError("NOT_DIRECTORY", "target is not a directory")
 	}
@@ -456,12 +498,12 @@ func (b *Browser) SaveSource(sourceID, dirPath, name string, data []byte) (strin
 	stem := strings.TrimSuffix(name, ext)
 	final := name
 	for i := 0; i < 1000; i++ {
-		full := filepath.Join(dir, final)
-		f, openErr := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		candidate := filepath.Join(dirClean, final)
+		f, openErr := root.OpenFile(rootPath(candidate), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if openErr == nil {
 			if _, writeErr := f.Write(data); writeErr != nil {
 				f.Close()
-				os.Remove(full)
+				root.Remove(rootPath(candidate))
 				return "", fileError("IO_ERROR", "write file: %v", writeErr)
 			}
 			if closeErr := f.Close(); closeErr != nil {
@@ -477,31 +519,49 @@ func (b *Browser) SaveSource(sourceID, dirPath, name string, data []byte) (strin
 	return "", fileError("CONFLICT", "no free filename")
 }
 
-func (b *Browser) ResolveFile(dirPath, name string) (string, error) {
-	if err := validName(name); err != nil {
-		return "", err
-	}
-	return b.ResolveDownload("my", filepath.ToSlash(filepath.Join(dirPath, name)))
-}
-
-func (b *Browser) ResolveDownload(sourceID, path string) (string, error) {
+// OpenDownload returns an already-open descriptor so callers never reopen a checked path.
+func (b *Browser) OpenDownload(sourceID, path string) (*os.File, os.FileInfo, error) {
 	source, err := b.require(sourceID, func(c Capabilities) bool { return c.Download })
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
-	full, clean, err := b.resolve(source, path, false)
+	_, clean, err := b.resolve(source, path, false)
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
-	info, err := os.Stat(full)
+	root, err := os.OpenRoot(source.Root)
 	if err != nil {
-		return "", fileError("PATH_NOT_FOUND", "file not found")
+		return nil, nil, fileError("SOURCE_UNAVAILABLE", "open source root: %v", err)
+	}
+	defer root.Close()
+	if b.beforeSourceOpen != nil {
+		b.beforeSourceOpen()
+	}
+	file, err := root.Open(rootPath(clean))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, fileError("PATH_NOT_FOUND", "file not found")
+		}
+		return nil, nil, fileError("PATH_FORBIDDEN", "open checked file: %v", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, nil, fileError("IO_ERROR", "inspect opened file: %v", err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", fileError("NOT_FILE", "not a regular file")
+		file.Close()
+		return nil, nil, fileError("NOT_FILE", "not a regular file")
 	}
 	b.recordRecent(source.ID, clean, info)
-	return full, nil
+	return file, info, nil
+}
+
+func rootPath(rel string) string {
+	if rel == "" {
+		return "."
+	}
+	return filepath.ToSlash(rel)
 }
 
 func (b *Browser) require(sourceID string, allowed func(Capabilities) bool) (Source, error) {
@@ -520,15 +580,16 @@ func (b *Browser) Mkdir(sourceID, parent, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := validName(name); err != nil {
-		return err
-	}
-	dir, _, err := b.resolve(source, parent, false)
+	_, targetClean, err := b.resolveTarget(source, parent, name)
 	if err != nil {
 		return err
 	}
-	target := filepath.Join(dir, name)
-	if err := os.Mkdir(target, 0o755); err != nil {
+	root, err := os.OpenRoot(source.Root)
+	if err != nil {
+		return fileError("SOURCE_UNAVAILABLE", "open source root: %v", err)
+	}
+	defer root.Close()
+	if err := root.Mkdir(rootPath(targetClean), 0o755); err != nil {
 		if os.IsExist(err) {
 			return fileError("CONFLICT", "path already exists")
 		}
@@ -542,26 +603,22 @@ func (b *Browser) Rename(sourceID, path, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := validName(name); err != nil {
-		return err
-	}
-	from, clean, err := b.resolve(source, path, false)
+	_, clean, err := b.resolve(source, path, false)
 	if err != nil {
 		return err
 	}
 	if clean == "" {
 		return fileError("PATH_FORBIDDEN", "cannot rename source root")
 	}
-	toRel := filepath.Join(filepath.Dir(clean), name)
-	to, _, err := b.resolve(source, toRel, true)
+	_, toClean, err := b.resolveTarget(source, filepath.Dir(clean), name)
 	if err != nil {
 		return err
 	}
-	if _, statErr := os.Lstat(to); statErr == nil {
-		return fileError("CONFLICT", "destination exists")
+	if b.beforeRename != nil {
+		b.beforeRename()
 	}
-	if err := os.Rename(from, to); err != nil {
-		return fileError("IO_ERROR", "rename: %v", err)
+	if err := renameNoReplace(source.Root, clean, toClean); err != nil {
+		return renameError("rename", err)
 	}
 	return nil
 }
@@ -577,52 +634,73 @@ func (b *Browser) Transfer(sourceID, path, destination string, copyOnly bool) er
 	if err != nil {
 		return err
 	}
-	from, clean, err := b.resolve(source, path, false)
+	_, clean, err := b.resolve(source, path, false)
 	if err != nil {
 		return err
 	}
 	if clean == "" {
 		return fileError("PATH_FORBIDDEN", "cannot transfer source root")
 	}
-	destDir, destRel, err := b.resolve(source, destination, false)
+	_, destRel, err := b.resolve(source, destination, false)
 	if err != nil {
 		return err
 	}
-	info, err := os.Stat(destDir)
+	root, err := os.OpenRoot(source.Root)
+	if err != nil {
+		return fileError("SOURCE_UNAVAILABLE", "open source root: %v", err)
+	}
+	defer root.Close()
+	info, err := root.Stat(rootPath(destRel))
 	if err != nil || !info.IsDir() {
 		return fileError("NOT_DIRECTORY", "destination is not a directory")
 	}
-	fromInfo, err := os.Stat(from)
+	fromInfo, err := root.Stat(rootPath(clean))
 	if err != nil {
 		return fileError("PATH_NOT_FOUND", "source path not found")
 	}
+	fromAbsolute := filepath.Join(source.Root, clean)
+	if copyOnly && fromInfo.IsDir() && b.containsForeignMount(source, fromAbsolute) {
+		return fileError("PATH_FORBIDDEN", "recursive copy cannot cross a mounted filesystem")
+	}
 	if fromInfo.IsDir() {
-		rel, relErr := filepath.Rel(from, destDir)
+		rel, relErr := filepath.Rel(clean, destRel)
 		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return fileError("PATH_FORBIDDEN", "cannot transfer a directory into itself")
 		}
 	}
-	to := filepath.Join(destDir, filepath.Base(from))
-	if _, statErr := os.Lstat(to); statErr == nil {
-		return fileError("CONFLICT", "destination exists")
+	_, toClean, err := b.resolveTarget(source, destRel, filepath.Base(clean))
+	if err != nil {
+		return err
 	}
 	if !copyOnly {
-		if err := os.Rename(from, to); err != nil {
-			return fileError("IO_ERROR", "move: %v", err)
+		if b.beforeRename != nil {
+			b.beforeRename()
+		}
+		if err := renameNoReplace(source.Root, clean, toClean); err != nil {
+			return renameError("move", err)
 		}
 		return nil
 	}
-	_ = destRel
-	if err := copyTree(from, to); err != nil {
-		_ = os.RemoveAll(to)
+	if err := copyTree(root, clean, toClean); err != nil {
+		_ = removeAllInRoot(source.Root, toClean)
 		return err
 	}
 	return nil
 }
 
-func copyTree(from, to string) error {
+func renameError(action string, err error) error {
+	if errors.Is(err, os.ErrExist) {
+		return fileError("CONFLICT", "destination exists")
+	}
+	if errors.Is(err, errNoReplaceUnsupported) {
+		return fileError("OPERATION_UNSUPPORTED", "%s: %v", action, err)
+	}
+	return fileError("IO_ERROR", "%s: %v", action, err)
+}
+
+func copyTree(root *os.Root, from, to string) error {
 	count := 0
-	return filepath.WalkDir(from, func(path string, entry os.DirEntry, walkErr error) error {
+	return fs.WalkDir(root.FS(), rootPath(from), func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fileError("IO_ERROR", "copy walk: %v", walkErr)
 		}
@@ -633,23 +711,23 @@ func copyTree(from, to string) error {
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fileError("PATH_FORBIDDEN", "symlinks are not allowed")
 		}
-		rel, _ := filepath.Rel(from, path)
+		rel, _ := filepath.Rel(rootPath(from), path)
 		target := filepath.Join(to, rel)
 		info, err := entry.Info()
 		if err != nil {
 			return fileError("IO_ERROR", "copy inspect: %v", err)
 		}
 		if entry.IsDir() {
-			return os.Mkdir(target, info.Mode().Perm())
+			return root.Mkdir(rootPath(target), info.Mode().Perm())
 		}
 		if !info.Mode().IsRegular() {
 			return fileError("OPERATION_UNSUPPORTED", "copy only supports regular files and directories")
 		}
-		in, err := os.Open(path)
+		in, err := root.Open(rootPath(path))
 		if err != nil {
 			return fileError("IO_ERROR", "copy open: %v", err)
 		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+		out, err := root.OpenFile(rootPath(target), os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
 		if err != nil {
 			in.Close()
 			return fileError("IO_ERROR", "copy create: %v", err)

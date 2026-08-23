@@ -50,7 +50,7 @@ func TestPathValidationRejectsTraversalAbsoluteAndSymlinkEscape(t *testing.T) {
 
 	_, err := browser.ListSource("my", "escape", "name", "asc")
 	requireCode(t, "PATH_FORBIDDEN", err)
-	_, err = browser.ResolveDownload("my", "secret-link")
+	_, _, err = browser.OpenDownload("my", "secret-link")
 	requireCode(t, "PATH_FORBIDDEN", err)
 	_, err = browser.SaveSource("my", "escape", "written.txt", []byte("blocked"))
 	requireCode(t, "PATH_FORBIDDEN", err)
@@ -60,6 +60,26 @@ func TestPathValidationRejectsTraversalAbsoluteAndSymlinkEscape(t *testing.T) {
 		_, err := browser.ListSource("my", reserved, "name", "asc")
 		requireCode(t, "PATH_FORBIDDEN", err)
 	}
+}
+
+func TestOpenDownloadRejectsParentReplacedBySymlinkAfterValidation(t *testing.T) {
+	browser, root := newTestBrowser(t)
+	outside := filepath.Join(filepath.Dir(root), "outside")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "safe"), 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "safe", "report.txt"), []byte("inside"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "report.txt"), []byte("outside secret"), 0o644))
+
+	browser.beforeSourceOpen = func() {
+		require.NoError(t, os.RemoveAll(filepath.Join(root, "safe")))
+		require.NoError(t, os.Symlink(outside, filepath.Join(root, "safe")))
+	}
+
+	file, _, err := browser.OpenDownload("my", "safe/report.txt")
+	if file != nil {
+		file.Close()
+	}
+	requireCode(t, "PATH_FORBIDDEN", err)
 }
 
 func TestListSearchSortAndLimits(t *testing.T) {
@@ -117,8 +137,53 @@ func TestSourcesExposeConsistentCapabilities(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "compose.yaml", entries[0].Name)
-	_, err = browser.ResolveDownload("apps", "demo/.env")
+	_, _, err = browser.OpenDownload("apps", "demo/.env")
 	requireCode(t, "PATH_FORBIDDEN", err)
+}
+
+func TestRecursiveWritesRejectAncestorOfReadOnlyMount(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	apps := filepath.Join(base, "apps")
+	mountpoint := filepath.Join(root, "projects", "remote")
+	for _, dir := range []string{apps, mountpoint, filepath.Join(root, "copies")} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "projects", "local.txt"), []byte("local"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(mountpoint, "remote.txt"), []byte("remote"), 0o644))
+	mounts := filepath.Join(base, "mounts")
+	require.NoError(t, os.WriteFile(mounts, []byte("server:/share "+mountpoint+" nfs ro 0 0\n"), 0o600))
+	browser := NewBrowser(Config{RootDir: root, AppsDir: apps, StateDir: filepath.Join(base, "state"), MountsFile: mounts})
+
+	requireCode(t, "PATH_FORBIDDEN", browser.Delete("my", "projects", true))
+	assert.FileExists(t, filepath.Join(root, "projects", "local.txt"))
+	assert.FileExists(t, filepath.Join(mountpoint, "remote.txt"))
+
+	requireCode(t, "PATH_FORBIDDEN", browser.Transfer("my", "projects", "copies", true))
+	assert.NoDirExists(t, filepath.Join(root, "copies", "projects"))
+}
+
+func TestWriteTargetsRejectProtectedFinalNames(t *testing.T) {
+	t.Run("upload application env", func(t *testing.T) {
+		browser, _ := newTestBrowser(t)
+		_, err := browser.SaveSource("apps", "", ".env", []byte("SECRET=value"))
+		requireCode(t, "PATH_FORBIDDEN", err)
+		assert.NoFileExists(t, filepath.Join(browser.appsDir, ".env"))
+	})
+
+	t.Run("create trash metadata directory", func(t *testing.T) {
+		browser, root := newTestBrowser(t)
+		requireCode(t, "PATH_FORBIDDEN", browser.Mkdir("my", "", ".trash"))
+		assert.NoDirExists(t, filepath.Join(root, ".trash"))
+	})
+
+	t.Run("move nested metadata name to source root", func(t *testing.T) {
+		browser, root := newTestBrowser(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "incoming", ".devbox-files"), 0o755))
+		requireCode(t, "PATH_FORBIDDEN", browser.Transfer("my", "incoming/.devbox-files", "", false))
+		assert.DirExists(t, filepath.Join(root, "incoming", ".devbox-files"))
+		assert.NoDirExists(t, filepath.Join(root, ".devbox-files"))
+	})
 }
 
 func namesOf(entries []FileEntry) []string {
@@ -160,6 +225,90 @@ func TestTrashDeleteRestoreAndDangerousAudit(t *testing.T) {
 	assert.Contains(t, string(audit), `"path":"project/notes.txt"`)
 }
 
+func TestPermanentDeletePersistsAuditIntentBeforeRemoval(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	apps := filepath.Join(base, "apps")
+	stateFile := filepath.Join(base, "state-file")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	require.NoError(t, os.MkdirAll(apps, 0o755))
+	require.NoError(t, os.WriteFile(stateFile, []byte("not a directory"), 0o600))
+	target := filepath.Join(root, "important.txt")
+	require.NoError(t, os.WriteFile(target, []byte("keep"), 0o644))
+	browser := NewBrowser(Config{RootDir: root, AppsDir: apps, StateDir: stateFile, MountsFile: filepath.Join(base, "mounts")})
+
+	requireCode(t, "IO_ERROR", browser.Delete("my", "important.txt", true))
+	assert.FileExists(t, target)
+}
+
+func TestTrashPurgeFailureIsPendingAndRetryable(t *testing.T) {
+	browser, root := newTestBrowser(t)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "old.txt"), []byte("old"), 0o644))
+	require.NoError(t, browser.Delete("my", "old.txt", false))
+	entries, err := browser.Trash("")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	id := entries[0].ID
+	restoreFilesDir := injectTrashParentSymlink(t, browser, root)
+
+	requireCode(t, "IO_ERROR", browser.PurgeTrash(id))
+	entries, err = browser.Trash("")
+	require.NoError(t, err)
+	assert.Empty(t, entries, "pending purge entries are logically removed from the trash listing")
+	indexData, err := os.ReadFile(filepath.Join(root, ".trash", "index.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(indexData), `"pendingPurge": true`)
+	audit, err := os.ReadFile(filepath.Join(browser.stateDir, "audit.jsonl"))
+	require.NoError(t, err)
+	assert.Contains(t, string(audit), `"action":"files.trash_purge"`)
+	assert.Contains(t, string(audit), `"result":"failure"`)
+
+	restoreFilesDir()
+	browser.beforeRemove = nil
+	require.NoError(t, browser.PurgeTrash(id))
+	assert.NoFileExists(t, filepath.Join(root, ".trash", "files", id))
+}
+
+func TestEmptyTrashFailureLeavesPendingEntriesRetryable(t *testing.T) {
+	browser, root := newTestBrowser(t)
+	for _, name := range []string{"one.txt", "two.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(name), 0o644))
+		require.NoError(t, browser.Delete("my", name, false))
+	}
+	restoreFilesDir := injectTrashParentSymlink(t, browser, root)
+
+	requireCode(t, "IO_ERROR", browser.EmptyTrash())
+	entries, err := browser.Trash("")
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+	indexData, err := os.ReadFile(filepath.Join(root, ".trash", "index.json"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, strings.Count(string(indexData), `"pendingPurge": true`))
+
+	restoreFilesDir()
+	browser.beforeRemove = nil
+	require.NoError(t, browser.EmptyTrash())
+	entries, err = browser.Trash("")
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+func injectTrashParentSymlink(t *testing.T, browser *Browser, root string) func() {
+	t.Helper()
+	filesDir := filepath.Join(root, ".trash", "files")
+	storedDir := filepath.Join(root, ".trash", "stored-files")
+	outside := filepath.Join(filepath.Dir(root), "outside-trash")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	browser.beforeRemove = func() {
+		require.NoError(t, os.Rename(filesDir, storedDir))
+		require.NoError(t, os.Symlink(outside, filesDir))
+	}
+	return func() {
+		require.NoError(t, os.Remove(filesDir))
+		require.NoError(t, os.Rename(storedDir, filesDir))
+	}
+}
+
 func TestTrashRestoreRefusesOccupiedOriginalPath(t *testing.T) {
 	browser, root := newTestBrowser(t)
 	path := filepath.Join(root, "same.txt")
@@ -174,6 +323,57 @@ func TestTrashRestoreRefusesOccupiedOriginalPath(t *testing.T) {
 	assert.Equal(t, "new", string(data))
 }
 
+func TestAtomicMovesNeverReplaceConcurrentDestination(t *testing.T) {
+	t.Run("rename", func(t *testing.T) {
+		browser, root := newTestBrowser(t)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "old.txt"), []byte("old"), 0o644))
+		browser.beforeRename = func() {
+			require.NoError(t, os.WriteFile(filepath.Join(root, "new.txt"), []byte("new"), 0o644))
+		}
+
+		requireCode(t, "CONFLICT", browser.Rename("my", "old.txt", "new.txt"))
+		assert.FileExists(t, filepath.Join(root, "old.txt"))
+		data, err := os.ReadFile(filepath.Join(root, "new.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "new", string(data))
+	})
+
+	t.Run("move", func(t *testing.T) {
+		browser, root := newTestBrowser(t)
+		require.NoError(t, os.Mkdir(filepath.Join(root, "destination"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "old.txt"), []byte("old"), 0o644))
+		browser.beforeRename = func() {
+			require.NoError(t, os.WriteFile(filepath.Join(root, "destination", "old.txt"), []byte("new"), 0o644))
+		}
+
+		requireCode(t, "CONFLICT", browser.Transfer("my", "old.txt", "destination", false))
+		assert.FileExists(t, filepath.Join(root, "old.txt"))
+		data, err := os.ReadFile(filepath.Join(root, "destination", "old.txt"))
+		require.NoError(t, err)
+		assert.Equal(t, "new", string(data))
+	})
+
+	t.Run("restore", func(t *testing.T) {
+		browser, root := newTestBrowser(t)
+		original := filepath.Join(root, "old.txt")
+		require.NoError(t, os.WriteFile(original, []byte("old"), 0o644))
+		require.NoError(t, browser.Delete("my", "old.txt", false))
+		trash, err := browser.Trash("")
+		require.NoError(t, err)
+		browser.beforeRename = func() {
+			require.NoError(t, os.WriteFile(original, []byte("new"), 0o644))
+		}
+
+		requireCode(t, "CONFLICT", browser.RestoreTrash(trash[0].ID))
+		data, err := os.ReadFile(original)
+		require.NoError(t, err)
+		assert.Equal(t, "new", string(data))
+		entries, err := browser.Trash("")
+		require.NoError(t, err)
+		assert.Len(t, entries, 1)
+	})
+}
+
 func TestShareTokenLifecycleAndPersistence(t *testing.T) {
 	browser, root := newTestBrowser(t)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "artifact.zip"), []byte("payload"), 0o644))
@@ -184,9 +384,9 @@ func TestShareTokenLifecycleAndPersistence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, created.Token, 43)
 	assert.NotContains(t, created.Token, "/")
-	full, name, err := browser.ResolveShare(created.Token)
+	file, name, _, err := browser.OpenShare(created.Token)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(root, "artifact.zip"), full)
+	require.NoError(t, file.Close())
 	assert.Equal(t, "artifact.zip", name)
 
 	stateBytes, err := os.ReadFile(filepath.Join(browser.stateDir, "state.json"))
@@ -196,14 +396,15 @@ func TestShareTokenLifecycleAndPersistence(t *testing.T) {
 
 	reloaded := NewBrowser(Config{RootDir: root, AppsDir: browser.appsDir, StateDir: browser.stateDir, MountsFile: browser.mountsFile})
 	reloaded.now = func() time.Time { return clock }
-	_, _, err = reloaded.ResolveShare(created.Token)
+	file, _, _, err = reloaded.OpenShare(created.Token)
 	require.NoError(t, err)
+	require.NoError(t, file.Close())
 
 	clock = clock.Add(2 * time.Hour)
-	_, _, err = browser.ResolveShare(created.Token)
+	_, _, _, err = browser.OpenShare(created.Token)
 	requireCode(t, "SHARE_EXPIRED", err)
 	require.NoError(t, browser.RevokeShare(created.ID))
-	_, _, err = browser.ResolveShare(created.Token)
+	_, _, _, err = browser.OpenShare(created.Token)
 	requireCode(t, "SHARE_NOT_FOUND", err)
 }
 
