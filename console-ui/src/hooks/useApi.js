@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { startVisiblePolling } from '../lib/visiblePolling';
 
 const API = '/api/v1';
 
@@ -94,8 +95,6 @@ function usePoll(url, { interval = 0, fallback = null, transform } = {}) {
 
   useEffect(() => {
     mountedRef.current = true;
-    let timer = null;
-
     if (!url) {
       return () => { mountedRef.current = false; };
     }
@@ -117,15 +116,11 @@ function usePoll(url, { interval = 0, fallback = null, transform } = {}) {
       }
     }
 
-    doFetch();
-
-    if (interval > 0) {
-      timer = setInterval(doFetch, interval);
-    }
+    const stopPolling = startVisiblePolling(doFetch, interval);
 
     return () => {
       mountedRef.current = false;
-      if (timer) clearInterval(timer);
+      stopPolling();
     };
   }, [url, interval, tick]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -223,12 +218,11 @@ export function useMetrics(interval = 5000) {
       }
     }
 
-    doFetch();
-    const timer = setInterval(doFetch, interval);
+    const stopPolling = startVisiblePolling(doFetch, interval);
 
     return () => {
       mountedRef.current = false;
-      clearInterval(timer);
+      stopPolling();
     };
   }, [interval]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -276,12 +270,11 @@ export function useMetricsHistory(interval = 5000) {
       }
     }
 
-    doFetch();
-    const timer = setInterval(doFetch, interval);
+    const stopPolling = startVisiblePolling(doFetch, interval);
 
     return () => {
       mountedRef.current = false;
-      clearInterval(timer);
+      stopPolling();
     };
   }, [interval]);
 

@@ -65,23 +65,25 @@ type DiskInfo struct {
 
 // DiskIOInfo 物理盘实时 I/O 指标（由 /proc/diskstats 差分计算）
 type DiskIOInfo struct {
-	Name             string  `json:"name"`
-	Path             string  `json:"path"`
-	Model            string  `json:"model,omitempty"`
-	Rotational       bool    `json:"rotational"`
-	Kind             string  `json:"kind"` // HDD / SSD
-	ReadBytes        uint64  `json:"readBytes"`
-	WriteBytes       uint64  `json:"writeBytes"`
-	ReadBytesPerSec  float64 `json:"readBytesPerSec"`
-	WriteBytesPerSec float64 `json:"writeBytesPerSec"`
-	ReadIOPS         float64 `json:"readIops"`
-	WriteIOPS        float64 `json:"writeIops"`
-	UtilPercent      float64 `json:"utilPercent"`
-	AvgAwaitMs       float64 `json:"avgAwaitMs"`
-	ReadAwaitMs      float64 `json:"readAwaitMs"`
-	WriteAwaitMs     float64 `json:"writeAwaitMs"`
-	AvgQueueSize     float64 `json:"avgQueueSize"`
-	InFlight         uint64  `json:"inFlight"`
+	Name              string   `json:"name"`
+	Path              string   `json:"path"`
+	Model             string   `json:"model,omitempty"`
+	Rotational        bool     `json:"rotational"`
+	Kind              string   `json:"kind"` // HDD / SSD
+	ReadBytes         uint64   `json:"readBytes"`
+	WriteBytes        uint64   `json:"writeBytes"`
+	ReadBytesPerSec   float64  `json:"readBytesPerSec"`
+	WriteBytesPerSec  float64  `json:"writeBytesPerSec"`
+	ReadIOPS          float64  `json:"readIops"`
+	WriteIOPS         float64  `json:"writeIops"`
+	UtilPercent       float64  `json:"utilPercent"`
+	AvgAwaitMs        float64  `json:"avgAwaitMs"`
+	ReadAwaitMs       float64  `json:"readAwaitMs"`
+	WriteAwaitMs      float64  `json:"writeAwaitMs"`
+	AvgQueueSize      float64  `json:"avgQueueSize"`
+	InFlight          uint64   `json:"inFlight"`
+	TemperatureC      *float64 `json:"temperatureC,omitempty"`
+	TemperatureStatus string   `json:"temperatureStatus"` // available / unsupported
 }
 
 // GPUInfo GPU 信息（参考 1Panel dto.GPUInfo + nvidia-smi 字段）

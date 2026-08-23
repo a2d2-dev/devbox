@@ -1,15 +1,8 @@
-// Processes.jsx — 进程管理（PRD FR-13 / Story 6.1）
-//
-// 列表 + 顶部筛选器 + 行点击弹 5-tab 详情抽屉（basic/memory/fdList/env/netConns）。
-//
-// 设计约束（AC-NO-KILL-BUTTON / AC-NO-DESTRUCTIVE）：
-//   - **不出现**「结束」/ kill / SIGTERM / SIGKILL / 重启 / 任何 destructive 按钮
-//   - 所有 data-action 属性受白名单约束：仅 view-detail / close-drawer 等只读动作
-
 import { useState, useEffect } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import { authFetch } from '../hooks/useApi'
+import { startVisiblePolling } from '../lib/visiblePolling'
 import TabBar from '../components/TabBar'
 
 const th = {
@@ -53,35 +46,82 @@ function fmtBytes(n) {
   return n + ' B';
 }
 
-export default function Processes() {
+function fmtDuration(seconds) {
+  if (seconds == null || seconds < 0) return '无数据'
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (days) return `${days}天 ${hours}小时`
+  if (hours) return `${hours}小时 ${minutes}分`
+  if (minutes) return `${minutes}分`
+  return `${Math.floor(seconds)}秒`
+}
+
+function fmtCPU(value) {
+  return value == null ? '采样中' : `${value.toFixed(1)}%`
+}
+
+function fmtRate(value, status = 'available') {
+  if (status !== 'available') return status === 'unsupported' ? '不支持' : '无数据'
+  if (value == null) return '采样中'
+  return `${fmtBytes(value)}/s`
+}
+
+function sortValue(row, key) {
+  if (key === 'ports') return row.ports?.[0] ?? -1
+  return row[key] ?? -1
+}
+
+function SortHead({ id, label, align = 'right', sort, onSort }) {
+  return <th onClick={() => onSort(id)} style={{ ...th, textAlign: align, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+    {label}{sort.key === id ? (sort.dir === 'asc' ? ' ↑' : ' ↓') : ''}
+  </th>
+}
+
+export default function Processes({ onOpenApp }) {
   const [items, setItems] = useState([]);
+  const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null); // 详情抽屉打开的 pid
-  const [filters, setFilters] = useState({ state: '', pid: '', name: '', user: '' });
+  const [view, setView] = useState('processes');
+  const [search, setSearch] = useState('');
+  const [stateFilter, setStateFilter] = useState('');
+  const [sort, setSort] = useState({ key: 'cpuPercent', dir: 'desc' });
+  const [killTarget, setKillTarget] = useState(null);
+  const [actionError, setActionError] = useState('');
 
-  // 轮询 /api/v1/processes 每 10 秒
   useEffect(() => {
     let stopped = false;
+    const url = view === 'services' ? '/api/v1/supervisor/resources' : '/api/v1/processes';
     function load() {
-      authFetch('/api/v1/processes')
+      authFetch(url)
         .then(r => r.ok ? r.json() : null)
-        .then(d => { if (!stopped && Array.isArray(d)) setItems(d); })
+        .then(d => {
+          if (stopped || !d) return;
+          if (view === 'services') setServices(Array.isArray(d.services) ? d.services : []);
+          else if (Array.isArray(d)) setItems(d);
+        })
         .catch(() => {})
         .finally(() => { if (!stopped) setLoading(false); });
     }
-    load();
-    const id = setInterval(load, 10000);
-    return () => { stopped = true; clearInterval(id); };
-  }, []);
+    const stopPolling = startVisiblePolling(load, 5000);
+    return () => { stopped = true; stopPolling(); };
+  }, [view]);
 
-  // 筛选
-  const visible = items.filter(p => {
-    if (filters.state && !p.state?.toLowerCase().includes(filters.state.toLowerCase())) return false;
-    if (filters.pid && !String(p.pid).includes(filters.pid)) return false;
-    if (filters.name && !(p.name || '').toLowerCase().includes(filters.name.toLowerCase())) return false;
-    if (filters.user && !(p.user || '').toLowerCase().includes(filters.user.toLowerCase())) return false;
-    return true;
+  const source = view === 'services' ? services : items;
+  const needle = search.trim().toLowerCase();
+  const visible = source.filter(row => {
+    if (stateFilter && !(row.state || row.statename || '').toLowerCase().includes(stateFilter.toLowerCase())) return false;
+    if (!needle) return true;
+    return [row.name, row.pid, row.user, row.group, ...(row.ports || [])]
+      .some(value => String(value || '').toLowerCase().includes(needle));
+  }).sort((a, b) => {
+    const av = sortValue(a, sort.key), bv = sortValue(b, sort.key);
+    const result = typeof av === 'string' ? av.localeCompare(String(bv)) : Number(av) - Number(bv);
+    return sort.dir === 'asc' ? result : -result;
   });
+
+  const changeSort = key => setSort(current => ({ key, dir: current.key === key && current.dir === 'desc' ? 'asc' : 'desc' }));
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
@@ -94,55 +134,70 @@ export default function Processes() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: T.ink, letterSpacing: '-0.01em' }}>
-              进程管理
+              资源管理
             </div>
             <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>
-              宿主进程列表 · 只读 · 离线可用 · 不可结束进程
+              Supervisor 服务与宿主进程资源
             </div>
           </div>
           <div style={{ flex: 1 }}/>
+          <button onClick={() => onOpenApp?.({ id: 'supervisor' })} style={navBtn}>
+            <Icon name="shield" size={12}/>进程守护
+          </button>
+          <button onClick={() => onOpenApp?.({ id: 'network-connections' })} style={navBtn}>
+            <Icon name="network" size={12}/>端口与连接
+          </button>
           <div style={{ fontSize: 11.5, color: T.ink3 }}>
             共 <span className="mono tnum" style={{ color: T.ink, fontWeight: 700 }}>{visible.length}</span>
-            {visible.length !== items.length && (
-              <span> / {items.length}</span>
+            {visible.length !== source.length && (
+              <span> / {source.length}</span>
             )}
             <span> 个</span>
           </div>
         </div>
 
-        {/* 筛选器 */}
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-          <input style={{ ...filterInput, width: 110 }} placeholder="状态 (R/S/D/Z/T)"
-            value={filters.state} onChange={e => setFilters({...filters, state: e.target.value})}/>
-          <input style={{ ...filterInput, width: 100 }} placeholder="PID"
-            value={filters.pid} onChange={e => setFilters({...filters, pid: e.target.value})}/>
-          <input style={{ ...filterInput, width: 200 }} placeholder="进程名"
-            value={filters.name} onChange={e => setFilters({...filters, name: e.target.value})}/>
-          <input style={{ ...filterInput, width: 130 }} placeholder="用户"
-            value={filters.user} onChange={e => setFilters({...filters, user: e.target.value})}/>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 2, padding: 2, borderRadius: 7, background: T.surfaceAlt }}>
+            {[['services', '服务'], ['processes', '进程']].map(([id, label]) => (
+              <button key={id} onClick={() => setView(id)} style={{ ...segmentBtn, background: view === id ? T.surface : 'transparent', color: view === id ? T.blueDeep : T.ink3 }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ position: 'relative' }}>
+            <Icon name="search" size={13} style={{ position: 'absolute', left: 9, top: 9, color: T.ink4 }}/>
+            <input style={{ ...filterInput, width: 260, paddingLeft: 28 }} placeholder="搜索名称、PID、用户或端口"
+              value={search} onChange={e => setSearch(e.target.value)}/>
+          </div>
+          <input style={{ ...filterInput, width: 140 }} placeholder={view === 'services' ? '状态 (RUNNING)' : '状态 (R/S/D/Z/T)'}
+            value={stateFilter} onChange={e => setStateFilter(e.target.value)}/>
         </div>
       </div>
 
       {/* 列表 */}
       <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          {actionError && <div style={{ padding: '10px 14px', color: T.red, background: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: 12 }}>{actionError}</div>}
+          {view === 'services' ? (
+            <ServiceTable rows={visible} loading={loading} sort={sort} onSort={changeSort}/>
+          ) : <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
             <thead>
               <tr style={{ background: '#fafbfc' }}>
-                <th style={{ ...th, textAlign: 'right', width: 80 }}>PID</th>
-                <th style={{ ...th, textAlign: 'left' }}>进程</th>
+                <SortHead id="pid" label="PID" sort={sort} onSort={changeSort}/>
+                <SortHead id="name" label="进程" align="left" sort={sort} onSort={changeSort}/>
                 <th style={{ ...th, textAlign: 'center', width: 70 }}>状态</th>
-                <th style={{ ...th, textAlign: 'left', width: 100 }}>用户</th>
-                <th style={{ ...th, textAlign: 'right', width: 100 }}>内存</th>
-                <th style={{ ...th, textAlign: 'left' }}>命令行</th>
+                <SortHead id="user" label="用户" align="left" sort={sort} onSort={changeSort}/>
+                <SortHead id="cpuPercent" label="CPU" sort={sort} onSort={changeSort}/>
+                <SortHead id="runtimeSeconds" label="运行时间" sort={sort} onSort={changeSort}/>
+                <SortHead id="memBytes" label="内存" sort={sort} onSort={changeSort}/>
+                <SortHead id="ports" label="端口" sort={sort} onSort={changeSort}/>
+                <th style={{ ...th, width: 54 }}></th>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: T.ink3 }}>加载中...</td></tr>
+                <tr><td colSpan={9} style={{ padding: 24, textAlign: 'center', color: T.ink3 }}>加载中...</td></tr>
               )}
               {!loading && visible.length === 0 && (
-                <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: T.ink3 }}>无匹配进程</td></tr>
+                <tr><td colSpan={9} style={{ padding: 24, textAlign: 'center', color: T.ink3 }}>无匹配进程</td></tr>
               )}
               {!loading && visible.map((p, i) => (
                 <tr key={p.pid}
@@ -166,27 +221,100 @@ export default function Processes() {
                     <span style={stateBadgeStyle(p.state)}>{(p.state || '?').charAt(0)}</span>
                   </td>
                   <td style={{ ...td, fontFamily: 'ui-monospace, monospace', fontSize: 11.5 }}>{p.user || '-'}</td>
+                  <td style={{ ...td, textAlign: 'right' }} className="mono tnum">{fmtCPU(p.cpuPercent)}</td>
+                  <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtDuration(p.runtimeSeconds)}</td>
                   <td style={{ ...td, textAlign: 'right', fontFamily: 'ui-monospace, monospace' }}>{fmtBytes(p.memBytes)}</td>
-                  <td style={{ ...td, fontFamily: 'ui-monospace, monospace', fontSize: 11.5,
-                    color: T.ink2, maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {p.cmdline || '-'}
+                  <td style={{ ...td, color: T.blueDeep }} className="mono">{p.ports?.length ? p.ports.map(port => `:${port}`).join(' ') : (p.portsStatus === 'available' ? '—' : '无数据')}</td>
+                  <td style={{ ...td, textAlign: 'right' }}>
+                    <button title="终止进程" aria-label={`终止进程 ${p.pid}`} onClick={e => { e.stopPropagation(); setActionError(''); setKillTarget(p) }} style={{ ...iconBtn, color: T.red }}>
+                      <Icon name="stop" size={13} stroke={2}/>
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table>}
         </div>
       </div>
 
       {/* 详情抽屉 */}
       {selected && <ProcessDetailDrawer pid={selected} onClose={() => setSelected(null)}/>}
+      {killTarget && <TerminateDialog target={killTarget} onClose={() => setKillTarget(null)} onDone={() => {
+        setItems(rows => rows.filter(row => row.pid !== killTarget.pid)); setSelected(null); setKillTarget(null);
+      }} onError={setActionError}/>}
     </div>
   );
 }
 
+function ServiceTable({ rows, loading, sort, onSort }) {
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+      <thead><tr style={{ background: '#fafbfc' }}>
+        <SortHead id="name" label="服务" align="left" sort={sort} onSort={onSort}/><SortHead id="pid" label="PID" sort={sort} onSort={onSort}/>
+        <th style={{ ...th, textAlign: 'center' }}>状态</th><SortHead id="cpuPercent" label="CPU" sort={sort} onSort={onSort}/>
+        <SortHead id="cpuTimeSeconds" label="CPU 时间" sort={sort} onSort={onSort}/><SortHead id="memBytes" label="内存" sort={sort} onSort={onSort}/>
+        <th style={{ ...th, textAlign: 'right' }}>磁盘读 / 写</th><SortHead id="ports" label="监听端口" sort={sort} onSort={onSort}/>
+        <th style={{ ...th, textAlign: 'left' }}>网络</th>
+      </tr></thead>
+      <tbody>
+        {loading && rows.length === 0 && <tr><td colSpan={9} style={emptyCell}>加载中...</td></tr>}
+        {!loading && rows.length === 0 && <tr><td colSpan={9} style={emptyCell}>无匹配服务</td></tr>}
+        {rows.map((service, index) => <tr key={service.name} style={{ borderTop: index ? `1px solid ${T.borderSoft}` : 'none' }}>
+          <td style={td}><div style={{ fontWeight: 600 }}>{service.name}</div><div style={{ color: T.ink4, fontSize: 10.5 }}>{service.group}</div></td>
+          <td style={{ ...td, textAlign: 'right' }} className="mono">{service.pid || '—'}</td>
+          <td style={{ ...td, textAlign: 'center' }}><span style={stateBadgeStyle(service.statename)}>{service.statename}</span></td>
+          <td style={{ ...td, textAlign: 'right' }} className="mono">{fmtCPU(service.cpuPercent)}</td>
+          <td style={{ ...td, textAlign: 'right' }} className="mono">{fmtDuration(service.cpuTimeSeconds)}</td>
+          <td style={{ ...td, textAlign: 'right' }} className="mono">{fmtBytes(service.memBytes)}</td>
+          <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }} className="mono">{fmtRate(service.readBps, service.diskIOStatus)} / {fmtRate(service.writeBps, service.diskIOStatus)}</td>
+          <td style={{ ...td, textAlign: 'right', color: T.blueDeep }} className="mono">{service.ports?.length ? service.ports.map(p => `:${p}`).join(' ') : (service.portsStatus === 'available' ? '—' : '无数据')}</td>
+          <td style={{ ...td, color: T.ink3 }}>{service.networkStatus === 'unsupported' ? '不支持' : '无数据'}</td>
+        </tr>)}
+      </tbody>
+    </table>
+  )
+}
+
+function TerminateDialog({ target, onClose, onDone, onError }) {
+  const [busy, setBusy] = useState(false)
+  const terminate = async () => {
+    setBusy(true)
+    try {
+      const response = await authFetch(`/api/v1/processes/${target.pid}/terminate`, { method: 'POST' })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        throw new Error(body.error || `终止失败 (${response.status})`)
+      }
+      onDone()
+    } catch (error) {
+      onError(error.message)
+      onClose()
+    } finally { setBusy(false) }
+  }
+  return <div role="dialog" aria-modal="true" aria-label="确认终止进程" style={modalBackdrop} onClick={onClose}>
+    <div style={modalPanel} onClick={e => e.stopPropagation()}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>终止进程？</div>
+      <div style={{ fontSize: 12.5, color: T.ink2, lineHeight: 1.7, marginTop: 10 }}>
+        将向 <b>{target.name}</b>（PID <span className="mono">{target.pid}</span>）发送 SIGTERM。未保存的数据可能丢失。
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+        <button onClick={onClose} disabled={busy} style={dialogBtn}>取消</button>
+        <button onClick={terminate} disabled={busy} style={{ ...dialogBtn, background: T.red, color: '#fff', borderColor: T.red }}>{busy ? '正在终止...' : '确认终止'}</button>
+      </div>
+    </div>
+  </div>
+}
+
+const navBtn = { height: 30, padding: '0 9px', display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.ink2, cursor: 'pointer', fontSize: 11.5 }
+const segmentBtn = { height: 28, padding: '0 14px', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 12, fontWeight: 600 }
+const iconBtn = { width: 28, height: 28, borderRadius: 5, border: `1px solid ${T.border}`, background: T.surface, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }
+const emptyCell = { padding: 24, textAlign: 'center', color: T.ink3 }
+const modalBackdrop = { position: 'absolute', inset: 0, zIndex: 20, background: 'rgba(15,23,42,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }
+const modalPanel = { width: 390, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: '0 18px 48px rgba(15,23,42,.2)', padding: 20 }
+const dialogBtn = { height: 32, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.ink2, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }
+
 // ===========================================================================
 // ProcessDetailDrawer — 5-tab 详情抽屉
-// AC-NO-KILL-BUTTON: 任何 tab 都不出现「结束」/ kill / destructive 按钮
 // ===========================================================================
 
 const TAB_KEYS = [
@@ -253,7 +381,7 @@ function ProcessDetailDrawer({ pid, onClose }) {
                 </span>
               )}
             </div>
-            <div style={{ fontSize: 10.5, color: T.ink4, marginTop: 2 }}>只读视图 · 不可结束</div>
+            <div style={{ fontSize: 10.5, color: T.ink4, marginTop: 2 }}>进程详情</div>
           </div>
           <button data-action="close-drawer" onClick={onClose} style={{
             width: 28, height: 28, borderRadius: 5, border: `1px solid ${T.border}`,

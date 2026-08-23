@@ -383,9 +383,9 @@ export default function App() {
     actions: {
       'toggle-shortcut-help': () => setShortcutHelpOpen(open => !open),
       'show-desktop': showDesktop,
-      'minimize-window': minimizeWindow,
+      'minimize-window': () => activeId && minimizeApp(activeId),
       'toggle-maximized': () => setMaximized(current => !current),
-      'close-window': closeWindow,
+      'close-window': () => activeId && closeApp(activeId),
       'focus-dock-app': (index) => {
         const app = shortcutDockApps[index];
         if (app) focusApp(app.id);
@@ -531,14 +531,14 @@ export default function App() {
                   onOpenStore={() => launchApp({ id: 'store' })} onOpenApp={launchApp}/>}
                 {appId === 'alerts'    && <AlertCenter authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'audit'     && <AuditLog/>}
-                {appId === 'supervisor'&& <Supervisor/>}
+                {appId === 'supervisor'&& <Supervisor onOpenApp={launchApp}/>}
                 {appId === 'virtual-machines' && <VirtualMachines/>}
                 {appId === 'hardware'  && <Hardware/>}
                 {appId === 'links'     && <Links/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
                 {!['dashboard','store','compose-manager','alerts','audit','supervisor','virtual-machines','hardware','links','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
-                       onOpenManagement={() => setMgmtOpen(true)}/>}
+                       onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp}/>}
 
                 {app.kind === 'app' && (
                   <AppMgmtDrawer
