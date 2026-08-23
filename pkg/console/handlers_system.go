@@ -20,7 +20,7 @@ import (
 func (s *Server) registerSystemRoutes() {
 	s.registerDesktopStatusRoutes()
 	s.mux.HandleFunc("/api/v1/processes", s.handleProcesses)
-	s.mux.HandleFunc("/api/v1/processes/", s.handleProcessDetail)
+	s.mux.HandleFunc("/api/v1/processes/", s.requireAdminWrites(s.handleProcessDetail))
 	s.mux.HandleFunc("/api/v1/disks", s.handleDisks)
 	s.mux.HandleFunc("/api/v1/disks/io", s.handleDiskIO)
 	s.mux.HandleFunc("/api/v1/network/connections", s.handleNetworkConnections)
@@ -28,11 +28,11 @@ func (s *Server) registerSystemRoutes() {
 	s.mux.HandleFunc("/api/v1/metrics/history/gpu", s.handleGPUHistory)
 	s.mux.HandleFunc("/api/v1/ai/activity", s.handleAIActivity)
 	s.mux.HandleFunc("/api/v1/ai/transcript", s.handleAITranscript)
-	s.mux.HandleFunc("/api/v1/ai/codex/cleanup-stale", s.handleCodexCleanupStale)
+	s.mux.HandleFunc("/api/v1/ai/codex/cleanup-stale", s.requireAdmin(s.handleCodexCleanupStale))
 	s.registerVMRoutes()
 	// devbox 无云端；日志中心复用本机统一结构化事件存储。
 	s.mux.HandleFunc("/api/v1/cloud/status", s.handleCloudStatus)
-	s.mux.HandleFunc("/api/v1/audit/events", s.handleAuditEvents)
+	s.mux.HandleFunc("/api/v1/audit/events", s.requireAdminWrites(s.handleAuditEvents))
 	s.mux.HandleFunc("/api/v1/about", s.handleAbout)
 }
 

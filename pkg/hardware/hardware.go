@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ type Snapshot struct {
 	GPUs        []GPUInfo    `json:"gpus"`
 	PCIe        []PCIeDevice `json:"pcie"`
 	Storage     []DiskInfo   `json:"storage"`
+	Mounts      []MountInfo  `json:"mounts"`
 	Network     []NICInfo    `json:"network"`
 	Warnings    []string     `json:"warnings,omitempty"`
 }
@@ -105,11 +107,11 @@ type GPUInfo struct {
 
 // LinkStatus 描述 PCIe 链路当前状态的分类。用于替代单一 degraded=true 判断。
 //
-//   ok        — 协商速率/宽度与能力一致
-//   empty     — Bridge/Root Port 但 widCur=x0：槽位没插东西，不算异常
-//   idle      — Endpoint 宽度打满但代降 (widCur==widCap && genCur<genCap)：
-//               ASPM 空闲省电，通常自动升速，不算异常
-//   downgrade — 真降级：widCur<widCap 且不为空槽。这是需要排查的
+//	ok        — 协商速率/宽度与能力一致
+//	empty     — Bridge/Root Port 但 widCur=x0：槽位没插东西，不算异常
+//	idle      — Endpoint 宽度打满但代降 (widCur==widCap && genCur<genCap)：
+//	            ASPM 空闲省电，通常自动升速，不算异常
+//	downgrade — 真降级：widCur<widCap 且不为空槽。这是需要排查的
 type LinkStatus string
 
 const (
@@ -137,17 +139,47 @@ type PCIeDevice struct {
 }
 
 type DiskInfo struct {
-	Name       string `json:"name"`
-	Path       string `json:"path"`
-	Model      string `json:"model,omitempty"`
-	Vendor     string `json:"vendor,omitempty"`
-	Serial     string `json:"serial,omitempty"`
-	SizeBytes  uint64 `json:"sizeBytes"`
-	Rotational bool   `json:"rotational"`
-	Transport  string `json:"transport,omitempty"`
-	Type       string `json:"type,omitempty"`
-	Mountpoint string `json:"mountpoint,omitempty"`
-	FSType     string `json:"fstype,omitempty"`
+	Name       string          `json:"name"`
+	Path       string          `json:"path"`
+	Model      string          `json:"model,omitempty"`
+	Vendor     string          `json:"vendor,omitempty"`
+	Serial     string          `json:"serial,omitempty"`
+	SizeBytes  uint64          `json:"sizeBytes"`
+	Rotational bool            `json:"rotational"`
+	Transport  string          `json:"transport,omitempty"`
+	Type       string          `json:"type,omitempty"`
+	Mountpoint string          `json:"mountpoint,omitempty"`
+	FSType     string          `json:"fstype,omitempty"`
+	Category   string          `json:"category"` // internal | external
+	Medium     string          `json:"medium"`   // HDD | SSD | NVMe
+	Interface  string          `json:"interface"`
+	Health     HealthInfo      `json:"health"`
+	Partitions []PartitionInfo `json:"partitions"`
+}
+
+type PartitionInfo struct {
+	Name        string   `json:"name"`
+	Path        string   `json:"path"`
+	SizeBytes   uint64   `json:"sizeBytes"`
+	FSType      string   `json:"fstype,omitempty"`
+	Mountpoints []string `json:"mountpoints"`
+	Purpose     string   `json:"purpose"`
+}
+
+type HealthInfo struct {
+	Status string `json:"status"` // healthy | warning | failing | unsupported | permission_required
+	Detail string `json:"detail"`
+}
+
+type MountInfo struct {
+	Path       string  `json:"path"`
+	Source     string  `json:"source"`
+	FSType     string  `json:"fstype"`
+	SizeBytes  uint64  `json:"sizeBytes"`
+	UsedBytes  uint64  `json:"usedBytes"`
+	AvailBytes uint64  `json:"availBytes"`
+	UsagePct   float64 `json:"usagePct"`
+	Disk       string  `json:"disk"`
 }
 
 type NICInfo struct {
@@ -167,8 +199,8 @@ type NICInfo struct {
 
 // Collector 采集器，带 TTL 缓存避免每次刷屏都跑外部命令。
 type Collector struct {
-	ttl time.Duration
-	mu  sync.Mutex
+	ttl  time.Duration
+	mu   sync.Mutex
 	last *Snapshot
 }
 
@@ -206,6 +238,7 @@ func collect(ctx context.Context) *Snapshot {
 		func() { s.Memory = collectMemory(ctx) },
 		func() { s.PCIe = collectPCIe(ctx) },
 		func() { s.Storage = collectStorage(ctx) },
+		func() { s.Mounts = collectMounts(ctx) },
 		func() { s.Network = collectNetwork(ctx) },
 	}
 	for _, f := range steps {
@@ -675,48 +708,215 @@ func isGPUClass(code string) bool {
 
 func collectStorage(ctx context.Context) []DiskInfo {
 	out, err := run(ctx, "lsblk", "-J", "-b", "-o",
-		"NAME,PATH,MODEL,VENDOR,SERIAL,SIZE,ROTA,TRAN,TYPE,MOUNTPOINT,FSTYPE")
+		"NAME,PATH,MODEL,VENDOR,SERIAL,SIZE,ROTA,TRAN,TYPE,MOUNTPOINTS,FSTYPE")
 	if err != nil {
 		return nil
 	}
-	var v struct {
-		Blockdevices []struct {
-			Name       string `json:"name"`
-			Path       string `json:"path"`
-			Model      string `json:"model"`
-			Vendor     string `json:"vendor"`
-			Serial     string `json:"serial"`
-			Size       uint64 `json:"size"`
-			Rota       bool   `json:"rota"`
-			Tran       string `json:"tran"`
-			Type       string `json:"type"`
-			Mountpoint string `json:"mountpoint"`
-			Fstype     string `json:"fstype"`
-		} `json:"blockdevices"`
-	}
-	if err := json.Unmarshal([]byte(out), &v); err != nil {
+	disks, err := parseStorageJSON(out)
+	if err != nil {
 		return nil
 	}
-	var disks []DiskInfo
+	for i := range disks {
+		disks[i].Health = collectSMART(ctx, disks[i].Path)
+	}
+	return disks
+}
+
+type blockNode struct {
+	Name        string      `json:"name"`
+	Path        string      `json:"path"`
+	Model       string      `json:"model"`
+	Vendor      string      `json:"vendor"`
+	Serial      string      `json:"serial"`
+	Size        uint64      `json:"size"`
+	Rota        bool        `json:"rota"`
+	Tran        string      `json:"tran"`
+	Type        string      `json:"type"`
+	Mountpoints []string    `json:"mountpoints"`
+	FSType      string      `json:"fstype"`
+	Children    []blockNode `json:"children"`
+}
+
+func parseStorageJSON(out string) ([]DiskInfo, error) {
+	var v struct {
+		Blockdevices []blockNode `json:"blockdevices"`
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		return nil, err
+	}
+	disks := []DiskInfo{}
 	for _, d := range v.Blockdevices {
 		if d.Type != "disk" {
 			continue
 		}
-		disks = append(disks, DiskInfo{
-			Name:       d.Name,
-			Path:       d.Path,
-			Model:      strings.TrimSpace(d.Model),
-			Vendor:     strings.TrimSpace(d.Vendor),
-			Serial:     strings.TrimSpace(d.Serial),
-			SizeBytes:  d.Size,
-			Rotational: d.Rota,
-			Transport:  d.Tran,
-			Type:       d.Type,
-			Mountpoint: d.Mountpoint,
-			FSType:     d.Fstype,
-		})
+		medium := "SSD"
+		if d.Rota {
+			medium = "HDD"
+		}
+		if strings.HasPrefix(d.Name, "nvme") || strings.EqualFold(d.Tran, "nvme") {
+			medium = "NVMe"
+		}
+		category := "internal"
+		if isExternalTransport(d.Tran) {
+			category = "external"
+		}
+		iface := strings.ToUpper(strings.TrimSpace(d.Tran))
+		if medium == "NVMe" && iface == "" {
+			iface = "PCIe"
+		}
+		if iface == "" {
+			iface = "未知"
+		}
+		disk := DiskInfo{Name: d.Name, Path: d.Path, Model: strings.TrimSpace(d.Model), Vendor: strings.TrimSpace(d.Vendor), Serial: strings.TrimSpace(d.Serial), SizeBytes: d.Size, Rotational: d.Rota, Transport: d.Tran, Type: d.Type, Category: category, Medium: medium, Interface: iface, Partitions: []PartitionInfo{}}
+		flattenPartitions(d.Children, &disk.Partitions)
+		disks = append(disks, disk)
 	}
-	return disks
+	return disks, nil
+}
+
+func flattenPartitions(nodes []blockNode, out *[]PartitionInfo) {
+	for _, n := range nodes {
+		mounts := nonEmpty(n.Mountpoints)
+		purpose := "未挂载"
+		if len(mounts) > 0 {
+			purpose = "数据"
+			for _, m := range mounts {
+				if m == "/" {
+					purpose = "系统"
+				} else if strings.HasPrefix(m, "/boot") {
+					purpose = "启动"
+				}
+			}
+		} else if n.FSType == "swap" {
+			purpose = "交换空间"
+		} else if n.FSType != "" {
+			purpose = n.FSType
+		}
+		*out = append(*out, PartitionInfo{Name: n.Name, Path: n.Path, SizeBytes: n.Size, FSType: n.FSType, Mountpoints: mounts, Purpose: purpose})
+		flattenPartitions(n.Children, out)
+	}
+}
+func nonEmpty(in []string) []string {
+	out := []string{}
+	for _, v := range in {
+		if strings.TrimSpace(v) != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+func isExternalTransport(v string) bool {
+	switch strings.ToLower(v) {
+	case "usb", "firewire", "thunderbolt":
+		return true
+	}
+	return false
+}
+
+func collectSMART(ctx context.Context, path string) HealthInfo {
+	if _, err := exec.LookPath("smartctl"); err != nil {
+		return HealthInfo{Status: "unsupported", Detail: "smartctl 未安装"}
+	}
+	sub, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	raw, cmdErr := exec.CommandContext(sub, "smartctl", "-H", "-j", path).CombinedOutput()
+	h, ok := parseSMARTJSON(raw)
+	if ok {
+		return h
+	}
+	msg := strings.ToLower(string(raw))
+	if strings.Contains(msg, "permission") || strings.Contains(msg, "operation not permitted") {
+		return HealthInfo{Status: "permission_required", Detail: "需要权限读取 SMART"}
+	}
+	if cmdErr != nil {
+		return HealthInfo{Status: "unsupported", Detail: "设备不支持 SMART 或无法读取"}
+	}
+	return HealthInfo{Status: "unsupported", Detail: "SMART 状态不可用"}
+}
+func parseSMARTJSON(raw []byte) (HealthInfo, bool) {
+	var v struct {
+		SmartStatus *struct {
+			Passed bool `json:"passed"`
+		} `json:"smart_status"`
+		Messages []struct {
+			String string `json:"string"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(raw, &v) != nil || v.SmartStatus == nil {
+		return HealthInfo{}, false
+	}
+	if v.SmartStatus.Passed {
+		return HealthInfo{Status: "healthy", Detail: "SMART 自检通过"}, true
+	}
+	return HealthInfo{Status: "failing", Detail: "SMART 自检未通过"}, true
+}
+
+func collectMounts(ctx context.Context) []MountInfo {
+	out, err := run(ctx, "findmnt", "--json", "--bytes", "--real", "--output", "SOURCE,TARGET,FSTYPE,SIZE,USED,AVAIL,USE%")
+	if err != nil {
+		return nil
+	}
+	return parseMountsJSON(out)
+}
+
+type mountNode struct {
+	Source   string      `json:"source"`
+	Target   string      `json:"target"`
+	FSType   string      `json:"fstype"`
+	Size     uint64      `json:"size"`
+	Used     uint64      `json:"used"`
+	Avail    uint64      `json:"avail"`
+	Use      string      `json:"use%"`
+	Children []mountNode `json:"children"`
+}
+
+func parseMountsJSON(out string) []MountInfo {
+	var v struct {
+		Filesystems []mountNode `json:"filesystems"`
+	}
+	if json.Unmarshal([]byte(out), &v) != nil {
+		return nil
+	}
+	result := []MountInfo{}
+	var walk func([]mountNode)
+	walk = func(nodes []mountNode) {
+		for _, n := range nodes {
+			if n.FSType != "squashfs" && !strings.HasPrefix(n.Source, "/dev/loop") {
+				pct, _ := strconv.ParseFloat(strings.TrimSuffix(n.Use, "%"), 64)
+				result = append(result, MountInfo{Path: n.Target, Source: n.Source, FSType: n.FSType, SizeBytes: n.Size, UsedBytes: n.Used, AvailBytes: n.Avail, UsagePct: pct, Disk: mountOwner(n.Source)})
+			}
+			walk(n.Children)
+		}
+	}
+	walk(v.Filesystems)
+	return result
+}
+func mountOwner(source string) string {
+	base := filepath.Base(source)
+	if real, err := filepath.EvalSymlinks(source); err == nil {
+		base = filepath.Base(real)
+	}
+	seen := map[string]bool{}
+	for base != "" && !seen[base] {
+		seen[base] = true
+		slaves, _ := filepath.Glob(filepath.Join("/sys/class/block", base, "slaves", "*"))
+		if len(slaves) > 0 {
+			base = filepath.Base(slaves[0])
+			continue
+		}
+		pk := strings.TrimSpace(readFile(filepath.Join("/sys/class/block", base, "partition")))
+		if pk != "" {
+			if link, err := filepath.EvalSymlinks(filepath.Join("/sys/class/block", base)); err == nil {
+				base = filepath.Base(filepath.Dir(link))
+				continue
+			}
+		}
+		break
+	}
+	if base == "" {
+		return source
+	}
+	return "/dev/" + base
 }
 
 // ─── Network ───────────────────────────────────────────────
@@ -727,11 +927,11 @@ func collectNetwork(ctx context.Context) []NICInfo {
 		return nil
 	}
 	var raw []struct {
-		Ifname   string `json:"ifname"`
-		Address  string `json:"address"`
-		MTU      int    `json:"mtu"`
+		Ifname    string `json:"ifname"`
+		Address   string `json:"address"`
+		MTU       int    `json:"mtu"`
 		Operstate string `json:"operstate"`
-		Linkinfo *struct {
+		Linkinfo  *struct {
 			InfoKind string `json:"info_kind"`
 		} `json:"linkinfo"`
 		AddrInfo []struct {

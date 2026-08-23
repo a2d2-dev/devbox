@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a2d2-dev/devbox/pkg/auth"
 	"github.com/a2d2-dev/devbox/pkg/backup"
 )
 
@@ -32,7 +33,7 @@ func TestBackupRoutesCreateRunHistoryAndLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.Start(context.Background())
-	s := &Server{backup: manager, mux: http.NewServeMux()}
+	s := &Server{backup: manager, mux: http.NewServeMux(), auth: auth.New(auth.Config{})}
 	s.registerBackupRoutes()
 
 	task := backup.Task{
@@ -98,7 +99,7 @@ func TestBackupPreflightRouteRejectsPathLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{backup: manager, mux: http.NewServeMux()}
+	s := &Server{backup: manager, mux: http.NewServeMux(), auth: auth.New(auth.Config{})}
 	s.registerBackupRoutes()
 	task := backup.Task{
 		Name: "loop", Source: backup.Endpoint{Type: backup.EndpointLocal, Path: source},

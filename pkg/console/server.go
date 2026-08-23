@@ -28,6 +28,7 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/shares"
 	"github.com/a2d2-dev/devbox/pkg/supervisor"
 	eventlog "github.com/a2d2-dev/devbox/pkg/syslog"
+	"github.com/a2d2-dev/devbox/pkg/users"
 	"github.com/a2d2-dev/devbox/pkg/vms"
 	"go.uber.org/zap"
 )
@@ -55,6 +56,9 @@ type Config struct {
 	BrowserDataPath string `mapstructure:"browser_data_path"`
 	// BrowserInsecureTLS 浏览器代理是否跳过远端 TLS 校验（内网自签证书场景），默认 false。
 	BrowserInsecureTLS bool `mapstructure:"browser_insecure_tls"`
+	// UsersDataPath is optional for tests and custom embedding. The main service
+	// stores users.db beside browser_data_path by default.
+	UsersDataPath string `mapstructure:"users_data_path"`
 	// BackupDataDir 保存备份任务与历史；空 = /var/lib/devbox/backup。
 	BackupDataDir string `mapstructure:"backup_data_dir"`
 	// BackupConcurrency 是备份与恢复共享的进程内并发上限；小于 1 时为 2。
@@ -84,6 +88,7 @@ type Server struct {
 	modelScanner         *models.Scanner
 	alertEngine          *alerts.Engine
 	auth                 *auth.Auth
+	users                *users.Store
 	supervisorMgr        *supervisor.Manager
 	hardware             *hardware.Collector
 	links                *links.Registry
@@ -91,6 +96,7 @@ type Server struct {
 	vmManager            *vms.Manager
 	browser              *browserStore // 浏览器应用的书签/历史持久化
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
+	loginLimiter         loginRateLimiter
 	backup               *backup.Manager
 	systemLog            *eventlog.Store
 	processResources     *processResourceSampler
@@ -108,6 +114,23 @@ type Server struct {
 
 // NewServer 创建控制台服务器
 func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, controller apps.Controller, storeMgr *apps.StoreManager) *Server {
+	usersPath := cfg.UsersDataPath
+	if usersPath == "" {
+		if cfg.BrowserDataPath != "" {
+			usersPath = filepath.Join(filepath.Dir(cfg.BrowserDataPath), "users.db")
+		} else {
+			usersPath = "/etc/devbox/users.db"
+		}
+	}
+	var userStore *users.Store
+	if err := os.MkdirAll(filepath.Dir(usersPath), 0o750); err != nil {
+		logger.Error("User database directory unavailable", zap.String("path", usersPath), zap.Error(err))
+	} else if opened, err := users.Open(usersPath); err != nil {
+		logger.Error("User database unavailable", zap.String("path", usersPath), zap.Error(err))
+	} else {
+		userStore = opened
+	}
+
 	logPath := strings.TrimSpace(cfg.SystemLogPath)
 	if logPath == "" {
 		logPath = strings.TrimSpace(os.Getenv("DEVBOX_SYSTEM_LOG_PATH"))
@@ -136,9 +159,12 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		fileBrowser:          files.NewBrowser(files.Config{RootDir: cfg.WorkDir, AppsDir: cfg.AppsDir}),
 		modelScanner:         models.NewScanner(models.Config{}),
 		alertEngine:          alerts.NewEngine(col),
+		users:                userStore,
 		auth: auth.New(auth.Config{
-			Password:   cfg.AuthPassword,
-			SessionTTL: cfg.AuthSessionTTL,
+			Password:        cfg.AuthPassword,
+			SessionTTL:      cfg.AuthSessionTTL,
+			Users:           userStore,
+			UsersConfigured: true,
 		}),
 		supervisorMgr:    supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
 		hardware:         hardware.New(60 * time.Second),
@@ -297,21 +323,21 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/metrics/history", s.handleMetricsHistory)
 
 	// 终端执行路由
-	s.mux.HandleFunc("/api/v1/terminal/exec", s.handleTerminalExec)
+	s.mux.HandleFunc("/api/v1/terminal/exec", s.requireAdmin(s.handleTerminalExec))
 	// 网络信息
 	s.mux.HandleFunc("/api/v1/network", s.handleNetwork)
 
 	// 应用商店路由（阶段4 Compose 商店统一）
 	s.mux.HandleFunc("/api/v1/store/apps", s.handleStoreApps)
 	s.mux.HandleFunc("/api/v1/store/version", s.handleStoreVersion)
-	s.mux.HandleFunc("/api/v1/store/install", s.handleStoreInstall)
+	s.mux.HandleFunc("/api/v1/store/install", s.requireAdmin(s.handleStoreInstall))
 	// 第三方 catalog 路由（阶段4 扩展：HTTP/Git 文件原生 catalog source）
-	s.mux.HandleFunc("/api/v1/catalogs", s.handleCatalogs)
+	s.mux.HandleFunc("/api/v1/catalogs", s.requireAdminWrites(s.handleCatalogs))
 	s.mux.HandleFunc("/api/v1/catalogs/apps", s.handleCatalogApps)
 	s.mux.HandleFunc("/api/v1/catalogs/version", s.handleCatalogVersion)
-	s.mux.HandleFunc("/api/v1/catalogs/install", s.handleCatalogInstall)
-	s.mux.HandleFunc("/api/v1/catalogs/sources", s.handleCatalogSources)
-	s.mux.HandleFunc("/api/v1/catalogs/sources/", s.handleCatalogSources)
+	s.mux.HandleFunc("/api/v1/catalogs/install", s.requireAdmin(s.handleCatalogInstall))
+	s.mux.HandleFunc("/api/v1/catalogs/sources", s.requireAdminWrites(s.handleCatalogSources))
+	s.mux.HandleFunc("/api/v1/catalogs/sources/", s.requireAdminWrites(s.handleCatalogSources))
 	// 代理应用图标到 apiserver
 	s.mux.HandleFunc("/app-icons/", s.handleProxyAppIcons)
 
@@ -328,6 +354,9 @@ func (s *Server) registerRoutes() {
 
 	// 硬件清单路由
 	s.registerHardwareRoutes()
+
+	// Console accounts, groups and file-root grants.
+	s.registerUserRoutes()
 
 	// 服务导航路由 (tkeel-links 的功能吸收)
 	s.registerLinksRoutes()

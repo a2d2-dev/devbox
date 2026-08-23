@@ -11,8 +11,8 @@ import (
 )
 
 func (s *Server) registerBackupRoutes() {
-	s.mux.HandleFunc("/api/v1/backups", s.handleBackups)
-	s.mux.HandleFunc("/api/v1/backups/", s.handleBackup)
+	s.mux.HandleFunc("/api/v1/backups", s.requireAdminWrites(s.handleBackups))
+	s.mux.HandleFunc("/api/v1/backups/", s.requireAdminWrites(s.handleBackup))
 }
 
 func (s *Server) handleBackups(w http.ResponseWriter, r *http.Request) {

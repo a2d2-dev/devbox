@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2d2-dev/devbox/pkg/auth"
 	filemanager "github.com/a2d2-dev/devbox/pkg/files"
 )
 
@@ -22,15 +23,15 @@ func (s *Server) registerFileRoutes() {
 	s.mux.HandleFunc("/api/v1/files/mkdir", s.handleFileMkdir)
 	s.mux.HandleFunc("/api/v1/files/rename", s.handleFileRename)
 	s.mux.HandleFunc("/api/v1/files/transfer", s.handleFileTransfer)
-	s.mux.HandleFunc("/api/v1/files/delete", s.handleFileDelete)
-	s.mux.HandleFunc("/api/v1/files/trash", s.handleTrash)
-	s.mux.HandleFunc("/api/v1/files/trash/restore", s.handleTrashRestore)
-	s.mux.HandleFunc("/api/v1/files/trash/purge", s.handleTrashPurge)
-	s.mux.HandleFunc("/api/v1/files/trash/empty", s.handleTrashEmpty)
-	s.mux.HandleFunc("/api/v1/files/favorites", s.handleFavorites)
-	s.mux.HandleFunc("/api/v1/files/recent", s.handleRecent)
-	s.mux.HandleFunc("/api/v1/files/shares", s.handleShares)
-	s.mux.HandleFunc("/api/v1/files/shares/", s.handleShareByID)
+	s.mux.HandleFunc("/api/v1/files/delete", s.requireAdmin(s.handleFileDelete))
+	s.mux.HandleFunc("/api/v1/files/trash", s.requireAdmin(s.handleTrash))
+	s.mux.HandleFunc("/api/v1/files/trash/restore", s.requireAdmin(s.handleTrashRestore))
+	s.mux.HandleFunc("/api/v1/files/trash/purge", s.requireAdmin(s.handleTrashPurge))
+	s.mux.HandleFunc("/api/v1/files/trash/empty", s.requireAdmin(s.handleTrashEmpty))
+	s.mux.HandleFunc("/api/v1/files/favorites", s.requireAdmin(s.handleFavorites))
+	s.mux.HandleFunc("/api/v1/files/recent", s.requireAdmin(s.handleRecent))
+	s.mux.HandleFunc("/api/v1/files/shares", s.requireAdmin(s.handleShares))
+	s.mux.HandleFunc("/api/v1/files/shares/", s.requireAdmin(s.handleShareByID))
 	s.mux.HandleFunc("/api/v1/files/public/", s.handlePublicShare)
 }
 
@@ -96,17 +97,42 @@ func (s *Server) handleFileSources(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) || !s.fileReady(w) {
 		return
 	}
-	s.jsonOK(w, s.fileBrowser.Sources())
+	sources := s.fileBrowser.Sources()
+	if s.isRestrictedFileUser(r) {
+		filtered := sources[:0]
+		for _, source := range sources {
+			if source.ID == "my" {
+				filtered = append(filtered, source)
+			}
+		}
+		sources = filtered
+	}
+	s.jsonOK(w, sources)
 }
 
 func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) || !s.fileReady(w) {
 		return
 	}
-	entries, err := s.fileBrowser.ListSource(r.URL.Query().Get("source"), r.URL.Query().Get("path"), r.URL.Query().Get("sort"), r.URL.Query().Get("order"))
+	sourceID, path := r.URL.Query().Get("source"), r.URL.Query().Get("path")
+	allowed, err := s.authorizedFilePaths(r, sourceID, path, true)
 	if err != nil {
 		writeFileError(w, err)
 		return
+	}
+	entries, err := s.fileBrowser.ListSource(sourceID, path, r.URL.Query().Get("sort"), r.URL.Query().Get("order"))
+	if err != nil {
+		writeFileError(w, err)
+		return
+	}
+	if allowed != nil {
+		filtered := entries[:0]
+		for _, entry := range entries {
+			if pathWithinAny(entry.AbsPath, allowed, true) {
+				filtered = append(filtered, entry)
+			}
+		}
+		entries = filtered
 	}
 	s.jsonOK(w, entries)
 }
@@ -115,10 +141,25 @@ func (s *Server) handleFileSearch(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) || !s.fileReady(w) {
 		return
 	}
-	entries, err := s.fileBrowser.Search(r.URL.Query().Get("source"), r.URL.Query().Get("path"), r.URL.Query().Get("q"))
+	sourceID, path := r.URL.Query().Get("source"), r.URL.Query().Get("path")
+	allowed, err := s.authorizedFilePaths(r, sourceID, path, true)
 	if err != nil {
 		writeFileError(w, err)
 		return
+	}
+	entries, err := s.fileBrowser.Search(sourceID, path, r.URL.Query().Get("q"))
+	if err != nil {
+		writeFileError(w, err)
+		return
+	}
+	if allowed != nil {
+		filtered := entries[:0]
+		for _, entry := range entries {
+			if pathWithinAny(entry.AbsPath, allowed, false) {
+				filtered = append(filtered, entry)
+			}
+		}
+		entries = filtered
 	}
 	s.jsonOK(w, entries)
 }
@@ -143,6 +184,10 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = header.Filename
 	}
+	if _, err := s.authorizedFilePaths(r, r.FormValue("source"), r.FormValue("path"), false); err != nil {
+		writeFileError(w, err)
+		return
+	}
 	data, err := io.ReadAll(file)
 	if err != nil {
 		writeFileError(w, err)
@@ -166,6 +211,10 @@ func requestedFilePath(r *http.Request) string {
 
 func (s *Server) serveManagedFile(w http.ResponseWriter, r *http.Request, attachment bool) {
 	if !requireMethod(w, r, http.MethodGet) || !s.fileReady(w) {
+		return
+	}
+	if _, err := s.authorizedFilePaths(r, r.URL.Query().Get("source"), requestedFilePath(r), false); err != nil {
+		writeFileError(w, err)
 		return
 	}
 	file, info, err := s.fileBrowser.OpenDownload(r.URL.Query().Get("source"), requestedFilePath(r))
@@ -199,6 +248,10 @@ func (s *Server) handleFileMkdir(w http.ResponseWriter, r *http.Request) {
 	if !decodeFileJSON(w, r, &req) {
 		return
 	}
+	if _, err := s.authorizedFilePaths(r, req.Source, req.Path, false); err != nil {
+		writeFileError(w, err)
+		return
+	}
 	if err := s.fileBrowser.Mkdir(req.Source, req.Path, req.Name); err != nil {
 		writeFileError(w, err)
 		return
@@ -216,6 +269,10 @@ func (s *Server) handleFileRename(w http.ResponseWriter, r *http.Request) {
 		Name   string `json:"name"`
 	}
 	if !decodeFileJSON(w, r, &req) {
+		return
+	}
+	if _, err := s.authorizedFilePaths(r, req.Source, req.Path, false); err != nil {
+		writeFileError(w, err)
 		return
 	}
 	if err := s.fileBrowser.Rename(req.Source, req.Path, req.Name); err != nil {
@@ -236,6 +293,14 @@ func (s *Server) handleFileTransfer(w http.ResponseWriter, r *http.Request) {
 		Copy        bool   `json:"copy"`
 	}
 	if !decodeFileJSON(w, r, &req) {
+		return
+	}
+	if _, err := s.authorizedFilePaths(r, req.Source, req.Path, false); err != nil {
+		writeFileError(w, err)
+		return
+	}
+	if _, err := s.authorizedFilePaths(r, req.Source, req.Destination, false); err != nil {
+		writeFileError(w, err)
 		return
 	}
 	if err := s.fileBrowser.Transfer(req.Source, req.Path, req.Destination, req.Copy); err != nil {
@@ -462,4 +527,61 @@ func (s *Server) handlePublicShare(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 	w.Header().Set("Cache-Control", "private, no-store")
 	http.ServeContent(w, r, name, info.ModTime(), file)
+}
+
+func (s *Server) isRestrictedFileUser(r *http.Request) bool {
+	if s.users == nil {
+		return false
+	}
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	return ok && !principal.IsAdmin() && !principal.Legacy
+}
+
+func (s *Server) authorizedFilePaths(r *http.Request, sourceID, requested string, allowAncestor bool) ([]string, error) {
+	if !s.isRestrictedFileUser(r) {
+		return nil, nil
+	}
+	if sourceID != "" && sourceID != "my" {
+		return nil, filemanagerError("PATH_FORBIDDEN", "source is not assigned to this account")
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	paths, err := s.users.AllowedPaths(r.Context(), principal.UserID)
+	if err != nil {
+		return nil, err
+	}
+	work := s.config.WorkDir
+	if work == "" {
+		work = "/data"
+	}
+	target := filepath.Join(work, requested)
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return nil, filemanagerError("PATH_FORBIDDEN", "path cannot be resolved")
+	}
+	realPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return nil, filemanagerError("PATH_FORBIDDEN", "assigned path cannot be resolved")
+		}
+		realPaths = append(realPaths, real)
+	}
+	if !pathWithinAny(realTarget, realPaths, allowAncestor) {
+		return nil, filemanagerError("PATH_FORBIDDEN", "path is not assigned to this account")
+	}
+	return realPaths, nil
+}
+
+func pathWithinAny(path string, roots []string, allowAncestor bool) bool {
+	path = filepath.Clean(path)
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
+			return true
+		}
+		if allowAncestor && strings.HasPrefix(root, path+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

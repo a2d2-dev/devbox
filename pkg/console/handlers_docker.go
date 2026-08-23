@@ -13,10 +13,10 @@ import (
 func (s *Server) registerDockerRoutes() {
 	s.mux.HandleFunc("/api/v1/docker/overview", s.handleDockerOverview)
 	s.mux.HandleFunc("/api/v1/docker/stats", s.handleDockerStats)
-	s.mux.HandleFunc("/api/v1/docker/service", s.handleDockerService)
-	s.mux.HandleFunc("/api/v1/docker/autostart", s.handleDockerAutostart)
-	s.mux.HandleFunc("/api/v1/docker/storage/plan", s.handleDockerStoragePlan)
-	s.mux.HandleFunc("/api/v1/docker/storage/execute", s.handleDockerStorageExecute)
+	s.mux.HandleFunc("/api/v1/docker/service", s.requireAdmin(s.handleDockerService))
+	s.mux.HandleFunc("/api/v1/docker/autostart", s.requireAdmin(s.handleDockerAutostart))
+	s.mux.HandleFunc("/api/v1/docker/storage/plan", s.requireAdmin(s.handleDockerStoragePlan))
+	s.mux.HandleFunc("/api/v1/docker/storage/execute", s.requireAdmin(s.handleDockerStorageExecute))
 }
 
 func (s *Server) dockerController() (apps.DockerController, bool) {

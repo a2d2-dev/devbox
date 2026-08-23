@@ -80,8 +80,7 @@ export function LoginScreen({ onLogin, deviceName }) {
     return () => { cancelled = true }
   }, [])
 
-  // devbox 本地认证：单密码 + session token。
-  // 后端校验 password，并把 username 绑定到本次 session 供审计记录使用。
+  // devbox 本地认证：用户名/密码 + session token；旧单密码配置仍由后端兼容。
   // 未启用密码 (config auth.password 为空) 时后端会直接返 {authenticated:true, token:""}
   const submit = async (e) => {
     if (e) e.preventDefault()

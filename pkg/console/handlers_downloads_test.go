@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/a2d2-dev/devbox/pkg/auth"
 	"github.com/a2d2-dev/devbox/pkg/downloads"
 )
 
@@ -17,7 +18,7 @@ func TestDownloadHandlersCreateListAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine.Start(context.Background())
-	s := &Server{downloadEngine: engine, mux: http.NewServeMux()}
+	s := &Server{downloadEngine: engine, mux: http.NewServeMux(), auth: auth.New(auth.Config{})}
 	s.registerDownloadRoutes()
 
 	create := httptest.NewRequest(http.MethodPost, "/api/v1/downloads", strings.NewReader(`{"url":"https://example.com/archive.bin","targetDirectory":"downloads","start":false}`))
@@ -53,7 +54,7 @@ func TestDownloadHandlersRejectInvalidInputAndUnavailableEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{downloadEngine: engine, mux: http.NewServeMux()}
+	s := &Server{downloadEngine: engine, mux: http.NewServeMux(), auth: auth.New(auth.Config{})}
 	s.registerDownloadRoutes()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/downloads", strings.NewReader(`{"url":"file:///etc/passwd","targetDirectory":"../escape","start":false}`))
@@ -63,7 +64,7 @@ func TestDownloadHandlersRejectInvalidInputAndUnavailableEngine(t *testing.T) {
 		t.Fatalf("invalid create status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	unavailable := &Server{downloadEngineError: "permission denied", mux: http.NewServeMux()}
+	unavailable := &Server{downloadEngineError: "permission denied", mux: http.NewServeMux(), auth: auth.New(auth.Config{})}
 	unavailable.registerDownloadRoutes()
 	w = httptest.NewRecorder()
 	unavailable.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/downloads", nil))

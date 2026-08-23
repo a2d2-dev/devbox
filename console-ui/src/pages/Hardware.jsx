@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
+import { Chip, StatusDot } from '../components/ui'
 import { useHardware, useSensors } from '../hooks/useApi'
 
 // ─── Sensor UI helpers ────────────────────────────────────────
@@ -661,33 +662,42 @@ function MemoryPane({ data }) {
 }
 
 function StoragePane({ data }) {
+	const healthUI = {
+	  healthy: { text: '健康', tone: 'green' }, failing: { text: '异常', tone: 'red' },
+	  warning: { text: '警告', tone: 'amber' }, permission_required: { text: '需要权限', tone: 'amber' },
+	  unsupported: { text: '不支持', tone: 'gray' },
+	}
+	const disks = data.storage || []
+	const mounts = data.mounts || []
   return (
-    <Section title="块设备" cmd="lsblk -O">
-      <table style={{ width: '100%', fontSize: 12.5, ...MONO, borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ color: T.ink3, textAlign: 'left', borderBottom: `1px solid ${T.border}` }}>
-            <th style={{ padding: '6px 4px' }}>路径</th>
-            <th>型号</th>
-            <th>容量</th>
-            <th>介质</th>
-            <th>总线</th>
-            <th>挂载</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(data.storage || []).map(d => (
-            <tr key={d.path} style={{ borderBottom: `1px dashed ${T.borderSoft || '#f1f5f9'}` }}>
-              <td style={{ padding: '6px 4px', color: T.ink2 }}>{d.path}</td>
-              <td>{d.model || d.vendor || '—'}</td>
-              <td>{fmtBytes(d.sizeBytes)}</td>
-              <td>{d.rotational ? 'HDD' : 'SSD'}</td>
-              <td>{(d.transport || '').toUpperCase()}</td>
-              <td>{d.mountpoint || '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Section>
+	<>
+	<Section title="硬盘概览" cmd="lsblk -J -b">
+	  <table style={{ width: '100%', fontSize: 12.5, ...MONO, borderCollapse: 'collapse' }}>
+		<thead>
+		  <tr style={{ color: T.ink3, textAlign: 'left', borderBottom: `1px solid ${T.border}` }}>
+			<th style={{ padding: '6px 4px' }}>设备 / 型号</th><th>位置</th><th>容量</th><th>介质</th><th>接口</th><th>健康状态</th><th>分区与用途</th>
+		  </tr>
+		</thead>
+		<tbody>
+		  {disks.map(d => {
+			const h = healthUI[d.health?.status] || healthUI.unsupported
+			return (
+			<tr key={d.path} style={{ borderBottom: `1px dashed ${T.borderSoft || '#f1f5f9'}` }}>
+			  <td style={{ padding: '8px 4px' }}><div style={{ color: T.ink2 }}>{d.path}</div><div style={{ color: T.ink3, fontSize: 10.5, marginTop: 2 }}>{d.model || d.vendor || '型号未知'}</div></td>
+			  <td>{d.category === 'external' ? '外接' : '内置'}</td><td>{fmtBytes(d.sizeBytes)}</td><td>{d.medium}</td><td>{d.interface}</td>
+			  <td><Chip tone={h.tone} style={{ cursor: 'help' }}><StatusDot tone={h.tone} size={5}/><span title={d.health?.detail}>{h.text}</span></Chip><div style={{ color: T.ink4, fontSize: 10, marginTop: 3 }}>{d.health?.detail}</div></td>
+			  <td style={{ fontSize: 11 }}>{(d.partitions || []).length ? d.partitions.map(p => <div key={p.path} style={{ margin: '2px 0' }}>{p.name} · {p.purpose}{p.mountpoints?.length ? ` · ${p.mountpoints.join(', ')}` : ''}</div>) : <span style={{ color: T.ink4 }}>无分区</span>}</td>
+			</tr>
+		  )})}
+		</tbody>
+	  </table>
+	  {!disks.length && <div style={{ color: T.ink3, fontSize: 12, marginTop: 8 }}>未检测到物理硬盘，或当前环境无法读取 lsblk 信息。</div>}
+	</Section>
+	<Section title="数据目录与挂载点" cmd="findmnt --real">
+	  <table style={{ width: '100%', fontSize: 12.5, ...MONO, borderCollapse: 'collapse' }}><thead><tr style={{ color: T.ink3, textAlign: 'left', borderBottom: `1px solid ${T.border}` }}><th style={{ padding: '6px 4px' }}>路径</th><th>容量</th><th>已用</th><th>使用率</th><th>文件系统</th><th>所属磁盘</th></tr></thead><tbody>{mounts.map(m => <tr key={`${m.source}-${m.path}`} style={{ borderBottom: `1px dashed ${T.borderSoft}` }}><td style={{ padding: '7px 4px', color: T.ink2 }}>{m.path}</td><td>{fmtBytes(m.sizeBytes)}</td><td>{fmtBytes(m.usedBytes)}</td><td>{Number(m.usagePct).toFixed(0)}%</td><td>{m.fstype || '不支持'}</td><td>{m.disk || m.source || '不支持'}</td></tr>)}</tbody></table>
+	  {!mounts.length && <div style={{ color: T.ink3, fontSize: 12 }}>未检测到真实文件系统挂载点。</div>}
+	</Section>
+	</>
   )
 }
 

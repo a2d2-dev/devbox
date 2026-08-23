@@ -10,7 +10,7 @@ import (
 
 func (s *Server) registerVMRoutes() {
 	s.mux.HandleFunc("/api/v1/vms", s.handleVMs)
-	s.mux.HandleFunc("/api/v1/vms/", s.handleVM)
+	s.mux.HandleFunc("/api/v1/vms/", s.requireAdminWrites(s.handleVM))
 }
 
 func (s *Server) handleVMs(w http.ResponseWriter, r *http.Request) {

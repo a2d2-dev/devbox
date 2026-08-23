@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/a2d2-dev/devbox/pkg/apps"
+	"github.com/a2d2-dev/devbox/pkg/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -40,7 +41,7 @@ func (s *dockerStubController) ExecuteDockerMigration(context.Context, apps.Dock
 }
 
 func newDockerHandlerServer(controller apps.Controller) *Server {
-	s := &Server{controller: controller, logger: zap.NewNop(), mux: http.NewServeMux()}
+	s := &Server{controller: controller, logger: zap.NewNop(), mux: http.NewServeMux(), auth: auth.New(auth.Config{})}
 	s.registerDockerRoutes()
 	return s
 }

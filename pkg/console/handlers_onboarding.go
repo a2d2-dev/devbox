@@ -19,7 +19,7 @@ type onboardingReadiness struct {
 }
 
 func (s *Server) registerOnboardingRoutes() {
-	s.mux.HandleFunc("/api/v1/onboarding", s.handleOnboarding)
+	s.mux.HandleFunc("/api/v1/onboarding", s.requireAdminWrites(s.handleOnboarding))
 }
 
 func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {

@@ -22,15 +22,15 @@ type pendingRestore struct {
 }
 
 func (s *Server) registerMaintenanceRoutes() {
-	s.mux.HandleFunc("/api/v1/maintenance/settings", s.handleMaintenanceSettings)
-	s.mux.HandleFunc("/api/v1/maintenance/smb/preview", s.handleSMBPreview)
-	s.mux.HandleFunc("/api/v1/maintenance/smb/apply", s.handleSMBApply)
-	s.mux.HandleFunc("/api/v1/maintenance/smtp/test", s.handleSMTPTest)
+	s.mux.HandleFunc("/api/v1/maintenance/settings", s.requireAdminWrites(s.handleMaintenanceSettings))
+	s.mux.HandleFunc("/api/v1/maintenance/smb/preview", s.requireAdmin(s.handleSMBPreview))
+	s.mux.HandleFunc("/api/v1/maintenance/smb/apply", s.requireAdmin(s.handleSMBApply))
+	s.mux.HandleFunc("/api/v1/maintenance/smtp/test", s.requireAdmin(s.handleSMTPTest))
 	s.mux.HandleFunc("/api/v1/maintenance/updates/check", s.handleUpdateCheck)
-	s.mux.HandleFunc("/api/v1/maintenance/backup", s.handleConfigBackup)
-	s.mux.HandleFunc("/api/v1/maintenance/restore/preview", s.handleRestorePreview)
-	s.mux.HandleFunc("/api/v1/maintenance/restore/confirm", s.handleRestoreConfirm)
-	s.mux.HandleFunc("/api/v1/maintenance/reset", s.handleDevBoxReset)
+	s.mux.HandleFunc("/api/v1/maintenance/backup", s.requireAdmin(s.handleConfigBackup))
+	s.mux.HandleFunc("/api/v1/maintenance/restore/preview", s.requireAdmin(s.handleRestorePreview))
+	s.mux.HandleFunc("/api/v1/maintenance/restore/confirm", s.requireAdmin(s.handleRestoreConfirm))
+	s.mux.HandleFunc("/api/v1/maintenance/reset", s.requireAdmin(s.handleDevBoxReset))
 	s.mux.HandleFunc("/api/v1/maintenance/about", s.handleMaintenanceAbout)
 }
 

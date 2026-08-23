@@ -20,6 +20,8 @@ console:
   # 下载任务也以此为根目录；状态保存到 <work_dir>/.devbox/downloads.json。
   # WebDAV 与 SMB 共享目录同样受此数据根约束（包括符号链接解析后的真实路径）。
   work_dir: "/data"
+  # 浏览器书签数据；用户数据库 users.db 自动保存在同一目录。
+  browser_data_path: "/etc/devbox/browser.json"
   # 备份任务状态默认保存于 /var/lib/devbox/backup，备份/恢复共享 2 个并发槽。
   # 当前二进制使用该固定默认值；详细语义见 docs/backup.md。
   # 仅来自这些 IP/CIDR 的请求会解析 X-Forwarded-For；默认空列表。
@@ -31,6 +33,12 @@ console:
   # 加密状态默认保存在 /var/lib/devbox/maintenance。
   # 开发/测试可用 DEVBOX_MAINTENANCE_DIR 覆盖状态目录；SMB 受管 include
   # 路径可用 DEVBOX_SMB_INCLUDE_PATH 覆盖（默认 /etc/samba/devbox-shares.conf）。
+
+# 本地认证。password 是向后兼容的单管理员密码；创建数据库用户后，
+# 新账户使用各自的 bcrypt 密码登录，旧管理员仍可用用户名 admin 登录。
+auth:
+  password: ""
+  session_ttl: 86400
 
 # 可选的 Kubernetes 集成；不设置则禁用 K8s 应用管理与应用市场。
 kubernetes:

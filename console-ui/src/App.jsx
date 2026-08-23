@@ -48,6 +48,7 @@ import AuditLog from './pages/AuditLog'
 import Supervisor from './pages/Supervisor'
 import VirtualMachines from './pages/VirtualMachines'
 import Hardware from './pages/Hardware'
+import Users from './pages/Users'
 import Links from './pages/Links'
 import Backup from './pages/Backup'
 import Downloads from './pages/Downloads'
@@ -600,11 +601,12 @@ export default function App() {
                 {appId === 'supervisor'&& <Supervisor onOpenApp={launchApp}/>}
                 {appId === 'virtual-machines' && <VirtualMachines/>}
                 {appId === 'hardware'  && <Hardware/>}
+	                {appId === 'users'     && <Users/>}
                 {appId === 'links'     && <Links/>}
                 {appId === 'backup'    && <Backup/>}
                 {appId === 'downloads' && <Downloads/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','links','backup','downloads','diag','settings'].includes(appId)
+                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','users','links','backup','downloads','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp}/>}
 

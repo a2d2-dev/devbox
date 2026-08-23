@@ -15,7 +15,7 @@ import (
 func (s *Server) registerSupervisorRoutes() {
 	s.mux.HandleFunc("/api/v1/supervisor/status", s.handleSupervisorStatus)
 	s.mux.HandleFunc("/api/v1/supervisor/resources", s.handleSupervisorResources)
-	s.mux.HandleFunc("/api/v1/supervisor/services/", s.handleSupervisorService)
+	s.mux.HandleFunc("/api/v1/supervisor/services/", s.requireAdminWrites(s.handleSupervisorService))
 }
 
 type supervisorResource struct {

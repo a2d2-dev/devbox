@@ -12,8 +12,8 @@ import (
 )
 
 func (s *Server) registerDownloadRoutes() {
-	s.mux.HandleFunc("/api/v1/downloads", s.handleDownloads)
-	s.mux.HandleFunc("/api/v1/downloads/", s.handleDownload)
+	s.mux.HandleFunc("/api/v1/downloads", s.requireAdminWrites(s.handleDownloads))
+	s.mux.HandleFunc("/api/v1/downloads/", s.requireAdminWrites(s.handleDownload))
 }
 
 func (s *Server) handleDownloads(w http.ResponseWriter, r *http.Request) {

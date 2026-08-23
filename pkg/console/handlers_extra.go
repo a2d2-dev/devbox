@@ -15,7 +15,7 @@ func (s *Server) registerExtraRoutes() {
 	s.registerFileRoutes()
 	s.mux.HandleFunc("/api/v1/models", s.handleModels)
 	s.mux.HandleFunc("/api/v1/alerts", s.handleAlerts)
-	s.mux.HandleFunc("/api/v1/alerts/", s.handleAlertAction)
+	s.mux.HandleFunc("/api/v1/alerts/", s.requireAdminWrites(s.handleAlertAction))
 	s.mux.HandleFunc("/api/v1/ports", s.handlePorts)
 }
 

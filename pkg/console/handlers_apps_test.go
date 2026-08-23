@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/a2d2-dev/devbox/pkg/apps"
+	"github.com/a2d2-dev/devbox/pkg/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -130,7 +131,7 @@ func (s *stubController) RemovePreview(_ context.Context, id string, purge bool)
 }
 
 func newTestServer(ctrl apps.Controller) *Server {
-	s := &Server{controller: ctrl, logger: zap.NewNop(), mux: http.NewServeMux()}
+	s := &Server{controller: ctrl, logger: zap.NewNop(), mux: http.NewServeMux(), auth: auth.New(auth.Config{})}
 	s.registerAppRoutes()
 	return s
 }

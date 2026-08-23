@@ -97,7 +97,7 @@ export default function Backup() {
     {notice && <div className="backup-notice">{notice}</div>}
     <main className="backup-main">
       {loading && tasks.length === 0 && <Empty icon="refresh" text="正在读取任务"/>}
-      {error && tasks.length === 0 && <Empty icon="alertTri" text="备份服务不可用" detail={error.message}/>} 
+      {error && tasks.length === 0 && <Empty icon="alertTri" text="备份服务不可用" detail={error.message}/>}
       {!loading && !error && tasks.length === 0 && <Empty icon="layers" text="暂无备份任务"/>}
       {tasks.length > 0 && <div className="backup-table-wrap">
         <table className="backup-table">
