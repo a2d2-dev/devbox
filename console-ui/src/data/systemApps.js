@@ -18,6 +18,7 @@ export const SYSTEM_APPS = [
   { id: 'store',               kind: 'system', name: '应用商店', icon: 'store',     color: T.green,   bg: 'linear-gradient(160deg,#34d399,#059669)' },
   { id: 'compose-manager',     kind: 'system', name: 'Compose 应用', icon: 'apps', color: '#0891b2', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
   { id: 'files',               kind: 'system', name: '文件',     icon: 'folder',    color: '#0891b2', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
+  { id: 'backup',              kind: 'system', name: '备份',     icon: 'layers',    color: '#047857', bg: 'linear-gradient(160deg,#34d399,#047857)' },
   { id: 'processes',           kind: 'system', name: '进程',     icon: 'cpu',       color: '#475569', bg: 'linear-gradient(160deg,#64748b,#1e293b)' },
   { id: 'supervisor',          kind: 'system', name: '进程守护', icon: 'shield',    color: '#0d9488', bg: 'linear-gradient(160deg,#14b8a6,#0f766e)' },
   { id: 'virtual-machines',    kind: 'system', name: '虚拟机',   icon: 'server',    color: '#155e75', bg: 'linear-gradient(160deg,#22d3ee,#155e75)' },

@@ -14,6 +14,7 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/alerts"
 	"github.com/a2d2-dev/devbox/pkg/apps"
 	"github.com/a2d2-dev/devbox/pkg/auth"
+	"github.com/a2d2-dev/devbox/pkg/backup"
 	"github.com/a2d2-dev/devbox/pkg/collector"
 	"github.com/a2d2-dev/devbox/pkg/files"
 	"github.com/a2d2-dev/devbox/pkg/gpuhistory"
@@ -43,6 +44,10 @@ type Config struct {
 	BrowserDataPath string `mapstructure:"browser_data_path"`
 	// BrowserInsecureTLS 浏览器代理是否跳过远端 TLS 校验（内网自签证书场景），默认 false。
 	BrowserInsecureTLS bool `mapstructure:"browser_insecure_tls"`
+	// BackupDataDir 保存备份任务与历史；空 = /var/lib/devbox/backup。
+	BackupDataDir string `mapstructure:"backup_data_dir"`
+	// BackupConcurrency 是备份与恢复共享的进程内并发上限；小于 1 时为 2。
+	BackupConcurrency int `mapstructure:"backup_concurrency"`
 	// Catalogs 第三方 HTTP/Git catalog source 聚合器（Issue #2 阶段4 扩展）。
 	// 为 nil 表示未配置 catalog（UI 隐藏 catalog 区）。
 	Catalogs             *apps.CatalogSet           `mapstructure:"-"`
@@ -70,10 +75,15 @@ type Server struct {
 	vmManager            *vms.Manager
 	browser              *browserStore // 浏览器应用的书签/历史持久化
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
+	backup               *backup.Manager
 }
 
 // NewServer 创建控制台服务器
 func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, controller apps.Controller, storeMgr *apps.StoreManager) *Server {
+	backupManager, backupErr := backup.NewManager(cfg.BackupDataDir, cfg.BackupConcurrency, logger)
+	if backupErr != nil {
+		logger.Warn("Backup manager unavailable; backup management disabled", zap.Error(backupErr))
+	}
 	s := &Server{
 		config:               cfg,
 		logger:               logger,
@@ -97,6 +107,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		vmManager:     vms.NewManager(),
 		browser:       newBrowserStore(cfg.BrowserDataPath),
 		browserClient: newBrowserClient(cfg.BrowserInsecureTLS),
+		backup:        backupManager,
 	}
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
@@ -137,6 +148,9 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 
 // Start 启动 HTTP 服务器（阻塞，应在 goroutine 中调用）
 func (s *Server) Start(ctx context.Context) error {
+	if s.backup != nil {
+		s.backup.Start(ctx)
+	}
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	srv := &http.Server{
 		Addr:              addr,
@@ -247,6 +261,9 @@ func (s *Server) registerRoutes() {
 
 	// 浏览器应用（代理 + 书签/历史）
 	s.registerBrowserRoutes()
+
+	// 本机、外接设备与 rsync over SSH 备份任务。
+	s.registerBackupRoutes()
 
 	// 静态文件兜底
 	fileServer := http.FileServer(staticFS)
