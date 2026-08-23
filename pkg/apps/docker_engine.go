@@ -28,6 +28,18 @@ import (
 
 const defaultDockerSocket = "/var/run/docker.sock"
 
+const dockerEngineRequestTimeout = 8 * time.Second
+
+type dockerAPIError struct {
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *dockerAPIError) Error() string {
+	return fmt.Sprintf("GET %s: status %d: %s", e.Path, e.StatusCode, e.Body)
+}
+
 // dockerEngine Docker Engine 只读客户端。
 type dockerEngine struct {
 	baseURL string
@@ -53,7 +65,7 @@ func newDockerEngine(endpoint string) *dockerEngine {
 		baseURL: baseURL,
 		client: &http.Client{
 			Transport: tr,
-			Timeout:   30 * time.Second,
+			Timeout:   dockerEngineRequestTimeout,
 		},
 	}
 }
@@ -242,7 +254,7 @@ func (e *dockerEngine) getJSON(ctx context.Context, path string, q url.Values, o
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("GET %s: status %d: %s", path, resp.StatusCode, string(b))
+		return &dockerAPIError{Path: path, StatusCode: resp.StatusCode, Body: string(b)}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

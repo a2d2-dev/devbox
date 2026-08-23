@@ -11,7 +11,7 @@ import {
 
 const EMPTY_HISTORY = { cpu: [], memory: [], rx: [], tx: [], times: [] };
 
-export default function DockerOverview({ authed, onRequireAuth, onOpenCompose }) {
+export default function DockerOverview({ onRequireAuth, onOpenCompose }) {
   const [foreground, setForeground] = useState(() => document.visibilityState !== 'hidden');
   const { data: overview, loading, refresh } = useDockerOverview(foreground ? 5000 : 30000);
   const { data: statsData } = useDockerStats(foreground ? 3000 : 30000);
@@ -35,9 +35,8 @@ export default function DockerOverview({ authed, onRequireAuth, onOpenCompose })
   }), [history]);
 
   function requireAuth(action) {
-    if (authed) return true;
     onRequireAuth?.(action);
-    return false;
+    return true;
   }
 
   async function runServiceAction(action) {
@@ -111,10 +110,10 @@ export default function DockerOverview({ authed, onRequireAuth, onOpenCompose })
         </section>
 
         {unavailable && (
-          <div role="status" style={{ ...noticeStyle, marginTop: 12, background: service.state === 'not_installed' ? T.redSoft : T.amberSoft, borderColor: service.state === 'not_installed' ? '#fecaca' : '#fde68a' }}>
-            <Icon name={service.state === 'not_installed' ? 'alertTri' : 'info'} size={16}/>
+          <div role="status" style={{ ...noticeStyle, marginTop: 12, background: ['not_installed', 'permission_denied', 'unreachable'].includes(service.state) ? T.redSoft : T.amberSoft, borderColor: ['not_installed', 'permission_denied', 'unreachable'].includes(service.state) ? '#fecaca' : '#fde68a' }}>
+            <Icon name={['not_installed', 'permission_denied', 'unreachable'].includes(service.state) ? 'alertTri' : 'info'} size={16}/>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 700 }}>{service.state === 'not_installed' ? 'Docker 未安装' : 'Docker 服务已停止'}</div>
+              <div style={{ fontWeight: 700 }}>{status.label}</div>
               <div style={{ marginTop: 3, color: T.ink3, overflowWrap: 'anywhere' }}>{service.diagnostic || '实时监控与容器统计暂不可用'}</div>
             </div>
           </div>
@@ -136,11 +135,11 @@ export default function DockerOverview({ authed, onRequireAuth, onOpenCompose })
                   </button>
                 </>
               ) : (
-                <button disabled={!!busy || !service?.controlSupported || service?.state === 'not_installed' || storage?.valid === false} style={btnPrimary} onClick={() => runServiceAction('start')}>
+                <button disabled={!!busy || !service?.controlSupported || service?.state === 'not_installed' || storage?.valid === false || !storage?.configured} style={btnPrimary} onClick={() => runServiceAction('start')}>
                   <Icon name="play" size={13}/>{busy === 'start' ? '正在启动' : '启动'}
                 </button>
               )}
-              {!service?.controlSupported && <span style={{ fontSize: 11.5, color: T.ink3 }}>当前环境不支持服务控制</span>}
+              {!service?.controlSupported && <span style={{ fontSize: 11.5, color: T.ink3 }}>{service?.diagnostic || '当前环境不支持服务控制'}</span>}
             </div>
             <div style={{ height: 1, background: T.borderSoft, margin: '16px 0' }}/>
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: service?.autostartSupported ? 'pointer' : 'not-allowed' }}>
@@ -154,8 +153,8 @@ export default function DockerOverview({ authed, onRequireAuth, onOpenCompose })
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <SectionTitle icon="hardDrive" title="数据存储"/>
               <div style={{ flex: 1 }}/>
-              <button style={btnSecondary} onClick={() => requireAuth('配置 Docker 存储位置') && setStorageOpen(true)}>
-                <Icon name="gear" size={13}/><span>{storage?.valid ? '迁移' : '设置'}</span>
+              <button disabled={!storage?.migrationSupported} style={btnSecondary} onClick={() => requireAuth('配置 Docker 存储位置') && setStorageOpen(true)}>
+                <Icon name="gear" size={13}/><span>{storage?.configured && storage?.valid ? '迁移' : '设置'}</span>
               </button>
             </div>
             <div className="mono" style={{ marginTop: 14, fontSize: 12.5, color: storage?.valid ? T.ink : T.red, overflowWrap: 'anywhere' }}>
@@ -174,6 +173,14 @@ export default function DockerOverview({ authed, onRequireAuth, onOpenCompose })
               <div style={{ ...noticeStyle, marginTop: 12, background: T.redSoft, borderColor: '#fecaca', color: '#991b1b' }}>
                 <Icon name="alertTri" size={14}/><span>{storage?.error || '存储位置异常，Docker 启动已被阻止'}</span>
               </div>
+            )}
+            {storage?.valid && !storage?.configured && (
+              <div style={{ ...noticeStyle, marginTop: 12, background: T.amberSoft, borderColor: '#fde68a', color: '#92400e' }}>
+                <Icon name="info" size={14}/><span>尚未确认 Docker 存储位置，启动前请先完成设置</span>
+              </div>
+            )}
+            {!storage?.migrationSupported && storage?.migrationDiagnostic && (
+              <div style={{ marginTop: 10, fontSize: 11.5, color: T.ink3, overflowWrap: 'anywhere' }}>{storage.migrationDiagnostic}</div>
             )}
           </section>
         </div>
@@ -364,6 +371,9 @@ function serviceStatus(state, loading) {
   if (loading && !state) return { label: '检测中', tone: 'gray', color: T.ink3 };
   if (state === 'running') return { label: '运行中', tone: 'green', color: T.green };
   if (state === 'stopped') return { label: '已停止', tone: 'amber', color: T.amber };
+  if (state === 'permission_denied') return { label: '权限不足', tone: 'red', color: T.red };
+  if (state === 'timeout') return { label: '连接超时', tone: 'amber', color: T.amber };
+  if (state === 'unreachable') return { label: '无法连接', tone: 'red', color: T.red };
   return { label: '未安装', tone: 'red', color: T.red };
 }
 

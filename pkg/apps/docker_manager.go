@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,12 +18,19 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
-	defaultDockerDataRoot = "/var/lib/docker"
-	defaultDaemonJSON     = "/etc/docker/daemon.json"
+	defaultDockerDataRoot          = "/var/lib/docker"
+	defaultDaemonJSON              = "/etc/docker/daemon.json"
+	remoteDockerReadOnlyDiagnostic = "远程 Docker daemon 仅支持只读概览；服务控制和存储迁移必须连接本机 Unix socket"
 )
+
+var defaultDockerMigrationAllowedRoots = []string{"/data", "/var/lib"}
+
+var forbiddenDockerMigrationRoots = []string{"/run", "/etc", "/proc", "/sys", "/dev"}
 
 // DockerController 是 Controller 的可选 Docker 主机能力。它和 Compose 管理共用
 // 同一个 dockerEngine、领域错误和鉴权边界，但不扩大 Issue #2 的稳定 Controller 接口。
@@ -37,9 +46,12 @@ type DockerController interface {
 type DockerServiceState string
 
 const (
-	DockerServiceRunning      DockerServiceState = "running"
-	DockerServiceStopped      DockerServiceState = "stopped"
-	DockerServiceNotInstalled DockerServiceState = "not_installed"
+	DockerServiceRunning          DockerServiceState = "running"
+	DockerServiceStopped          DockerServiceState = "stopped"
+	DockerServiceNotInstalled     DockerServiceState = "not_installed"
+	DockerServicePermissionDenied DockerServiceState = "permission_denied"
+	DockerServiceTimeout          DockerServiceState = "timeout"
+	DockerServiceUnreachable      DockerServiceState = "unreachable"
 )
 
 type DockerServiceSummary struct {
@@ -63,12 +75,14 @@ type DockerDiskSummary struct {
 }
 
 type DockerStorageSummary struct {
-	Path       string            `json:"path"`
-	Source     string            `json:"source"`
-	Configured bool              `json:"configured"`
-	Valid      bool              `json:"valid"`
-	Error      string            `json:"error,omitempty"`
-	Disk       DockerDiskSummary `json:"disk"`
+	Path                string            `json:"path"`
+	Source              string            `json:"source"`
+	Configured          bool              `json:"configured"`
+	Valid               bool              `json:"valid"`
+	MigrationSupported  bool              `json:"migrationSupported"`
+	MigrationDiagnostic string            `json:"migrationDiagnostic,omitempty"`
+	Error               string            `json:"error,omitempty"`
+	Disk                DockerDiskSummary `json:"disk"`
 }
 
 type DockerOverview struct {
@@ -139,6 +153,7 @@ type DockerMigrationResult struct {
 type dockerCommandRunner interface {
 	LookPath(string) (string, error)
 	Run(context.Context, string, ...string) (string, error)
+	RunWithFiles(context.Context, string, []*os.File, ...string) (string, error)
 }
 
 type realDockerCommandRunner struct{}
@@ -146,6 +161,13 @@ type realDockerCommandRunner struct{}
 func (realDockerCommandRunner) LookPath(name string) (string, error) { return exec.LookPath(name) }
 func (realDockerCommandRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
 	b, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	return strings.TrimSpace(string(b)), err
+}
+
+func (realDockerCommandRunner) RunWithFiles(ctx context.Context, name string, files []*os.File, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.ExtraFiles = files
+	b, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(b)), err
 }
 
@@ -157,6 +179,21 @@ type dockerServiceHost interface {
 }
 
 type systemDockerServiceHost struct{ runner dockerCommandRunner }
+
+type readOnlyRemoteDockerHost struct{}
+
+func (readOnlyRemoteDockerHost) Status(context.Context) DockerServiceSummary {
+	return DockerServiceSummary{State: DockerServiceUnreachable, Diagnostic: remoteDockerReadOnlyDiagnostic}
+}
+func (readOnlyRemoteDockerHost) Control(context.Context, string) error {
+	return CapabilityDetailErr("remote_daemon_read_only", "远程 Docker daemon 不支持本机服务控制", remoteDockerReadOnlyDiagnostic, nil)
+}
+func (readOnlyRemoteDockerHost) SetAutostart(context.Context, bool) error {
+	return CapabilityDetailErr("remote_daemon_read_only", "远程 Docker daemon 不支持本机开机自启设置", remoteDockerReadOnlyDiagnostic, nil)
+}
+func (readOnlyRemoteDockerHost) Diagnostic(context.Context) string {
+	return remoteDockerReadOnlyDiagnostic
+}
 
 func (h *systemDockerServiceHost) Status(ctx context.Context) DockerServiceSummary {
 	if _, err := h.runner.LookPath("systemctl"); err == nil {
@@ -260,6 +297,7 @@ type dockerStorage interface {
 	Disk(string) (DockerDiskSummary, error)
 	DirSize(string) (uint64, error)
 	EnsureTargetReady(string, bool) error
+	OpenTarget(string) (*os.File, error)
 }
 
 type osDockerStorage struct{ daemonPath string }
@@ -351,45 +389,108 @@ func (s *osDockerStorage) DirSize(root string) (uint64, error) {
 }
 
 func (s *osDockerStorage) EnsureTargetReady(target string, create bool) error {
-	entries, err := os.ReadDir(target)
+	info, err := os.Lstat(target)
 	if err == nil {
-		if len(entries) != 0 {
-			return ValidationErr("目标目录必须为空，避免覆盖已有数据")
+		if info.Mode()&os.ModeSymlink != 0 {
+			return ValidationErr("目标目录不能是符号链接")
 		}
-		return nil
+		dir, openErr := s.OpenTarget(target)
+		if openErr != nil {
+			return openErr
+		}
+		defer dir.Close()
+		return ensureOpenedTargetEmpty(dir)
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if create {
-		return os.MkdirAll(target, 0o710)
+		if err := os.MkdirAll(target, 0o710); err != nil {
+			return err
+		}
+		dir, err := s.OpenTarget(target)
+		if err != nil {
+			return err
+		}
+		return dir.Close()
+	}
+	return nil
+}
+
+func (s *osDockerStorage) OpenTarget(target string) (*os.File, error) {
+	fd, err := unix.Open(target, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), target), nil
+}
+
+func ensureOpenedTargetEmpty(dir *os.File) error {
+	if _, err := dir.Readdirnames(1); err == nil {
+		return ValidationErr("目标目录必须为空，避免覆盖已有数据")
+	} else if !errors.Is(err, io.EOF) {
+		return err
 	}
 	return nil
 }
 
 // DockerManager 聚合 Docker daemon 读路径与主机服务控制。
 type DockerManager struct {
-	engine  *dockerEngine
-	host    dockerServiceHost
-	storage dockerStorage
-	runner  dockerCommandRunner
-	now     func() time.Time
-	mu      sync.Mutex
+	engine          *dockerEngine
+	host            dockerServiceHost
+	storage         dockerStorage
+	runner          dockerCommandRunner
+	now             func() time.Time
+	overviewTimeout time.Duration
+	statsTimeout    time.Duration
+	localHost       bool
+	allowedRoots    []string
+	maintenance     sync.RWMutex
 }
 
-func NewDockerManager(endpoint string) *DockerManager {
+func NewDockerManager(endpoint string, allowedRoots ...string) *DockerManager {
 	runner := realDockerCommandRunner{}
-	return &DockerManager{
+	m := &DockerManager{
 		engine: newDockerEngine(endpoint), host: &systemDockerServiceHost{runner: runner},
 		storage: &osDockerStorage{daemonPath: defaultDaemonJSON}, runner: runner, now: time.Now,
+		overviewTimeout: 8 * time.Second, statsTimeout: 5 * time.Second, localHost: true,
+		allowedRoots: dockerMigrationAllowedRoots(allowedRoots),
 	}
+	if !isLocalDockerEndpoint(endpoint) {
+		m.host = readOnlyRemoteDockerHost{}
+		m.localHost = false
+	}
+	return m
 }
 
 func newDockerManagerWithDeps(engine *dockerEngine, host dockerServiceHost, storage dockerStorage, runner dockerCommandRunner) *DockerManager {
-	return &DockerManager{engine: engine, host: host, storage: storage, runner: runner, now: time.Now}
+	return &DockerManager{
+		engine: engine, host: host, storage: storage, runner: runner, now: time.Now,
+		overviewTimeout: 8 * time.Second, statsTimeout: 5 * time.Second, localHost: true,
+		allowedRoots: dockerMigrationAllowedRoots(nil),
+	}
+}
+
+func dockerMigrationAllowedRoots(configured []string) []string {
+	if len(configured) == 0 {
+		return append([]string(nil), defaultDockerMigrationAllowedRoots...)
+	}
+	return append([]string(nil), configured...)
+}
+
+func isLocalDockerEndpoint(endpoint string) bool {
+	if endpoint == "" {
+		return true
+	}
+	if strings.HasPrefix(endpoint, "unix://") {
+		return filepath.IsAbs(strings.TrimPrefix(endpoint, "unix://"))
+	}
+	return filepath.IsAbs(endpoint)
 }
 
 func (m *DockerManager) Overview(ctx context.Context) (DockerOverview, error) {
+	ctx, cancel := context.WithTimeout(ctx, m.overviewTimeout)
+	defer cancel()
 	now := m.now()
 	o := DockerOverview{Service: m.host.Status(ctx), CheckedAt: now}
 	info, infoErr := m.engine.info(ctx)
@@ -421,25 +522,36 @@ func (m *DockerManager) Overview(ctx context.Context) (DockerOverview, error) {
 			}
 		}
 	}
-	root, source, configErr := m.configuredDataRoot()
-	if infoErr == nil && strings.TrimSpace(info.DockerRootDir) != "" {
-		root, source = filepath.Clean(info.DockerRootDir), "daemon"
-	}
-	o.Storage = DockerStorageSummary{Path: root, Source: source, Configured: root != ""}
-	if configErr != nil {
-		o.Storage.Error = configErr.Error()
-	} else if root == "" || !filepath.IsAbs(root) {
-		o.Storage.Error = "Docker data-root 必须是绝对路径"
-	} else if disk, err := m.storage.Disk(root); err != nil {
-		o.Storage.Error = "无法读取存储容量: " + err.Error()
+	if !m.localHost {
+		o.Storage = DockerStorageSummary{
+			Source: "remote_daemon", MigrationSupported: false,
+			MigrationDiagnostic: remoteDockerReadOnlyDiagnostic,
+		}
+		if infoErr == nil && strings.TrimSpace(info.DockerRootDir) != "" {
+			o.Storage.Path = filepath.Clean(info.DockerRootDir)
+			o.Storage.Configured = true
+			o.Storage.Valid = filepath.IsAbs(o.Storage.Path)
+		}
 	} else {
-		o.Storage.Valid = true
-		o.Storage.Disk = disk
+		root, source, configErr := m.configuredDataRoot()
+		configured := source == "config"
+		if infoErr == nil && strings.TrimSpace(info.DockerRootDir) != "" {
+			root, source = filepath.Clean(info.DockerRootDir), "daemon"
+		}
+		o.Storage = DockerStorageSummary{Path: root, Source: source, Configured: configured, MigrationSupported: true}
+		if configErr != nil {
+			o.Storage.Error = configErr.Error()
+		} else if root == "" || !filepath.IsAbs(root) {
+			o.Storage.Error = "Docker data-root 必须是绝对路径"
+		} else if disk, err := m.storage.Disk(root); err != nil {
+			o.Storage.Error = "无法读取存储容量: " + err.Error()
+		} else {
+			o.Storage.Valid = true
+			o.Storage.Disk = disk
+		}
 	}
 	if infoErr != nil {
-		if o.Service.State == DockerServiceRunning {
-			o.Service.State = DockerServiceStopped
-		}
+		o.Service.State = classifyDockerServiceError(infoErr, o.Service.State)
 		detail := infoErr.Error()
 		if hostDetail := o.Service.Diagnostic; hostDetail != "" {
 			detail += "; " + hostDetail
@@ -455,19 +567,19 @@ func (m *DockerManager) Overview(ctx context.Context) (DockerOverview, error) {
 }
 
 func (m *DockerManager) Stats(ctx context.Context) (DockerStats, error) {
+	sampleCtx, cancel := context.WithTimeout(ctx, m.statsTimeout)
+	defer cancel()
 	out := DockerStats{SampledAt: m.now()}
-	containers, err := m.engine.listContainersAll(ctx, false, nil)
+	containers, err := m.engine.listContainersAll(sampleCtx, false, nil)
 	if err != nil {
 		out.Diagnostic = "Docker daemon 不可用: " + err.Error()
 		return out, nil
 	}
 	out.Available = true
 	out.Containers = len(containers)
-	if info, infoErr := m.engine.info(ctx); infoErr == nil && info.MemTotal > 0 {
+	if info, infoErr := m.engine.info(sampleCtx); infoErr == nil && info.MemTotal > 0 {
 		out.MemoryLimitBytes = uint64(info.MemTotal)
 	}
-	sampleCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	type sample struct {
 		stats engineContainerStats
 		err   error
@@ -528,13 +640,40 @@ func (m *DockerManager) Stats(ctx context.Context) (DockerStats, error) {
 	return out, nil
 }
 
+func classifyDockerServiceError(err error, hostState DockerServiceState) DockerServiceState {
+	if hostState == DockerServiceStopped {
+		return DockerServiceStopped
+	}
+	var apiErr *dockerAPIError
+	if errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
+		return DockerServicePermissionDenied
+	}
+	if errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EACCES) {
+		return DockerServicePermissionDenied
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return DockerServiceTimeout
+	}
+	return DockerServiceUnreachable
+}
+
 func (m *DockerManager) ServiceAction(ctx context.Context, req DockerServiceActionRequest) (DockerOverview, error) {
 	action := strings.TrimSpace(req.Action)
 	if action != "start" && action != "stop" && action != "restart" {
 		return DockerOverview{}, ValidationErr("Docker 服务操作仅支持 start、stop、restart")
 	}
+	if !m.localHost {
+		return DockerOverview{}, CapabilityDetailErr("remote_daemon_read_only", "远程 Docker daemon 不支持本机服务控制", remoteDockerReadOnlyDiagnostic, nil)
+	}
+	if !m.maintenance.TryRLock() {
+		return DockerOverview{}, CapabilityDetailErr("migration_in_progress", "Docker 数据迁移进行中，暂不能启停服务", "请等待迁移完成后重试", nil)
+	}
+	defer m.maintenance.RUnlock()
 	if action == "start" || action == "restart" {
 		o, _ := m.Overview(ctx)
+		if action == "start" && !o.Storage.Configured {
+			return DockerOverview{}, CapabilityDetailErr("storage_unconfigured", "Docker 存储位置尚未确认，请先打开存储设置", "请在 Docker 数据存储区域选择并确认 data-root", nil)
+		}
 		if !o.Storage.Valid {
 			return DockerOverview{}, CapabilityDetailErr("storage_invalid", "Docker 存储位置未配置或异常，请先完成存储设置", o.Storage.Error, nil)
 		}
@@ -569,6 +708,9 @@ func (m *DockerManager) waitForDaemonState(ctx context.Context, running bool, ti
 }
 
 func (m *DockerManager) SetAutostart(ctx context.Context, req DockerAutostartRequest) (DockerOverview, error) {
+	if !m.localHost {
+		return DockerOverview{}, CapabilityDetailErr("remote_daemon_read_only", "远程 Docker daemon 不支持本机开机自启设置", remoteDockerReadOnlyDiagnostic, nil)
+	}
 	if err := m.host.SetAutostart(ctx, req.Enabled); err != nil {
 		return DockerOverview{}, m.withHostDiagnostic(ctx, err)
 	}
@@ -608,9 +750,12 @@ func (m *DockerManager) configuredDataRoot() (string, string, error) {
 }
 
 func (m *DockerManager) MigrationPlan(ctx context.Context, req DockerMigrationRequest) (DockerMigrationPlan, error) {
-	target := filepath.Clean(strings.TrimSpace(req.TargetPath))
-	if target == "." || !filepath.IsAbs(target) {
-		return DockerMigrationPlan{}, ValidationErr("Docker data-root 目标必须是绝对路径")
+	if !m.localHost {
+		return DockerMigrationPlan{}, CapabilityDetailErr("remote_daemon_read_only", "远程 Docker daemon 不支持本机存储迁移", remoteDockerReadOnlyDiagnostic, nil)
+	}
+	target, err := m.resolveMigrationTarget(req.TargetPath)
+	if err != nil {
+		return DockerMigrationPlan{}, err
 	}
 	o, _ := m.Overview(ctx)
 	if !o.Storage.Valid {
@@ -658,6 +803,67 @@ func (m *DockerManager) MigrationPlan(ctx context.Context, req DockerMigrationRe
 	return plan, nil
 }
 
+func (m *DockerManager) resolveMigrationTarget(input string) (string, error) {
+	target := filepath.Clean(strings.TrimSpace(input))
+	if target == "." || !filepath.IsAbs(target) {
+		return "", ValidationErr("Docker data-root 目标必须是绝对路径")
+	}
+	if pathWithinAny(target, forbiddenDockerMigrationRoots) {
+		return "", ValidationErr("Docker data-root 目标不能位于系统敏感目录")
+	}
+	resolved, err := evalSymlinksAllowMissing(target)
+	if err != nil {
+		return "", ValidationErr("无法解析 Docker data-root 目标: " + err.Error())
+	}
+	if pathWithinAny(resolved, forbiddenDockerMigrationRoots) {
+		return "", ValidationErr("Docker data-root 目标不能位于系统敏感目录")
+	}
+	for _, root := range m.allowedRoots {
+		resolvedRoot, rootErr := evalSymlinksAllowMissing(filepath.Clean(root))
+		if rootErr == nil && pathWithin(resolved, resolvedRoot) {
+			return resolved, nil
+		}
+	}
+	return "", ValidationErr("Docker data-root 目标必须位于允许的存储根目录内")
+}
+
+func evalSymlinksAllowMissing(path string) (string, error) {
+	current := filepath.Clean(path)
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func pathWithinAny(path string, roots []string) bool {
+	for _, root := range roots {
+		if pathWithin(path, root) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathWithin(path, root string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
 func daemonJSONWithDataRoot(current []byte, target string) ([]byte, error) {
 	config := map[string]json.RawMessage{}
 	if len(strings.TrimSpace(string(current))) > 0 {
@@ -684,8 +890,8 @@ func (m *DockerManager) ExecuteMigration(ctx context.Context, req DockerMigratio
 	if !req.Confirm || strings.TrimSpace(req.PlanID) == "" {
 		return DockerMigrationResult{}, ValidationErr("执行迁移需要二次确认和有效的 planId")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.maintenance.Lock()
+	defer m.maintenance.Unlock()
 	plan, err := m.MigrationPlan(ctx, DockerMigrationRequest{TargetPath: req.TargetPath})
 	if err != nil {
 		return DockerMigrationResult{}, err
@@ -699,6 +905,14 @@ func (m *DockerManager) ExecuteMigration(ctx context.Context, req DockerMigratio
 	if err := m.storage.EnsureTargetReady(plan.TargetPath, true); err != nil {
 		return DockerMigrationResult{}, err
 	}
+	targetDir, err := m.storage.OpenTarget(plan.TargetPath)
+	if err != nil {
+		return DockerMigrationResult{}, ValidationErr("无法安全打开迁移目标目录: " + err.Error())
+	}
+	defer targetDir.Close()
+	if err := ensureOpenedTargetEmpty(targetDir); err != nil {
+		return DockerMigrationResult{}, err
+	}
 	if err := m.host.Control(ctx, "stop"); err != nil {
 		return DockerMigrationResult{}, m.withHostDiagnostic(ctx, err)
 	}
@@ -707,7 +921,7 @@ func (m *DockerManager) ExecuteMigration(ctx context.Context, req DockerMigratio
 		restartOld()
 		return DockerMigrationResult{}, CapabilityDetailErr("migration_stop_failed", "Docker 未完全停止，迁移未开始", m.host.Diagnostic(ctx), nil)
 	}
-	copyOut, err := m.runner.Run(ctx, "rsync", "-aHAX", "--numeric-ids", plan.SourcePath+string(os.PathSeparator), plan.TargetPath+string(os.PathSeparator))
+	copyOut, err := m.runner.RunWithFiles(ctx, "rsync", []*os.File{targetDir}, "-aHAX", "--numeric-ids", plan.SourcePath+string(os.PathSeparator), "/proc/self/fd/3/")
 	if err != nil {
 		restartOld()
 		return DockerMigrationResult{}, CapabilityDetailErr("migration_copy_failed", "Docker 数据复制失败，原配置未修改", limitDiagnostic(copyOut), err)

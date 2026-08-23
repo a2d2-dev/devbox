@@ -427,11 +427,9 @@ export default function App() {
     actions: {
       'toggle-shortcut-help': () => setShortcutHelpOpen(open => !open),
       'show-desktop': showDesktop,
-      'minimize-window': () => { if (activeId) minimizeApp(activeId); },
-      'toggle-maximized': () => {
-        if (activeId) setMaxByApp(current => ({ ...current, [activeId]: !(current[activeId] ?? true) }));
-      },
-      'close-window': () => { if (activeId) closeApp(activeId); },
+      'minimize-window': minimizeWindow,
+      'toggle-maximized': () => setMaximized(current => !current),
+      'close-window': closeWindow,
       'focus-dock-app': (index) => {
         const app = shortcutDockApps[index];
         if (app) focusApp(app.id);
@@ -586,7 +584,7 @@ export default function App() {
                 {appId === 'store'     && <AppStore onOpenApp={launchApp} authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'compose-manager' && <ComposeManager authed={authed} onRequireAuth={requireAuth}
                   onOpenStore={() => launchApp({ id: 'store' })} onOpenApp={launchApp}/>}
-                {appId === 'docker' && <DockerOverview authed={authed} onRequireAuth={requireAuth}
+                {appId === 'docker' && <DockerOverview onRequireAuth={requireAuth}
                   onOpenCompose={() => launchApp({ id: 'compose-manager' })}/>}
                 {appId === 'alerts'    && <AlertCenter authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'audit'     && <AuditLog/>}
