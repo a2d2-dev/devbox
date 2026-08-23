@@ -3,7 +3,7 @@ import { T } from './tokens'
 import { Icon } from './icons'
 
 // ─── Watermark overlay (canvas-based, updates every minute) ────
-function Watermark({ text }) {
+function Watermark({ text, dark = false }) {
   const ref = useRef(null);
   const draw = useCallback(() => {
     const el = ref.current;
@@ -18,11 +18,11 @@ function Watermark({ text }) {
     ctx.scale(dpr, dpr);
     ctx.rotate(-22 * Math.PI / 180);
     ctx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    ctx.fillStyle = dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
     ctx.fillText(label, 20, 120);
     el.style.backgroundImage = `url(${c.toDataURL()})`;
     el.style.backgroundSize = `${280}px ${160}px`;
-  }, [text]);
+  }, [text, dark]);
 
   useEffect(() => {
     draw();
@@ -59,11 +59,11 @@ import { SYSTEM_APPS } from './data/systemApps'
 import { AnimatePresence } from './motion'
 
 const TWEAK_DEFAULTS = {
-  "preset": "platform-dark",
-  "wallpaper": "grid",
+  "preset": "fnos",
+  "wallpaper": "fnos",
   "iconStyle": "gradient",
   "topbar": "dark",
-  "accent": "#2563eb",
+  "accent": "#0066FF",
   "layout": "workstation",
   "iconSize": "md",
   // deviceLabel 已删 — 从 /api/v1/device 拿真实 deviceName (K8s node name，如 edge-004)
@@ -74,6 +74,11 @@ const TWEAK_DEFAULTS = {
 
 // Style presets — each one sets multiple sub-tweaks at once
 const PRESETS = {
+  'fnos': {
+    label: '飞牛 fnOS',
+    desc: '深空壁纸 · 白字图标 · fnOS 同款',
+    set: { topbar: 'dark', iconStyle: 'gradient', accent: '#0066FF', wallpaper: 'fnos' },
+  },
   'platform-dark': {
     label: '云端同款',
     desc: '深色顶栏 · 与管理平台一致',
@@ -323,8 +328,9 @@ export default function App() {
   const deployedApps = liveDeployedApps.filter(a => !uninstalled.has(a.id));
   const alertCount = Array.isArray(alerts) ? alerts.filter(a => a.state === 'active').length : 0;
 
-  // Custom wallpaper
-  const bgClass = t.wallpaper === 'grid' ? 'edge-bg' : '';
+  // Custom wallpaper — 'fnos' 用官方壁纸类（深色桌面），其余保持浅色系
+  const isFnos = t.wallpaper === 'fnos';
+  const bgClass = isFnos ? 'edge-bg-fnos' : t.wallpaper === 'grid' ? 'edge-bg' : '';
   const bgStyle = t.wallpaper === 'topo'
     ? { background: '#eef3fa', backgroundImage: 'radial-gradient(circle at 20% 20%, rgba(59,130,246,0.15), transparent 40%), radial-gradient(circle at 80% 70%, rgba(20,184,166,0.12), transparent 45%), radial-gradient(circle at 50% 100%, rgba(99,102,241,0.10), transparent 50%)' }
     : t.wallpaper === 'plain'
@@ -352,7 +358,7 @@ export default function App() {
       position: 'relative', display: 'flex', flexDirection: 'column',
     }} className={bgClass}>
       <div style={{ position: 'absolute', inset: 0, ...bgStyle, zIndex: 0 }} className={bgClass}/>
-      <Watermark text={device.deviceName || device.hostname || ''}/>
+      <Watermark text={device.deviceName || device.hostname || ''} dark={isFnos}/>
 
       {/* Status bar */}
       <div style={{ position: 'relative', zIndex: 30 }}>
@@ -395,6 +401,7 @@ export default function App() {
             accent={theme.accent}
             layout={t.layout}
             iconSize={t.iconSize}
+            dark={isFnos}
           />
         </div>
 
@@ -454,6 +461,7 @@ export default function App() {
         {/* Dock — visible on desktop and when window is in framed (non-maximized) mode */}
         <Dock
           apps={dockApps}
+          dark={isFnos}
           registerDockIconRect={registerDockIconRect}
           onShowDesktop={showDesktop}
           onFocusApp={focusApp}
@@ -523,9 +531,9 @@ export default function App() {
                      onChange={(v) => setT('topbar', v)}/>
         <TweakRadio  label="图标"   value={t.iconStyle} options={[{ value: 'gradient', label: '渐变' }, { value: 'flat', label: '扁平' }]}
                      onChange={(v) => setT('iconStyle', v)}/>
-        <TweakRadio  label="背景"   value={t.wallpaper} options={[{ value: 'grid', label: '网格' }, { value: 'topo', label: '光晕' }, { value: 'plain', label: '纯色' }]}
+        <TweakRadio  label="背景"   value={t.wallpaper} options={[{ value: 'fnos', label: '飞牛' }, { value: 'grid', label: '网格' }, { value: 'topo', label: '光晕' }, { value: 'plain', label: '纯色' }]}
                      onChange={(v) => setT('wallpaper', v)}/>
-        <TweakColor  label="主色"   value={t.accent}    options={['#2563eb', '#06b6d4', '#10b981', '#8b5cf6', '#0f172a']}
+        <TweakColor  label="主色"   value={t.accent}    options={['#0066FF', '#2563eb', '#06b6d4', '#10b981', '#8b5cf6', '#0f172a']}
                      onChange={(v) => setT('accent', v)}/>
         <TweakToggle label="显示最近使用" value={t.showRecent} onChange={(v) => setT('showRecent', v)}/>
 

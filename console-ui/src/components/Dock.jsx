@@ -29,7 +29,7 @@ function DockTooltip({ label }) {
 }
 
 export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, onCloseApp, anyVisible, hidden = false,
-                authed, authBadge, onToggleAuth, alertBadge, loginUser, onLogout }) {
+                authed, authBadge, onToggleAuth, alertBadge, loginUser, onLogout, dark = false }) {
   const [hoverId, setHoverId] = useState(null);
   const pref = useMotionPref();
   const dockMotion = pref.reduced ? {} : {
@@ -58,12 +58,14 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
       visibility: hidden ? 'hidden' : 'visible',
       pointerEvents: hidden ? 'none' : 'auto',
     }}>
-      <div className="edge-material-chrome"
+      <div className={dark ? 'edge-material-dark' : 'edge-material-chrome'}
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '8px 12px', borderRadius: 20,
-          border: '1px solid rgba(255,255,255,0.9)',
-          boxShadow: '0 12px 32px -8px rgba(15,23,42,0.18), 0 0 0 1px rgba(15,23,42,0.04)',
+          border: dark ? '1px solid rgba(255,255,255,0.14)' : '1px solid rgba(255,255,255,0.9)',
+          boxShadow: dark
+            ? '0 12px 32px -8px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,0,0,0.2)'
+            : '0 12px 32px -8px rgba(15,23,42,0.18), 0 0 0 1px rgba(15,23,42,0.04)',
           transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
         }}>
         {/* Show-desktop button */}
@@ -75,17 +77,17 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
              {...dockMotion}
              style={{
                position: 'relative', width: 44, height: 44, borderRadius: 12,
-               background: desktopActive ? '#1f2937' : 'rgba(15,23,42,0.04)',
-               color: desktopActive ? 'white' : T.ink2,
+               background: desktopActive ? (dark ? 'rgba(255,255,255,0.22)' : '#1f2937') : (dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.04)'),
+               color: desktopActive ? 'white' : (dark ? 'rgba(255,255,255,0.85)' : T.ink2),
                display: 'flex', alignItems: 'center', justifyContent: 'center',
                cursor: 'pointer',
-               boxShadow: desktopActive ? '0 4px 10px -2px rgba(31,41,55,0.45)' : 'none',
+               boxShadow: desktopActive && !dark ? '0 4px 10px -2px rgba(31,41,55,0.45)' : 'none',
              }}>
           <Icon name="home" size={20} stroke={1.7}/>
           {desktopActive && (
             <div style={{
               position: 'absolute', bottom: -6, left: '50%', transform: 'translateX(-50%)',
-              width: 5, height: 5, borderRadius: '50%', background: T.ink2,
+              width: 5, height: 5, borderRadius: '50%', background: dark ? 'rgba(255,255,255,0.9)' : T.ink2,
             }}/>
           )}
           <AnimatePresence>
@@ -96,14 +98,14 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
         </motion.div>
 
         {/* Divider between system controls and running apps */}
-        <div style={{ width: 1, height: 28, background: 'rgba(15,23,42,0.08)', margin: '0 4px' }}/>
+        <div style={{ width: 1, height: 28, background: dark ? 'rgba(255,255,255,0.14)' : 'rgba(15,23,42,0.08)', margin: '0 4px' }}/>
 
         {/* Running apps — dynamic */}
         {apps.length === 0 ? (
           <div style={{
             height: 44, padding: '0 14px',
             display: 'flex', alignItems: 'center', gap: 8,
-            color: T.ink3, fontSize: 12,
+            color: dark ? 'rgba(255,255,255,0.6)' : T.ink3, fontSize: 12,
           }}>
             <Icon name="apps" size={14} stroke={1.7}/>
             <span>从桌面单击应用以启动</span>
@@ -128,8 +130,8 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
                    {...dockMotion}
                    style={{
                      position: 'relative', width: 44, height: 44, borderRadius: 12,
-                     background: app.isActive ? app.bg : 'rgba(15,23,42,0.04)',
-                     color: app.isActive ? 'white' : T.ink2,
+                     background: app.isActive ? app.bg : (dark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.04)'),
+                     color: app.isActive ? 'white' : (dark ? 'rgba(255,255,255,0.85)' : T.ink2),
                      display: 'flex', alignItems: 'center', justifyContent: 'center',
                      cursor: 'pointer',
                      boxShadow: app.isActive
@@ -202,7 +204,7 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
                   width: app.isActive ? 5 : 4,
                   height: app.isActive ? 5 : 4,
                   borderRadius: '50%',
-                  background: app.isActive ? T.ink2 : T.ink3,
+                  background: dark ? 'rgba(255,255,255,0.85)' : (app.isActive ? T.ink2 : T.ink3),
                   opacity: app.isMinimized ? 0.6 : 1,
                 }}/>
 

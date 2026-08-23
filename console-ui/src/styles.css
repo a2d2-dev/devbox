@@ -63,6 +63,24 @@ button, input { font-family: inherit; }
   -webkit-backdrop-filter: saturate(180%) blur(18px);
 }
 
+/* fnOS wallpaper — 深空蓝灰渐变打底 + 官方壁纸图 (public/wallpapers/fnos.webp) */
+.edge-bg-fnos {
+  background-color: #3f4856;
+  background-image:
+    url('/wallpapers/fnos.webp'),
+    linear-gradient(110deg, #4a5568 0.26%, #3a424f 97.78%);
+  background-size: cover, auto;
+  background-position: center center, 0 0;
+  background-repeat: no-repeat;
+}
+
+/* fnOS 风格深色玻璃（Dock / 桌面挂件用） */
+.edge-material-dark {
+  background: rgba(28, 33, 42, 0.62);
+  backdrop-filter: saturate(160%) blur(18px);
+  -webkit-backdrop-filter: saturate(160%) blur(18px);
+}
+
 .edge-press {
   transition: transform 0.1s cubic-bezier(0.2, 0.7, 0.2, 1);
 }

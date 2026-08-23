@@ -18,7 +18,6 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/files"
 	"github.com/a2d2-dev/devbox/pkg/gpuhistory"
 	"github.com/a2d2-dev/devbox/pkg/hardware"
-	"github.com/a2d2-dev/devbox/pkg/links"
 	"github.com/a2d2-dev/devbox/pkg/models"
 	"github.com/a2d2-dev/devbox/pkg/supervisor"
 	"github.com/a2d2-dev/devbox/pkg/vms"
@@ -55,9 +54,12 @@ type Server struct {
 	auth          *auth.Auth
 	supervisorMgr *supervisor.Manager
 	hardware      *hardware.Collector
-	links         *links.Registry
 	gpuHistory    *gpuhistory.Collector
 	vmManager     *vms.Manager
+
+	// modules 是已 module 化的功能单元。装配它们只需在 NewServer 里追加一行,
+	// 无需再往 Server 上加字段或写 registerXxxRoutes。
+	modules []Module
 }
 
 // NewServer 创建控制台服务器
@@ -78,10 +80,21 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, appMgr 
 		}),
 		supervisorMgr: supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
 		hardware:      hardware.New(60 * time.Second),
-		links:         links.New(cfg.LinksPath),
 		gpuHistory:    gpuhistory.New(10*time.Second, 6*time.Hour),
 		vmManager:     vms.NewManager(),
 	}
+
+	// 装配 module 化的功能单元。共享依赖经 Deps 注入;新增 module 在此追加一行即可。
+	deps := Deps{
+		Logger:     logger,
+		Config:     cfg,
+		Collector:  col,
+		Supervisor: s.supervisorMgr,
+	}
+	s.modules = []Module{
+		newLinksModule(deps),
+	}
+
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
 	if s.auth.Enabled() {
@@ -121,6 +134,13 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 
 // Start 启动 HTTP 服务器（阻塞，应在 goroutine 中调用）
 func (s *Server) Start(ctx context.Context) error {
+	// 启动 module 后台工作;失败即中止启动。
+	for _, m := range s.modules {
+		if err := m.Start(ctx); err != nil {
+			return fmt.Errorf("start module %s: %w", m.Name(), err)
+		}
+	}
+
 	addr := fmt.Sprintf(":%d", s.config.Port)
 	srv := &http.Server{
 		Addr:              addr,
@@ -132,6 +152,13 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		s.logger.Info("Shutting down console HTTP server...")
+		// 对称回收 module 建立的后台资源。
+		for _, m := range s.modules {
+			if err := m.Stop(); err != nil {
+				s.logger.Warn("module stop error",
+					zap.String("module", m.Name()), zap.Error(err))
+			}
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		srv.Shutdown(shutdownCtx)
@@ -208,8 +235,10 @@ func (s *Server) registerRoutes() {
 	// 硬件清单路由
 	s.registerHardwareRoutes()
 
-	// 服务导航路由 (tkeel-links 的功能吸收)
-	s.registerLinksRoutes()
+	// module 化功能单元自注册路由 (links 等)
+	for _, m := range s.modules {
+		m.RegisterRoutes(s.mux)
+	}
 
 	// 系统查询路由 (processes/disks/network/gpu/history + cloud/audit 存根)
 	s.registerSystemRoutes()

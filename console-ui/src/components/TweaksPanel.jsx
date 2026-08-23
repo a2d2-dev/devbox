@@ -111,7 +111,9 @@ const __TWEAKS_STYLE = `
 `;
 
 // ── useTweaks ───────────────────────────────────────────────────────────────
-const STORAGE_KEY = 'edgex-user-prefs';
+// v2 (2026-08-23): fnOS 主题上线。换 key 让老用户的旧浅色偏好失效，
+// 新默认 preset=fnos 直接生效；用户改过的偏好从此存到 v2。
+const STORAGE_KEY = 'edgex-user-prefs-v2';
 
 function loadFromStorage(defaults) {
   try {

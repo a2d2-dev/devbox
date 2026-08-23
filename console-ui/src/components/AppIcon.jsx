@@ -1,7 +1,7 @@
 import { T } from '../tokens'
 import { Icon } from '../icons'
 
-export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gradient', accent = '#2563eb', labelSize = 12.5 }) {
+export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gradient', accent = '#2563eb', labelSize = 12.5, dark = false }) {
   const isError = app.state === 'error';
   const stateColor = {
     running: T.green, error: T.red, warn: T.amber, stopped: T.ink4,
@@ -36,7 +36,7 @@ export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gr
            background: 'transparent',
            transition: 'background 0.15s ease',
            width: size + 28,
-           '--edge-row-hover-bg': 'rgba(255,255,255,0.55)',
+           '--edge-row-hover-bg': dark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.55)',
          }}>
       <div className={`edge-icon-hover ${isError ? 'edge-pulse' : ''}`}
            style={{
@@ -100,21 +100,24 @@ export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gr
       </div>
 
       <div style={{
-        fontSize: labelSize, color: T.ink, lineHeight: 1.3,
-        textAlign: 'center', fontWeight: 500, maxWidth: size + 24,
+        // fnOS 桌面标签：白色粗体 + 双层投影（rgba(0,0,0,.2) 1px 6px + rgba(0,0,0,.5) 0 4px）
+        fontSize: labelSize, color: dark ? '#fff' : T.ink, lineHeight: 1.3,
+        textAlign: 'center', fontWeight: dark ? 700 : 500, maxWidth: size + 24,
+        textShadow: dark ? '0 1px 6px rgba(0,0,0,0.2), 0 0 4px rgba(0,0,0,0.5)' : 'none',
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       }}>{app.name}</div>
 
       {app.kind === 'app' && (
         <div style={{
-          marginTop: -4, fontSize: 10.5, color: T.ink3,
+          marginTop: -4, fontSize: 10.5, color: dark ? 'rgba(255,255,255,0.65)' : T.ink3,
+          textShadow: dark ? '0 1px 4px rgba(0,0,0,0.5)' : 'none',
           display: 'flex', alignItems: 'center', gap: 4,
         }} className="tnum">
           {app.state === 'running' && app.gpuPct > 0 && (
             <span className="mono">GPU {app.gpuPct}%</span>
           )}
           {app.state === 'running' && app.gpuPct === 0 && <span>仅 CPU</span>}
-          {app.state === 'error' && <span style={{ color: T.red, fontWeight: 600 }}>异常 · {app.lastOk}</span>}
+          {app.state === 'error' && <span style={{ color: dark ? '#f87171' : T.red, fontWeight: 600 }}>异常 · {app.lastOk}</span>}
         </div>
       )}
     </div>

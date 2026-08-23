@@ -3,9 +3,11 @@ import { Icon } from '../icons'
 import { StatusDot, useClock } from './ui'
 import { AppIcon } from './AppIcon'
 import { MemoWidget } from './MemoWidget'
+import { SystemStatusWidget } from './SystemStatusWidget'
+import { WelcomeWidget } from './WelcomeWidget'
 
 // ─── Clock + Calendar widget ────────────────────────────────────
-function ClockCalendarWidget() {
+function ClockCalendarWidget({ dark = false }) {
   const now = useClock();
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
@@ -24,26 +26,26 @@ function ClockCalendarWidget() {
   while (cells.length % 7 !== 0) cells.push(null);
 
   return (
-    <div style={{
+    <div className={dark ? 'edge-material-dark' : ''} style={{
       width: '100%', padding: 18,
-      background: 'rgba(255,255,255,0.7)',
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
-      border: `1px solid rgba(255,255,255,0.9)`,
+      background: dark ? undefined : 'rgba(255,255,255,0.7)',
+      backdropFilter: dark ? undefined : 'blur(12px)',
+      WebkitBackdropFilter: dark ? undefined : 'blur(12px)',
+      border: dark ? '1px solid rgba(255,255,255,0.12)' : `1px solid rgba(255,255,255,0.9)`,
       borderRadius: 14,
-      boxShadow: '0 6px 20px -6px rgba(15,23,42,0.12)',
+      boxShadow: dark ? '0 8px 24px -8px rgba(0,0,0,0.4)' : '0 6px 20px -6px rgba(15,23,42,0.12)',
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <div className="mono tnum" style={{
-          fontSize: 40, fontWeight: 700, color: T.ink, letterSpacing: '-0.04em',
+          fontSize: 40, fontWeight: 700, color: dark ? '#fff' : T.ink, letterSpacing: '-0.04em',
           lineHeight: 1,
         }}>
-          {hh}:{mm}<span style={{ color: T.ink4, fontWeight: 500 }}>:{ss}</span>
+          {hh}:{mm}<span style={{ color: dark ? 'rgba(255,255,255,0.4)' : T.ink4, fontWeight: 500 }}>:{ss}</span>
         </div>
         <div style={{ flex: 1 }}/>
         <div style={{ textAlign: 'right', lineHeight: 1.25 }}>
-          <div style={{ fontSize: 12, color: T.ink2, fontWeight: 600 }}>{weekday}</div>
-          <div className="mono tnum" style={{ fontSize: 11, color: T.ink3, marginTop: 2 }}>
+          <div style={{ fontSize: 12, color: dark ? 'rgba(255,255,255,0.85)' : T.ink2, fontWeight: 600 }}>{weekday}</div>
+          <div className="mono tnum" style={{ fontSize: 11, color: dark ? 'rgba(255,255,255,0.55)' : T.ink3, marginTop: 2 }}>
             {yy}-{String(mo + 1).padStart(2, '0')}-{String(today).padStart(2, '0')}
           </div>
         </div>
@@ -51,15 +53,16 @@ function ClockCalendarWidget() {
 
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, marginBottom: 8,
-        paddingTop: 12, borderTop: `1px solid ${T.borderSoft}`,
+        paddingTop: 12, borderTop: `1px solid ${dark ? 'rgba(255,255,255,0.12)' : T.borderSoft}`,
       }}>
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: T.ink, letterSpacing: '0.02em' }}>
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: dark ? '#fff' : T.ink, letterSpacing: '0.02em' }}>
           {yy} 年 {mo + 1} 月
         </div>
         <div style={{ flex: 1 }}/>
         <div style={{
-          fontSize: 10, color: T.ink3, padding: '1px 6px', borderRadius: 3,
-          background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`,
+          fontSize: 10, color: dark ? 'rgba(255,255,255,0.6)' : T.ink3, padding: '1px 6px', borderRadius: 3,
+          background: dark ? 'rgba(255,255,255,0.08)' : T.surfaceAlt,
+          border: `1px solid ${dark ? 'rgba(255,255,255,0.1)' : T.borderSoft}`,
         }}>第 {Math.ceil((today + firstDay) / 7)} 周</div>
       </div>
 
@@ -70,7 +73,8 @@ function ClockCalendarWidget() {
       }}>
         {['日', '一', '二', '三', '四', '五', '六'].map((d, i) => (
           <div key={d} style={{
-            textAlign: 'center', fontSize: 10, color: i === 0 || i === 6 ? T.red : T.ink3,
+            textAlign: 'center', fontSize: 10,
+            color: i === 0 || i === 6 ? (dark ? '#f87171' : T.red) : (dark ? 'rgba(255,255,255,0.55)' : T.ink3),
             fontWeight: 600, padding: '3px 0',
           }}>{d}</div>
         ))}
@@ -90,7 +94,7 @@ function ClockCalendarWidget() {
               aspectRatio: '1',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 11.5,
-              color: isToday ? 'white' : isWeekend ? T.red : T.ink2,
+              color: isToday ? 'white' : isWeekend ? (dark ? '#f87171' : T.red) : (dark ? 'rgba(255,255,255,0.8)' : T.ink2),
               fontWeight: isToday ? 700 : 500,
               background: isToday ? T.blue : 'transparent',
               borderRadius: 6,
@@ -105,7 +109,7 @@ function ClockCalendarWidget() {
 }
 
 // ─── Recent apps widget ─────────────────────────────────────────
-export function RecentWidget({ apps, onOpen, variant = 'compact' }) {
+export function RecentWidget({ apps, onOpen, variant = 'compact', dark = false }) {
   if (variant === 'row') {
     // Wide row layout — pill chips, suits the bottom-of-grid placement
     return (
@@ -114,10 +118,10 @@ export function RecentWidget({ apps, onOpen, variant = 'compact' }) {
           <div key={app.id} onClick={() => onOpen(app)} style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             padding: '6px 12px 6px 6px', borderRadius: 999,
-            background: 'rgba(255,255,255,0.7)',
-            border: '1px solid rgba(226,232,240,0.85)',
+            background: dark ? 'rgba(28,33,42,0.55)' : 'rgba(255,255,255,0.7)',
+            border: dark ? '1px solid rgba(255,255,255,0.14)' : '1px solid rgba(226,232,240,0.85)',
             cursor: 'pointer',
-            boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
+            boxShadow: dark ? '0 2px 8px rgba(0,0,0,0.25)' : '0 1px 2px rgba(15,23,42,0.04)',
           }}>
             <div style={{
               width: 26, height: 26, borderRadius: 7,
@@ -127,7 +131,7 @@ export function RecentWidget({ apps, onOpen, variant = 'compact' }) {
             }}>
               <Icon name={app.icon} size={14} stroke={1.8}/>
             </div>
-            <span style={{ fontSize: 12, color: T.ink, fontWeight: 500 }}>{app.name}</span>
+            <span style={{ fontSize: 12, color: dark ? '#fff' : T.ink, fontWeight: 500 }}>{app.name}</span>
           </div>
         ))}
       </div>
@@ -179,27 +183,29 @@ export function RecentWidget({ apps, onOpen, variant = 'compact' }) {
 }
 
 // ─── Compact device info card (right column) ────────────────────
-function DeviceInfoCard({ DEVICE }) {
+function DeviceInfoCard({ DEVICE, dark = false }) {
   return (
-    <div style={{
+    <div className={dark ? 'edge-material-dark' : ''} style={{
       padding: 16,
-      background: 'rgba(255,255,255,0.7)',
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
-      border: `1px solid rgba(255,255,255,0.9)`,
+      background: dark ? undefined : 'rgba(255,255,255,0.7)',
+      backdropFilter: dark ? undefined : 'blur(12px)',
+      WebkitBackdropFilter: dark ? undefined : 'blur(12px)',
+      border: dark ? '1px solid rgba(255,255,255,0.12)' : `1px solid rgba(255,255,255,0.9)`,
       borderRadius: 14,
-      boxShadow: '0 6px 20px -6px rgba(15,23,42,0.10)',
+      boxShadow: dark ? '0 8px 24px -8px rgba(0,0,0,0.4)' : '0 6px 20px -6px rgba(15,23,42,0.10)',
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
       }}>
-        <Icon name="cpu" size={14} stroke={1.8} style={{ color: T.blueDeep }}/>
-        <div style={{ fontSize: 12, fontWeight: 700, color: T.ink,
+        <Icon name="cpu" size={14} stroke={1.8} style={{ color: dark ? '#60a5fa' : T.blueDeep }}/>
+        <div style={{ fontSize: 12, fontWeight: 700, color: dark ? '#fff' : T.ink,
           letterSpacing: '0.02em' }}>设备信息</div>
         <div style={{ flex: 1 }}/>
         <span style={{
           fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 999,
-          background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0',
+          background: dark ? 'rgba(16,185,129,0.16)' : '#ecfdf5',
+          color: dark ? '#34d399' : '#047857',
+          border: `1px solid ${dark ? 'rgba(16,185,129,0.4)' : '#a7f3d0'}`,
         }}>在线</span>
       </div>
 
@@ -211,8 +217,8 @@ function DeviceInfoCard({ DEVICE }) {
           ['持续在线', DEVICE.uptime],
         ].map(([k, v]) => (
           <div key={k} style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontSize: 11.5 }}>
-            <span style={{ color: T.ink3, width: 56, flexShrink: 0 }}>{k}</span>
-            <span style={{ color: T.ink, flex: 1, fontWeight: 500,
+            <span style={{ color: dark ? 'rgba(255,255,255,0.5)' : T.ink3, width: 56, flexShrink: 0 }}>{k}</span>
+            <span style={{ color: dark ? 'rgba(255,255,255,0.9)' : T.ink, flex: 1, fontWeight: 500,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span>
           </div>
         ))}
@@ -249,15 +255,18 @@ function RunningChip({ running, error }) {
   );
 }
 
-function Section({ label, meta, right, children }) {
+function Section({ label, meta, right, children, dark = false }) {
   return (
     <div>
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14,
       }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: T.ink,
+        <div style={{ fontSize: 12, fontWeight: 700,
+          color: dark ? 'rgba(255,255,255,0.92)' : T.ink,
+          textShadow: dark ? '0 1px 6px rgba(0,0,0,0.2), 0 0 4px rgba(0,0,0,0.5)' : 'none',
           letterSpacing: '0.04em' }}>{label}</div>
-        <div style={{ fontSize: 11.5, color: T.ink3 }}>{meta}</div>
+        <div style={{ fontSize: 11.5, color: dark ? 'rgba(255,255,255,0.55)' : T.ink3,
+          textShadow: dark ? '0 1px 4px rgba(0,0,0,0.4)' : 'none' }}>{meta}</div>
         <div style={{ flex: 1 }}/>
         {right}
       </div>
@@ -266,7 +275,7 @@ function Section({ label, meta, right, children }) {
   );
 }
 
-function AppGrid({ apps, onOpen, iconStyle, accent, iconPx = 76, tilePx = 104, labelSize = 12.5 }) {
+function AppGrid({ apps, onOpen, iconStyle, accent, iconPx = 76, tilePx = 104, labelSize = 12.5, dark = false }) {
   return (
     <div style={{
       display: 'grid',
@@ -274,14 +283,14 @@ function AppGrid({ apps, onOpen, iconStyle, accent, iconPx = 76, tilePx = 104, l
       gap: 8,
     }}>
       {apps.map(app => <AppIcon key={app.id} app={app} onOpen={onOpen}
-        iconStyle={iconStyle} accent={accent}
+        iconStyle={iconStyle} accent={accent} dark={dark}
         size={iconPx} labelSize={labelSize}/>)}
     </div>
   );
 }
 
 // ─── Desktop ────────────────────────────────────────────────────
-export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, iconStyle = 'gradient', accent = '#2563eb', layout = 'workstation', iconSize = 'md', APPS, RECENT_IDS, DEVICE }) {
+export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, iconStyle = 'gradient', accent = '#2563eb', layout = 'workstation', iconSize = 'md', APPS, RECENT_IDS, DEVICE, dark = false }) {
   const runningCount = deployedApps.filter(a => a.state === 'running').length;
   const errorCount   = deployedApps.filter(a => a.state === 'error').length;
 
@@ -298,20 +307,20 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
         display: 'flex', flexDirection: 'column', gap: 32,
         overflow: 'auto', alignContent: 'start',
       }}>
-        <Section label="系统工具" meta="本地固定">
-          <AppGrid apps={sysApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+        <Section label="系统工具" meta="本地固定" dark={dark}>
+          <AppGrid apps={sysApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent} dark={dark}
             iconPx={Math.max(iconPx, 88)} tilePx={tilePx + 12} labelSize={labelSize}/>
         </Section>
-        <Section label="已部署应用" meta="云端下发"
+        <Section label="已部署应用" meta="云端下发" dark={dark}
           right={<RunningChip running={runningCount} error={errorCount}/>}>
-          <AppGrid apps={deployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+          <AppGrid apps={deployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent} dark={dark}
             iconPx={Math.max(iconPx, 88)} tilePx={tilePx + 12} labelSize={labelSize}/>
         </Section>
         {showRecent && (
-          <Section label="最近使用" meta="按访问时间">
+          <Section label="最近使用" meta="按访问时间" dark={dark}>
             <RecentWidget
               apps={RECENT_IDS.map(id => APPS.find(a => a.id === id)).filter(Boolean)}
-              onOpen={onOpenApp} variant="row"/>
+              onOpen={onOpenApp} variant="row" dark={dark}/>
           </Section>
         )}
       </div>
@@ -327,27 +336,29 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
         overflow: 'auto', alignContent: 'start',
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
-          <Section label="系统工具" meta="本地固定">
-            <AppGrid apps={sysApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+          <Section label="系统工具" meta="本地固定" dark={dark}>
+            <AppGrid apps={sysApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent} dark={dark}
               iconPx={Math.min(iconPx, 64)} tilePx={Math.min(tilePx, 94)} labelSize={11}/>
           </Section>
-          <Section label="已部署应用" meta="云端下发"
+          <Section label="已部署应用" meta="云端下发" dark={dark}
             right={<RunningChip running={runningCount} error={errorCount}/>}>
-            <AppGrid apps={deployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+            <AppGrid apps={deployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent} dark={dark}
               iconPx={Math.min(iconPx, 64)} tilePx={Math.min(tilePx, 94)} labelSize={11}/>
           </Section>
           {showRecent && (
-            <Section label="最近使用" meta="按访问时间">
+            <Section label="最近使用" meta="按访问时间" dark={dark}>
               <RecentWidget
                 apps={RECENT_IDS.map(id => APPS.find(a => a.id === id)).filter(Boolean)}
-                onOpen={onOpenApp} variant="row"/>
+                onOpen={onOpenApp} variant="row" dark={dark}/>
             </Section>
           )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <ClockCalendarWidget/>
-          <DeviceInfoCard DEVICE={DEVICE}/>
-          <MemoWidget/>
+          <ClockCalendarWidget dark={dark}/>
+          <SystemStatusWidget dark={dark}/>
+          <WelcomeWidget onOpen={(id) => onOpenApp({ id })} deviceName={DEVICE.name} dark={dark}/>
+          <DeviceInfoCard DEVICE={DEVICE} dark={dark}/>
+          <MemoWidget dark={dark}/>
         </div>
       </div>
     );
@@ -362,30 +373,32 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, showRecent = true, i
       overflow: 'auto', alignContent: 'start',
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 26, minWidth: 0 }}>
-        <Section label="系统工具" meta="本地固定 · 始终可用">
-          <AppGrid apps={sysApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+        <Section label="系统工具" meta="本地固定 · 始终可用" dark={dark}>
+          <AppGrid apps={sysApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent} dark={dark}
             iconPx={iconPx} tilePx={tilePx} labelSize={labelSize}/>
         </Section>
 
-        <Section label="已部署应用" meta="云端下发"
+        <Section label="已部署应用" meta="云端下发" dark={dark}
           right={<RunningChip running={runningCount} error={errorCount}/>}>
-          <AppGrid apps={deployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+          <AppGrid apps={deployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent} dark={dark}
             iconPx={iconPx} tilePx={tilePx} labelSize={labelSize}/>
         </Section>
 
         {showRecent && (
-          <Section label="最近使用" meta="按访问时间">
+          <Section label="最近使用" meta="按访问时间" dark={dark}>
             <RecentWidget
               apps={RECENT_IDS.map(id => APPS.find(a => a.id === id)).filter(Boolean)}
-              onOpen={onOpenApp} variant="row"/>
+              onOpen={onOpenApp} variant="row" dark={dark}/>
           </Section>
         )}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <ClockCalendarWidget/>
-        <DeviceInfoCard DEVICE={DEVICE}/>
-        <MemoWidget/>
+        <ClockCalendarWidget dark={dark}/>
+        <SystemStatusWidget dark={dark}/>
+        <WelcomeWidget onOpen={(id) => onOpenApp({ id })} deviceName={DEVICE.name} dark={dark}/>
+        <DeviceInfoCard DEVICE={DEVICE} dark={dark}/>
+        <MemoWidget dark={dark}/>
       </div>
     </div>
   );

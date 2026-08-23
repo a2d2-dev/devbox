@@ -29,7 +29,7 @@ function clearMemo() {
   }
 }
 
-export function MemoWidget() {
+export function MemoWidget({ dark = false }) {
   const [value, setValue] = useState(readMemo);
   const timerRef = useRef(null);
   const valueRef = useRef(value);
@@ -68,20 +68,20 @@ export function MemoWidget() {
   };
 
   return (
-    <div style={{
+    <div className={dark ? 'edge-material-dark' : ''} style={{
       padding: 16,
-      background: 'rgba(255,255,255,0.7)',
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
-      border: '1px solid rgba(255,255,255,0.9)',
+      background: dark ? undefined : 'rgba(255,255,255,0.7)',
+      backdropFilter: dark ? undefined : 'blur(12px)',
+      WebkitBackdropFilter: dark ? undefined : 'blur(12px)',
+      border: dark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(255,255,255,0.9)',
       borderRadius: 14,
-      boxShadow: '0 6px 20px -6px rgba(15,23,42,0.10)',
+      boxShadow: dark ? '0 8px 24px -8px rgba(0,0,0,0.4)' : '0 6px 20px -6px rgba(15,23,42,0.10)',
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
       }}>
-        <Icon name="edit" size={14} stroke={1.8} style={{ color: T.blueDeep }}/>
-        <div style={{ fontSize: 12, fontWeight: 700, color: T.ink,
+        <Icon name="edit" size={14} stroke={1.8} style={{ color: dark ? '#60a5fa' : T.blueDeep }}/>
+        <div style={{ fontSize: 12, fontWeight: 700, color: dark ? '#fff' : T.ink,
           letterSpacing: '0.02em' }}>备忘录</div>
         <div style={{ flex: 1 }}/>
         {value.length > 0 && (
@@ -94,7 +94,7 @@ export function MemoWidget() {
             style={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: 22, height: 22, borderRadius: 6,
-              background: 'transparent', color: T.ink3,
+              background: 'transparent', color: dark ? 'rgba(255,255,255,0.6)' : T.ink3,
               border: '1px solid transparent', cursor: 'pointer',
               padding: 0,
             }}
@@ -103,7 +103,7 @@ export function MemoWidget() {
           </button>
         )}
         <span className="tnum" style={{
-          fontSize: 10.5, color: T.ink3, fontWeight: 600,
+          fontSize: 10.5, color: dark ? 'rgba(255,255,255,0.55)' : T.ink3, fontWeight: 600,
           fontFamily: T.mono,
         }}>{value.length} 字</span>
       </div>
@@ -117,8 +117,8 @@ export function MemoWidget() {
           width: '100%', height: 200, boxSizing: 'border-box',
           resize: 'none',
           background: 'transparent',
-          color: T.ink,
-          border: `1px solid ${T.borderSoft}`,
+          color: dark ? 'rgba(255,255,255,0.9)' : T.ink,
+          border: `1px solid ${dark ? 'rgba(255,255,255,0.14)' : T.borderSoft}`,
           borderRadius: 8,
           padding: 10,
           fontFamily: T.mono,
@@ -127,7 +127,7 @@ export function MemoWidget() {
           outline: 'none',
         }}
         onFocus={(e) => { e.currentTarget.style.borderColor = T.blue; }}
-        onBlur={(e) => { e.currentTarget.style.borderColor = T.borderSoft; }}
+        onBlur={(e) => { e.currentTarget.style.borderColor = dark ? 'rgba(255,255,255,0.14)' : T.borderSoft; }}
       />
     </div>
   );
