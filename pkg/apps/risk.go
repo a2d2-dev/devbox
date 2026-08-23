@@ -504,12 +504,12 @@ func ExtractServicePreviews(raw string) ([]ServicePreview, error) {
 	for name, svc := range root.Services {
 		p := ServicePreview{Name: name, Image: svc.Image}
 		for i := range svc.Ports {
-			if s := nodeString(svc.Ports[i]); s != "" {
+			if s := previewPort(svc.Ports[i]); s != "" {
 				p.Ports = append(p.Ports, s)
 			}
 		}
 		for i := range svc.Volumes {
-			if s := nodeString(svc.Volumes[i]); s != "" {
+			if s := previewVolume(svc.Volumes[i]); s != "" {
 				p.Volumes = append(p.Volumes, s)
 			}
 		}
@@ -518,21 +518,62 @@ func ExtractServicePreviews(raw string) ([]ServicePreview, error) {
 	return out, nil
 }
 
-func nodeString(n yaml.Node) string {
-	switch n.Kind {
-	case yaml.ScalarNode:
+func previewPort(n yaml.Node) string {
+	if n.Kind == yaml.ScalarNode {
 		return n.Value
-	case yaml.MappingNode:
-		// 长语法取 target 或 source。
-		var m struct {
-			Target string `yaml:"target"`
-			Source string `yaml:"source"`
+	}
+	if n.Kind != yaml.MappingNode {
+		return ""
+	}
+	target := mappingScalar(n, "target")
+	published := mappingScalar(n, "published")
+	if target == "" {
+		return published
+	}
+	port := target
+	if published != "" {
+		hostIP := mappingScalar(n, "host_ip")
+		if strings.Contains(hostIP, ":") && !strings.HasPrefix(hostIP, "[") {
+			hostIP = "[" + hostIP + "]"
 		}
-		_ = n.Decode(&m)
-		if m.Target != "" {
-			return m.Target
+		if hostIP != "" {
+			port = hostIP + ":" + published + ":" + target
+		} else {
+			port = published + ":" + target
 		}
-		return m.Source
+	}
+	if protocol := mappingScalar(n, "protocol"); protocol != "" && protocol != "tcp" {
+		port += "/" + protocol
+	}
+	return port
+}
+
+func previewVolume(n yaml.Node) string {
+	if n.Kind == yaml.ScalarNode {
+		return n.Value
+	}
+	if n.Kind != yaml.MappingNode {
+		return ""
+	}
+	source := mappingScalar(n, "source")
+	target := mappingScalar(n, "target")
+	volume := target
+	if source != "" && target != "" {
+		volume = source + ":" + target
+	} else if source != "" {
+		volume = source
+	}
+	if volume != "" && mappingScalar(n, "read_only") == "true" {
+		volume += ":ro"
+	}
+	return volume
+}
+
+func mappingScalar(n yaml.Node, key string) string {
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key && n.Content[i+1].Kind == yaml.ScalarNode {
+			return n.Content[i+1].Value
+		}
 	}
 	return ""
 }

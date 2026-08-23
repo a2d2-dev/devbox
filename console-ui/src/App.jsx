@@ -321,6 +321,14 @@ export default function App() {
     setMgmtOpen(false);
   };
 
+  const minimizeWindow = () => {
+    if (activeId) minimizeApp(activeId);
+  };
+
+  const closeWindow = () => {
+    if (activeId) closeApp(activeId);
+  };
+
   // Live data from API hooks
   const metricsHook = useMetrics();
   const { data: metricsHistoryData } = useMetricsHistory();

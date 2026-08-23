@@ -381,7 +381,7 @@ export function CreateDialog({ composeCap, onClose, onOpenStore, onDeployed }) {
   const [secrets, setSecrets] = useState(''); // KEY=VALUE 每行（仅写，不回传）
   const [parameters, setParameters] = useState(''); // 非敏感 KEY=VALUE（进 revision）
   const [dataPath, setDataPath] = useState('');
-  const [dataTarget, setDataTarget] = useState('/data');
+  const [dataTarget, setDataTarget] = useState('');
   const [cpuLimit, setCpuLimit] = useState('');
   const [memoryLimit, setMemoryLimit] = useState('');
   const [autoStart, setAutoStart] = useState(true);

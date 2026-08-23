@@ -30,7 +30,7 @@ import {
 import { useToast } from '../components/toastContext'
 import UninstallDialog from '../components/UninstallDialog'
 import { CreateDialog } from './ComposeManager'
-import { normalizeCategory, deriveAppCenterStatus, APP_STATUS, sortNewest, sourceTrust } from '../lib/appcenter'
+import { normalizeCategory, deriveAppCenterStatus, APP_STATUS, matchesAppCenterFilters, sortNewest, sourceTrust } from '../lib/appcenter'
 
 // ─── 视觉：按 app id/name/category 推断图标/渐变（保持现有设计语言）────────
 function guessAppStyle(id, name, category) {
@@ -383,15 +383,15 @@ function AppStoreDetail({ app, onBack, onOpenApp }) {
             <div style={{ fontSize: 13, color: T.ink2, marginTop: 12, lineHeight: 1.7 }}>{app.desc}</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, alignItems: 'flex-end' }}>
-            {(app.installable || app.installed) ? (
+            {app.origin !== 'manual' && (app.installable || app.installed) ? (
               <button onClick={() => setShowDeploy(true)} className="edge-press edge-btn-primary" style={{ ...btnPrimary, height: 36, padding: '0 18px' }}>
                 <Icon name="download" size={13} stroke={2}/>{app.upgradable ? `更新到 ${app.ver}` : app.installed ? '重新安装' : '安装'}
               </button>
-            ) : (
+            ) : app.origin !== 'manual' ? (
               <div title={app.notInstallableReason || ''} style={{ fontSize: 11.5, color: T.ink3, padding: '8px 12px', borderRadius: 8, background: T.surfaceAlt, border: `1px solid ${T.borderSoft}`, maxWidth: 180, textAlign: 'center' }}>
                 {app.notInstallableReason || '仅 Kubernetes 环境支持'}
               </div>
-            )}
+            ) : null}
             {app.installed && (
               <button onClick={() => onOpenApp && onOpenApp({ id: app.devboxId || app.id })} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 30, padding: '0 14px' }}>
                 <Icon name="apps" size={12} stroke={2}/>管理
@@ -651,7 +651,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
   const deployedBySource = useMemo(() => {
     const m = {};
     (deployedApps || []).forEach((d) => {
-      if (!d.source || (d.runtime || 'kubernetes') !== 'compose') return;
+      if (!d.source) return;
       const hit = { version: d.source.version || d.version, devboxId: d.id, app: d };
       if (d.source.kind === 'store') m[`store:${d.source.storeId}`] = hit;
       if (d.source.kind === 'catalog') m[`catalog:${d.source.catalogId}:${d.source.storeId}`] = hit;
@@ -668,7 +668,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
       const upgradable = installedVersion != null && a.version != null && compareVersions(installedVersion, a.version) < 0;
       const { bg, icon } = guessAppStyle(a.id, a.name, a.category);
       const installed = installedVersion != null;
-      const status = deriveAppCenterStatus({ installed, upgradable, installable: a.installable === true, taskStatus: hit?.app?.lastTask?.status });
+      const status = deriveAppCenterStatus({ installed, upgradable, installable: a.installable === true, taskStatus: hit?.app?.lastTask?.status, taskType: hit?.app?.lastTask?.type });
       out.push({
         id: a.id, name: a.name, cat: normalizeCategory(a.category), ver: a.version,
         desc: a.description || '', iconUrl: a.icon, icon, bg, provider: a.provider,
@@ -685,7 +685,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
       const upgradable = installedVersion != null && a.version != null && compareVersions(installedVersion, a.version) < 0;
       const { bg, icon } = guessAppStyle(a.id, a.name, a.category);
       const installed = installedVersion != null;
-      const status = deriveAppCenterStatus({ installed, upgradable, installable: a.installable === true, taskStatus: hit?.app?.lastTask?.status });
+      const status = deriveAppCenterStatus({ installed, upgradable, installable: a.installable === true, taskStatus: hit?.app?.lastTask?.status, taskType: hit?.app?.lastTask?.type });
       out.push({
         id: a.id, name: a.name, cat: normalizeCategory(a.category), ver: a.version,
         desc: a.description || '', iconUrl: a.icon, icon, bg, provider: a.provider,
@@ -696,30 +696,39 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
         pinned: a.pinned, publishedAt: a.publishedAt || '', sourceType: a.sourceType, trustLevel: a.trustLevel,
       });
     });
+    (deployedApps || []).forEach((d) => {
+      const sourceKind = d.source?.kind || '';
+      if ((d.runtime || 'kubernetes') !== 'compose' || d.ownership === 'discovered' || !['inline', 'git', 'local'].includes(sourceKind)) return;
+      const { bg, icon } = guessAppStyle(d.id, d.name, '自定义应用');
+      out.push({
+        id: d.id, name: d.name || d.id, cat: '自定义应用', ver: d.source?.version || `revision ${d.revision || 1}`,
+        desc: d.image || '手动安装的 Docker Compose 应用', icon, bg, provider: '本机用户',
+        runtime: 'compose', installable: false, notInstallableReason: '',
+        origin: 'manual', sourceId: 'manual', sourceName: '手动安装',
+        installed: true, installedVersion: d.source?.version || '', upgradable: false,
+        devboxId: d.id, deployedApp: d,
+        status: deriveAppCenterStatus({ installed: true, installable: false, taskStatus: d.lastTask?.status, taskType: d.lastTask?.type }),
+        pinned: false, publishedAt: '', sourceType: 'manual', trustLevel: 'user-managed',
+      });
+    });
     return out;
-  }, [platformApps, catalogApps, deployedBySource]);
+  }, [platformApps, catalogApps, deployedApps, deployedBySource]);
 
   // 分类 sidebar
-  const categories = storeApps.length > 0 ? (() => {
+  const categoryApps = tab === 'installed' ? storeApps.filter((app) => app.installed) : storeApps.filter((app) => app.origin !== 'manual');
+  const categories = categoryApps.length > 0 ? (() => {
     const catMap = {};
-    storeApps.forEach((a) => { if (a.cat) catMap[a.cat] = (catMap[a.cat] || 0) + 1; });
-    const cats = [{ id: 'all', name: '全部', icon: 'apps', count: storeApps.length }];
+    categoryApps.forEach((a) => { if (a.cat) catMap[a.cat] = (catMap[a.cat] || 0) + 1; });
+    const cats = [{ id: 'all', name: '全部', icon: 'apps', count: categoryApps.length }];
     Object.entries(catMap).forEach(([k, v]) => cats.push({ id: k, name: k, icon: 'apps', count: v }));
     return cats;
   })() : [{ id: 'all', name: '全部', icon: 'apps', count: 0 }];
 
-  const allCount = storeApps.length;
+  const allCount = storeApps.filter((a) => a.origin !== 'manual').length;
   const installedCount = storeApps.filter((a) => a.installed).length;
-  const latestCount = storeApps.length;
+  const latestCount = allCount;
 
-  const filteredList = storeApps.filter((a) => {
-    if (tab === 'installed' && !a.installed) return false;
-    if (sourceFilter === 'platform' && a.origin !== 'platform') return false;
-    if (sourceFilter !== 'all' && sourceFilter !== 'platform' && a.sourceId !== sourceFilter) return false;
-    if (cat !== 'all' && a.cat !== cat) return false;
-    if (q && !a.name.toLowerCase().includes(q.toLowerCase()) && !(a.desc || '').includes(q)) return false;
-    return true;
-  });
+  const filteredList = storeApps.filter((a) => matchesAppCenterFilters(a, { view: tab, source: sourceFilter, category: cat, query: q }));
   const list = tab === 'latest' ? sortNewest(filteredList) : filteredList;
 
   // 状态：未配置任何来源 / 平台错误 / catalog 单源错误但缓存可用。
@@ -772,6 +781,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
   const sourceOptions = [{ id: 'all', label: '全部来源' }];
   if (platformApps && platformApps.length > 0) sourceOptions.push({ id: 'platform', label: 'DevBox 官方' });
   sources.forEach((s) => sourceOptions.push({ id: s.sourceId, label: s.sourceName || s.sourceId }));
+  if (tab === 'installed' && storeApps.some((app) => app.origin === 'manual')) sourceOptions.push({ id: 'manual', label: '手动安装' });
 
   return (
     <div style={{ flex: 1, display: 'flex', background: T.surfaceAlt, overflow: 'hidden' }}>
@@ -811,7 +821,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
       <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
         <TabBar
           tabs={[{ id: 'all', label: '全部', count: allCount }, { id: 'latest', label: '最新发布', count: latestCount }, { id: 'installed', label: '已安装', count: installedCount }]}
-          active={tab} onChange={setTab}
+          active={tab} onChange={(next) => { setTab(next); setCat('all'); setSourceFilter('all'); }}
           style={{ gap: 4, marginBottom: 16, borderBottom: `1px solid ${T.borderSoft}` }}
           itemStyle={{ padding: '10px 16px 12px', fontSize: 13, marginBottom: -1 }}
           renderLabel={(t2, on) => (<>{t2.label}<span style={{ fontSize: 11, color: T.ink4, fontWeight: 500, padding: '1px 6px', borderRadius: 3, background: on ? T.blueSoft : T.surfaceAlt }} className="mono tnum">{t2.count}</span></>)}

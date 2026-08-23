@@ -15,14 +15,15 @@ export function normalizeCategory(raw) {
   const value = String(raw || '').trim();
   if (!value) return '其他';
   const lower = value.toLowerCase();
+  const tokens = lower.split(/[^a-z0-9\u4e00-\u9fff]+/).filter(Boolean);
   for (const [label, needles] of CATEGORY_RULES) {
-    if (needles.some((needle) => lower === needle || lower.includes(needle))) return label;
+    if (needles.some((needle) => lower === needle || (needle.length <= 2 ? tokens.includes(needle) : lower.includes(needle)))) return label;
   }
   return value;
 }
 
-export function deriveAppCenterStatus({ installed = false, upgradable = false, installable = true, taskStatus = '' } = {}) {
-  if (taskStatus === 'queued' || taskStatus === 'running') return 'installing';
+export function deriveAppCenterStatus({ installed = false, upgradable = false, installable = true, taskStatus = '', taskType = '' } = {}) {
+  if ((!taskType || taskType === 'apply' || taskType === 'restore') && (taskStatus === 'queued' || taskStatus === 'running')) return 'installing';
   if (installed && upgradable) return 'updatable';
   if (installed) return 'installed';
   if (!installable) return 'incompatible';
@@ -61,6 +62,21 @@ export function sourceTrust(app) {
   if (app?.sourceType === 'official' || app?.origin === 'platform') {
     return { sourceLabel: 'DevBox 官方', trustLabel: '官方审核', tone: 'blue' };
   }
+  if (app?.origin === 'manual') {
+    return { sourceLabel: '手动安装', trustLabel: '本机自管', tone: 'gray' };
+  }
   return { sourceLabel: app?.sourceName || '社区 Catalog', trustLabel: '社区未审核', tone: 'violet' };
 }
 
+export function matchesAppCenterFilters(app, { view = 'all', source = 'all', category = 'all', query = '' } = {}) {
+  if (view === 'installed' && !app.installed) return false;
+  // 手动 Compose 没有 catalog 发布时间，只属于“已安装”管理视图。
+  if (app.origin === 'manual' && view !== 'installed') return false;
+  if (source === 'platform' && app.origin !== 'platform') return false;
+  if (source === 'manual' && app.origin !== 'manual') return false;
+  if (source !== 'all' && source !== 'platform' && source !== 'manual' && app.sourceId !== source) return false;
+  if (category !== 'all' && app.cat !== category) return false;
+  const needle = String(query || '').trim().toLocaleLowerCase('zh-CN');
+  if (!needle) return true;
+  return [app.name, app.desc].some((value) => String(value || '').toLocaleLowerCase('zh-CN').includes(needle));
+}

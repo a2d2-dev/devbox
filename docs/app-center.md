@@ -6,13 +6,15 @@ Compose 最终都进入同一个 `apps.Controller`、revision、Task 和风险�
 
 ## 信息架构
 
-- **全部**：展示当前两个来源返回的完整 catalog。
+- **全部**：展示当前两个来源返回的完整 catalog；手动 Compose 没有 catalog 发布
+  元数据，不混入此视图。
 - **最新发布**：优先按条目的 `publishedAt` 倒序。平台商店读取
   `app.theriseunion.io/published-at` annotation，缺失时读取 Kubernetes
   `metadata.creationTimestamp`；devbox catalog v1 可直接声明 `publishedAt`。
   1Panel 等未提供发布时间的来源降级按版本号倒序、名称正序，UI 会明确提示降级依据。
 - **已安装**：按 `Application.source` 精确匹配 `storeId`，社区来源额外匹配
-  `catalogId`，避免同名应用跨来源串状态。
+  `catalogId`，避免同名应用跨来源串状态；`inline`、`git`、`local` 来源的受管
+  Compose 作为“手动安装 / 本机自管”条目直接纳入，未接管的 discovered project 不纳入。
 - 搜索、分类、来源筛选是交集关系，可以组合使用。
 
 ## 分类归一化
@@ -40,6 +42,7 @@ Compose 最终都进入同一个 `apps.Controller`、revision、Task 和风险�
 | --- | --- | --- | --- |
 | DevBox 内置平台商店 | `official` | `reviewed` | DevBox 官方 / 官方审核 |
 | 动态 HTTP、Git、1Panel catalog | `community` | `unverified` | 社区来源名 / 社区未审核 |
+| 手动安装的受管 Compose | `manual` | `user-managed` | 手动安装 / 本机自管 |
 
 “官方审核”不是跳过运行风险检查。两个来源安装 Compose 时都必须从后端可信 source
 重取模板，并经过模板参数校验、`docker compose config`、文件访问检查、明文 Secret
@@ -67,6 +70,9 @@ Compose 最终都进入同一个 `apps.Controller`、revision、Task 和风险�
 3. blocked 风险不可覆盖，confirmation 风险必须显式确认；
 4. `/api/v1/apps` 创建 `source.kind=inline` 的异步 Apply Task；
 5. Secret 只进入权限为 `0600` 的 `.env`，不进入 revision、Task、审计或响应。
+
+Apply 成功后，应用由 `/api/v1/apps` 返回并出现在应用中心“已安装”视图；该条目只提供
+管理、打开和卸载，不会误走 store/catalog 的版本查询或重装接口。
 
 应用中心不支持让浏览器提交任意本地路径或让后端执行上游脚本。Git catalog 必须先在
 设置页作为受控来源添加，遵守 HTTPS、SSRF、partial clone、大小和路径边界。
