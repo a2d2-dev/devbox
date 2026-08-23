@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -72,6 +73,7 @@ type Server struct {
 	vmManager            *vms.Manager
 	browser              *browserStore // 浏览器应用的书签/历史持久化
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
+	onboarding           *onboardingStore
 }
 
 // NewServer 创建控制台服务器
@@ -99,6 +101,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		vmManager:     vms.NewManager(),
 		browser:       newBrowserStore(cfg.BrowserDataPath),
 		browserClient: newBrowserClient(cfg.BrowserInsecureTLS),
+		onboarding:    newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
 	}
 	s.gpuHistory.Start(context.Background())
 	s.registerRoutes()
@@ -247,6 +250,7 @@ func (s *Server) registerRoutes() {
 
 	// 认证路由
 	s.registerAuthRoutes()
+	s.registerOnboardingRoutes()
 
 	// 浏览器应用（代理 + 书签/历史）
 	s.registerBrowserRoutes()
@@ -254,6 +258,13 @@ func (s *Server) registerRoutes() {
 	// 静态文件兜底
 	fileServer := http.FileServer(staticFS)
 	s.mux.Handle("/", fileServer)
+}
+
+func onboardingPath(browserDataPath string) string {
+	if browserDataPath == "" {
+		return "/etc/devbox/onboarding.json"
+	}
+	return filepath.Join(filepath.Dir(browserDataPath), "onboarding.json")
 }
 
 // --- JSON helpers ---

@@ -53,6 +53,10 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	enabled := s.auth != nil && s.auth.Enabled()
 	authenticated := false
 

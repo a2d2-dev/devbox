@@ -35,10 +35,10 @@ function humanizeAuthError(data) {
 //   POST /auth/login              {username, password} → {access_token, source}
 //   onLogin(token, username, source) 回调进入控制台
 //
-// 删除的"假能力"（设计稿编出来但后端无对应）：
+// 未实现的云端能力：
 //   - 扫码授权 tab + QR
-//   - 「记住此设备」checkbox（后端默认 7d session 无开关）
-//   - 「忘记密码」链接（后端无 reset 流程）
+// 保持登录只选择浏览器存储位置，不延长后端 session_ttl；忘记密码入口
+// 说明本机配置重置方式，不提供邮件找回。
 //
 // brand panel 字段降级：每段「有数据才渲染」，绝不用 fallback 假数据。
 //   - alias 为空：副标题段不渲染（首启用户未登录前的预期状态）
@@ -48,15 +48,13 @@ function humanizeAuthError(data) {
 export function LoginScreen({ onLogin, deviceName }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [showPwd, setShowPwd] = useState(false)
+	const [showPwd, setShowPwd] = useState(false)
+	const [persistence, setPersistence] = useState('persistent')
+	const [showResetHelp, setShowResetHelp] = useState(false)
   const [phase, setPhase] = useState('idle') // idle | verifying | success
   const [error, setError] = useState('')
-  const [cloudOnline, setCloudOnline] = useState(null)
   const [about, setAbout] = useState(null)
   const clock = useLoginClock()
-
-  // devbox 无云端管理面 —— cloudOnline 始终 null，品牌面板对应段不渲染。
-  // 保留 setCloudOnline hook 只是给上层组件读的兜底 (null → 不显示 badge)。
 
   // 设备信息 —— devbox 用 /api/v1/device (免鉴权白名单)，字段映射到
   // LoginScreen 原本的 about schema (deviceName/model/computePower/osVersion/…)。
@@ -105,7 +103,7 @@ export function LoginScreen({ onLogin, deviceName }) {
         return
       }
       setPhase('success')
-      setTimeout(() => onLogin(data.token || '', username, 'local'), 1100)
+		setTimeout(() => onLogin(data.token || '', username, persistence), 600)
     } catch {
       setError('无法连接到服务器')
       setPhase('idle')
@@ -156,8 +154,6 @@ export function LoginScreen({ onLogin, deviceName }) {
 
         {/* Device hero — 居中带状区 */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', maxWidth: 520 }}>
-          <CloudChip online={cloudOnline}/>
-
           <h1 className="login-mono" style={{
             fontSize: 38, fontWeight: 700, color: '#fff', margin: '20px 0 0',
             letterSpacing: '-0.02em', lineHeight: 1.05, wordBreak: 'break-all',
@@ -221,11 +217,22 @@ export function LoginScreen({ onLogin, deviceName }) {
                     }/>
                 </div>
 
-                {error && (
+				{error && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: T.red, fontSize: 12 }}>
                     <Icon name="alertTri" size={13} stroke={1.9}/>{error}
                   </div>
-                )}
+				)}
+
+				<div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 2 }}>
+					<label htmlFor="login-persistence" style={{ fontSize: 12, color: T.ink3, whiteSpace: 'nowrap' }}>保持登录</label>
+					<select id="login-persistence" value={persistence} onChange={(e) => setPersistence(e.target.value)} style={{
+						flex: 1, height: 32, borderRadius: 7, border: `1px solid ${T.border}`,
+						background: '#fff', color: T.ink2, padding: '0 8px', fontSize: 12,
+					}}>
+						<option value="persistent">保持至服务端会话过期</option>
+						<option value="session">仅本次浏览器会话</option>
+					</select>
+				</div>
 
                 <button type="submit" disabled={phase === 'verifying' || !username || !password} style={{
                   height: 46, marginTop: 6, borderRadius: 10, border: 'none',
@@ -245,8 +252,12 @@ export function LoginScreen({ onLogin, deviceName }) {
                   ) : (
                     <>登录控制台<Icon name="chevRight" size={17} stroke={2.2}/></>
                   )}
-                </button>
-              </form>
+				</button>
+				<button type="button" onClick={() => setShowResetHelp(true)} style={{
+					alignSelf: 'center', border: 'none', background: 'transparent', color: T.blue,
+					fontSize: 12, cursor: 'pointer', padding: '4px 8px',
+				}}>忘记密码？</button>
+			</form>
 
               {/* Bottom note */}
               <div style={{
@@ -255,15 +266,47 @@ export function LoginScreen({ onLogin, deviceName }) {
                 fontSize: 11, color: T.ink3, lineHeight: 1.5,
               }}>
                 <Icon name="shield" size={13} stroke={1.8} style={{ color: T.ink4, flexShrink: 0 }}/>
-                登录受云端审计中心保护，所有访问将被记录。
+				凭据只提交到当前 DevBox，本地会话过期后需重新登录。
               </div>
             </>
           )}
-        </div>
-      </div>
+		</div>
+		{showResetHelp && <ResetHelp onClose={() => setShowResetHelp(false)}/>}
+	</div>
     </div>
   )
 }
+
+function ResetHelp({ onClose }) {
+	return (
+		<div role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }} style={{
+			position: 'fixed', inset: 0, zIndex: 100, display: 'grid', placeItems: 'center', padding: 20,
+			background: 'rgba(15,23,42,0.42)', backdropFilter: 'blur(3px)',
+		}}>
+			<div role="dialog" aria-modal="true" aria-labelledby="reset-help-title" style={{
+				width: 430, maxWidth: '100%', borderRadius: 10, background: '#fff',
+				boxShadow: '0 24px 70px rgba(15,23,42,0.25)', overflow: 'hidden',
+			}}>
+				<div style={{ padding: '16px 18px', borderBottom: `1px solid ${T.borderSoft}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+					<div id="reset-help-title" style={{ flex: 1, fontSize: 15, fontWeight: 700, color: T.ink }}>重置本地登录密码</div>
+					<button type="button" onClick={onClose} aria-label="关闭" style={{ width: 30, height: 30, border: 'none', background: 'transparent', color: T.ink3, cursor: 'pointer' }}>
+						<Icon name="x" size={16} stroke={2}/>
+					</button>
+				</div>
+				<div style={{ padding: 18, color: T.ink2, fontSize: 12.5, lineHeight: 1.75 }}>
+					<div>在 DevBox 主机上编辑生效配置，将 <code style={codeStyle}>auth.password</code> 更新为新密码，或设置 <code style={codeStyle}>DEVBOX_AUTH_PASSWORD</code>。</div>
+					<div style={{ marginTop: 10 }}>随后通过当前部署使用的 supervisor、systemd 或容器编排方式重启 DevBox。配置文件默认从 <code style={codeStyle}>/etc/devbox/config.yaml</code> 读取。</div>
+					<div style={{ marginTop: 10, color: T.ink3 }}>密码不会通过网页或邮件找回；已有会话会在进程重启后失效。</div>
+				</div>
+				<div style={{ padding: '12px 18px', borderTop: `1px solid ${T.borderSoft}`, display: 'flex', justifyContent: 'flex-end' }}>
+					<button type="button" onClick={onClose} style={{ height: 34, padding: '0 14px', borderRadius: 7, border: 'none', background: T.blue, color: '#fff', fontWeight: 600, cursor: 'pointer' }}>知道了</button>
+				</div>
+			</div>
+		</div>
+	)
+}
+
+const codeStyle = { padding: '2px 5px', borderRadius: 4, background: '#f1f5f9', color: '#0f172a', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }
 
 // ─── Style constants ──────────────────────────────────────────────
 const T = {
@@ -286,36 +329,6 @@ const loginCSS = `
     .login-brand { display: none !important; }
   }
 `
-
-// ─── CloudChip ────────────────────────────────────────────────────
-function CloudChip({ online }) {
-  const palette = online === null
-    ? { bg: 'rgba(148,163,184,0.12)', fg: '#cbd5e1', border: 'rgba(148,163,184,0.3)', dot: '#94a3b8' }
-    : online
-    ? { bg: 'rgba(16,185,129,0.14)', fg: '#6ee7b7', border: 'rgba(16,185,129,0.3)', dot: '#34d399' }
-    : { bg: 'rgba(245,158,11,0.14)', fg: '#fcd34d', border: 'rgba(245,158,11,0.32)', dot: '#fbbf24' }
-
-  const label = online === null
-    ? '检测云端连接…'
-    : online
-    ? '设备在线 · 已连接云端'
-    : '云端离线 · 将使用本地缓存凭据'
-
-  return (
-    <div style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      alignSelf: 'flex-start', padding: '5px 10px', borderRadius: 999,
-      background: palette.bg, color: palette.fg, border: `1px solid ${palette.border}`,
-      fontSize: 11.5, fontWeight: 600,
-    }}>
-      <span style={{
-        width: 6, height: 6, borderRadius: '50%', background: palette.dot,
-        boxShadow: online ? `0 0 6px ${palette.dot}` : 'none',
-      }}/>
-      {label}
-    </div>
-  )
-}
 
 // ─── BrandStats ───────────────────────────────────────────────────
 // 3 个可能卡片：算力 / 统一内存 / 在线时长。每个独立判断"有字段才渲染"。
