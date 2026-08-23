@@ -201,7 +201,7 @@ func classify(name string) string {
 		return "tunnel"
 	case strings.HasPrefix(name, "wl"):
 		return "wireless"
-	case strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "br-") || strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "virbr") || strings.HasPrefix(name, "cni"):
+	case strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "br-") || strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "vnet") || strings.HasPrefix(name, "virbr") || strings.HasPrefix(name, "cni") || strings.HasPrefix(name, "cali") || strings.HasPrefix(name, "flannel"):
 		return "virtual"
 	default:
 		return "ethernet"

@@ -72,6 +72,15 @@ func TestTOTPEnrollmentRecoveryAndEncryptedPersistence(t *testing.T) {
 	if !reloaded.VerifySecondFactor(code, time.Now()) {
 		t.Fatal("TOTP code should work after reload")
 	}
+	if err := reloaded.Update(SettingsUpdate{HTTPPort: 9090, HTTPSPort: 9443, ForceTwoFactor: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reloaded.DisableTOTP(); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Settings().TOTPEnabled || reloaded.Settings().ForceTwoFactor {
+		t.Fatal("disabling TOTP must also clear forced two-factor state")
+	}
 }
 
 func TestBanManagerWindowExpiryAndManualUnban(t *testing.T) {
@@ -146,13 +155,37 @@ func TestSettingsValidation(t *testing.T) {
 	if err := s.UpdatePreview(bad); err == nil {
 		t.Fatal("expected force-2FA before enrollment rejection")
 	}
+	bad = base
+	bad.ShareDomain = "javascript:alert(1)"
+	if err := s.UpdatePreview(bad); err == nil {
+		t.Fatal("expected invalid share URL rejection")
+	}
+	good := base
+	good.ShareDomain = "https://share.example.com/files"
+	if err := s.UpdatePreview(good); err != nil {
+		t.Fatalf("valid share URL rejected: %v", err)
+	}
 }
 
 func TestInitialHTTPPortPersistsWithoutOverwritingUserSetting(t *testing.T) {
-	dir:=t.TempDir();path:=filepath.Join(dir,"settings.json");key:=filepath.Join(dir,"master.key")
-	store,err:=NewStore(path,key);if err!=nil{t.Fatal(err)}
-	if err:=store.InitializeHTTPPort(9133);err!=nil{t.Fatal(err)}
-	reloaded,err:=NewStore(path,key);if err!=nil{t.Fatal(err)}
-	if err:=reloaded.InitializeHTTPPort(9999);err!=nil{t.Fatal(err)}
-	if got:=reloaded.Settings().HTTPPort;got!=9133{t.Fatalf("persisted HTTP port overwritten: %d",got)}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	key := filepath.Join(dir, "master.key")
+	store, err := NewStore(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InitializeHTTPPort(9133); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := NewStore(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reloaded.InitializeHTTPPort(9999); err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.Settings().HTTPPort; got != 9133 {
+		t.Fatalf("persisted HTTP port overwritten: %d", got)
+	}
 }

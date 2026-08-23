@@ -10,6 +10,7 @@ import (
 
 	"github.com/a2d2-dev/devbox/pkg/auth"
 	"github.com/a2d2-dev/devbox/pkg/security"
+	"github.com/pquerna/otp/totp"
 )
 
 func TestLoginFailuresTriggerBanAndManualUnban(t *testing.T) {
@@ -64,5 +65,49 @@ func TestLoginRequiresConfiguredAccessCode(t *testing.T) {
 	}
 	if got := login("shared"); got != http.StatusOK {
 		t.Fatalf("correct access code=%d", got)
+	}
+}
+
+func TestLoginAcceptsTOTPAndOneTimeRecoveryCode(t *testing.T) {
+	store, err := security.NewStore("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := store.BeginTOTP("DevBox", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := totp.GenerateCode(enrollment.Secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryCodes, err := store.ConfirmTOTP(code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{auth: auth.New(auth.Config{Password: "correct"}), security: store, bans: security.NewBanManager(security.BanRule{})}
+	login := func(otp string) int {
+		body, _ := json.Marshal(map[string]string{"password": "correct", "otp": otp})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/verify", bytes.NewReader(body))
+		req.RemoteAddr = "10.0.0.10:42"
+		w := httptest.NewRecorder()
+		s.handleAuthVerify(w, req)
+		return w.Code
+	}
+	if got := login(""); got != http.StatusPreconditionRequired {
+		t.Fatalf("missing TOTP=%d", got)
+	}
+	code, err = totp.GenerateCode(enrollment.Secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := login(code); got != http.StatusOK {
+		t.Fatalf("valid TOTP=%d", got)
+	}
+	if got := login(recoveryCodes[0]); got != http.StatusOK {
+		t.Fatalf("valid recovery code=%d", got)
+	}
+	if got := login(recoveryCodes[0]); got != http.StatusUnauthorized {
+		t.Fatalf("reused recovery code=%d", got)
 	}
 }

@@ -132,7 +132,7 @@ func PreviewSSH(current SSHStatus, change SSHChange, occupied []Listener) (strin
 			return "", fmt.Errorf("port %d is already in use by %s", change.Port, l.Process)
 		}
 	}
-	allowedRoot := map[string]bool{"no": true, "prohibit-password": true, "yes": true}
+	allowedRoot := map[string]bool{"no": true, "prohibit-password": true, "without-password": true, "yes": true}
 	if !allowedRoot[change.PermitRootLogin] {
 		return "", errors.New("invalid PermitRootLogin value")
 	}
@@ -243,16 +243,20 @@ func RenderFirewall(rules []FirewallRule, sessionIP string) (FirewallPreview, er
 			if err := ValidatePort(rule.Port); err != nil {
 				return FirewallPreview{}, err
 			}
+			if rule.Protocol == "any" {
+				return FirewallPreview{}, errors.New("protocol must be tcp or udp when a port is specified")
+			}
 		}
 		if rule.Source != "" && rule.Source != "any" {
 			if err := ValidateIPOrCIDR(rule.Source); err != nil {
 				return FirewallPreview{}, err
 			}
 		}
-		if rule.Interface == "tun0" && rule.Action == "allow" && rule.Direction == "in" {
+		unrestrictedInboundAllow := rule.Direction == "in" && rule.Action == "allow" && rule.Protocol == "any" && rule.Port == 0
+		if unrestrictedInboundAllow && rule.Interface == "tun0" {
 			hasTunnel = true
 		}
-		if rule.Source == sessionIP && rule.Action == "allow" && rule.Direction == "in" {
+		if unrestrictedInboundAllow && rule.Source == sessionIP {
 			hasSession = true
 		}
 		chain := "input"

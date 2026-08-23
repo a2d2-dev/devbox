@@ -1,6 +1,27 @@
 import { useState, useEffect } from 'react'
 import { Icon } from '../icons'
 
+// humanizeAuthError 把 /auth/login 失败响应映射成给用户看的中文提示。
+// OIDC 标准 error code 直接返「invalid_grant」/「invalid_client」这种术语
+// 用户看不懂；这里集中翻译。未识别的 code 回退到原 error_description / error。
+const AUTH_ERROR_MAP = {
+  invalid_grant:        '用户名或密码错误',
+  invalid_client:       '客户端配置错误，请联系管理员',
+  invalid_request:      '请求格式错误',
+  unauthorized_client:  '客户端未授权，请联系管理员',
+  unsupported_grant_type: '不支持的认证方式',
+  invalid_scope:        '权限范围错误',
+  access_denied:        '访问被拒绝',
+  server_error:         '云端认证服务异常',
+  temporarily_unavailable: '云端认证服务暂时不可用',
+}
+function humanizeAuthError(data) {
+  if (!data) return '登录失败'
+  const mapped = AUTH_ERROR_MAP[data.error]
+  if (mapped) return mapped
+  return data.error_description || data.error || '登录失败'
+}
+
 // LoginScreen v3 — 按 Edge-X 登录设计稿（local-dash.zip / login-final.png）落地
 //
 // 设计意图：「这台机器是谁」比「你是谁」更重要 —— 左侧 brand panel 用 K8s Node
@@ -33,11 +54,12 @@ export function LoginScreen({ onLogin, deviceName }) {
   const [showPwd, setShowPwd] = useState(false)
   const [phase, setPhase] = useState('idle') // idle | verifying | success
   const [error, setError] = useState('')
-  const cloudOnline = null
+  const [cloudOnline, setCloudOnline] = useState(null)
   const [about, setAbout] = useState(null)
   const clock = useLoginClock()
 
   // devbox 无云端管理面 —— cloudOnline 始终 null，品牌面板对应段不渲染。
+  // 保留 setCloudOnline hook 只是给上层组件读的兜底 (null → 不显示 badge)。
 
   // 设备信息 —— devbox 用 /api/v1/device (免鉴权白名单)，字段映射到
   // LoginScreen 原本的 about schema (deviceName/model/computePower/osVersion/…)。
@@ -96,7 +118,7 @@ export function LoginScreen({ onLogin, deviceName }) {
         return
       }
       if (!r.ok || !data.authenticated) {
-        setError(data.message || '密码错误')
+        setError(data.message || data.error || '密码错误')
         setPhase('idle')
         return
       }

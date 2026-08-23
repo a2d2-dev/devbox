@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,6 +176,12 @@ func (s *Store) UpdatePreview(update SettingsUpdate) error {
 	if update.MaxUploadBytesSec < 0 || update.MaxDownloadBytesSec < 0 {
 		return errors.New("speed limits cannot be negative")
 	}
+	if update.ShareDomain != "" {
+		u, err := url.ParseRequestURI(strings.TrimSpace(update.ShareDomain))
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+			return errors.New("share domain must be an HTTP or HTTPS URL without credentials")
+		}
+	}
 	s.mu.RLock()
 	configured, totpEnabled := s.data.AccessCodeHash != "", s.data.TOTPEnabled
 	s.mu.RUnlock()
@@ -282,6 +289,7 @@ func (s *Store) DisableTOTP() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data.TOTPSecret, s.data.PendingTOTP, s.data.RecoveryHashes = "", "", nil
+	s.data.ForceTwoFactor = false
 	s.syncPublicFlags()
 	return s.saveLocked()
 }

@@ -148,6 +148,11 @@ func (s *Server) validateSettings(req security.SettingsUpdate) error {
 	if err := s.security.UpdatePreview(req); err != nil {
 		return err
 	}
+	if req.HTTPSCertificate != "" {
+		if _, _, err := s.certificates.Paths(req.HTTPSCertificate); err != nil {
+			return err
+		}
+	}
 	if req.DDNSProvider != "" {
 		if err := devnetwork.ValidateDDNS(devnetwork.DDNSConfig{
 			Provider: req.DDNSProvider, Domain: req.DDNSDomain,
