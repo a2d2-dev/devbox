@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { authFetch, clearAuth, setAuthToken } from './useApi'
+import { authFetch, clearAuth, setAuthRequired } from './useApi'
 
 describe('authFetch authentication state', () => {
   afterEach(() => {
     clearAuth()
+    setAuthRequired(true)
     vi.unstubAllGlobals()
   })
 
@@ -20,7 +21,7 @@ describe('authFetch authentication state', () => {
   it('sends requests without an Authorization header after no-auth login', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    setAuthToken('')
+    setAuthRequired(false)
 
     const response = await authFetch('/api/v1/downloads')
 
@@ -31,8 +32,9 @@ describe('authFetch authentication state', () => {
   it('returns to the pre-login state after logout', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    setAuthToken('')
+    setAuthRequired(false)
     clearAuth()
+    setAuthRequired(true)
 
     const response = await authFetch('/api/v1/downloads')
 

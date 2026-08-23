@@ -145,3 +145,34 @@ button, input { font-family: inherit; }
     -webkit-backdrop-filter: none;
   }
 }
+@media (max-width: 760px) {
+  .desktop-layout {
+    padding: 16px 16px 100px !important;
+  }
+
+  .desktop-layout-grid {
+    display: flex !important;
+    flex-direction: column;
+    gap: 18px !important;
+  }
+
+  .desktop-sidebar {
+    width: 100%;
+  }
+
+  .desktop-launcher-widgets {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .desktop-deployed-empty {
+    flex-wrap: wrap;
+  }
+
+  .desktop-deployed-empty button {
+    width: 100%;
+  }
+
+  .desktop-dock-empty {
+    display: none;
+  }
+}

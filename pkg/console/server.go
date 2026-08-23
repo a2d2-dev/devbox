@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,6 +41,8 @@ type Config struct {
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
+	// AppsDir 是 Compose 受管应用文件根，由 compose.data_dir 派生。
+	AppsDir string `mapstructure:"-"`
 	// BrowserDataPath 浏览器应用的书签/历史 JSON 路径；空 = /etc/devbox/browser.json。
 	BrowserDataPath string `mapstructure:"browser_data_path"`
 	// BrowserInsecureTLS 浏览器代理是否跳过远端 TLS 校验（内网自签证书场景），默认 false。
@@ -73,6 +76,7 @@ type Server struct {
 	browserClient        *http.Client  // 浏览器代理复用的 HTTP client（剥离嵌套限制头）
 	downloadEngine       *downloads.Engine
 	downloadEngineError  string
+	onboarding           *onboardingStore
 }
 
 // NewServer 创建控制台服务器
@@ -86,7 +90,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		storeManager:         storeMgr,
 		catalogs:             cfg.Catalogs,
 		catalogSourceManager: cfg.CatalogSourceManager,
-		fileBrowser:          files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
+		fileBrowser:          files.NewBrowser(files.Config{RootDir: cfg.WorkDir, AppsDir: cfg.AppsDir}),
 		modelScanner:         models.NewScanner(models.Config{}),
 		alertEngine:          alerts.NewEngine(col),
 		auth: auth.New(auth.Config{
@@ -100,6 +104,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		vmManager:     vms.NewManager(),
 		browser:       newBrowserStore(cfg.BrowserDataPath),
 		browserClient: newBrowserClient(cfg.BrowserInsecureTLS),
+		onboarding:    newOnboardingStore(onboardingPath(cfg.BrowserDataPath)),
 	}
 	downloadEngine, err := downloads.New(downloads.Config{RootDir: cfg.WorkDir, MaxConcurrent: 3})
 	if err != nil {
@@ -134,6 +139,7 @@ func (s *Server) authGate(inner http.Handler) http.Handler {
 		// devbox 侧固定返回"离线"占位，无敏感数据，公开访问以避免登录页 401 噪音。
 		if !strings.HasPrefix(p, "/api/v1/") ||
 			strings.HasPrefix(p, "/api/v1/auth/") ||
+			strings.HasPrefix(p, "/api/v1/files/public/") ||
 			p == "/api/v1/health" ||
 			p == "/api/v1/device" ||
 			p == "/api/v1/cloud/status" ||
@@ -257,6 +263,7 @@ func (s *Server) registerRoutes() {
 
 	// 认证路由
 	s.registerAuthRoutes()
+	s.registerOnboardingRoutes()
 
 	// 浏览器应用（代理 + 书签/历史）
 	s.registerBrowserRoutes()
@@ -267,6 +274,13 @@ func (s *Server) registerRoutes() {
 	// 静态文件兜底
 	fileServer := http.FileServer(staticFS)
 	s.mux.Handle("/", fileServer)
+}
+
+func onboardingPath(browserDataPath string) string {
+	if browserDataPath == "" {
+		return "/etc/devbox/onboarding.json"
+	}
+	return filepath.Join(filepath.Dir(browserDataPath), "onboarding.json")
 }
 
 // --- JSON helpers ---
