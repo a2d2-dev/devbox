@@ -68,6 +68,9 @@ func TestVersionedIncrementalBackupAndRetention(t *testing.T) {
 	if firstHistory[0].Status != StatusSuccess {
 		t.Fatalf("first backup failed: %+v", firstHistory[0])
 	}
+	if firstHistory[0].TransferredBytes == 0 {
+		t.Fatalf("first backup did not record transferred bytes: %+v", firstHistory[0])
+	}
 	firstVersion := firstHistory[0].Version
 	firstInfo, err := os.Stat(filepath.Join(target, firstVersion, "stable.txt"))
 	if err != nil {
@@ -150,6 +153,9 @@ func TestRestoreRequiresPreviewAndRestoresConflict(t *testing.T) {
 	restoreHistory := waitForHistory(t, manager, created.ID, 2)
 	if restoreHistory[0].Kind != RunRestore || restoreHistory[0].Status != StatusSuccess {
 		t.Fatalf("restore failed: %+v", restoreHistory[0])
+	}
+	if restoreHistory[0].TransferredBytes == 0 {
+		t.Fatalf("restore did not record transferred bytes: %+v", restoreHistory[0])
 	}
 	content, err := os.ReadFile(filepath.Join(restore, "config.txt"))
 	if err != nil || string(content) != "from-backup" {
@@ -308,8 +314,11 @@ func TestConcurrencyLimitQueuesSecondRun(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")
 	mustMkdir(t, bin)
+	release := filepath.Join(root, "release-rsync")
+	t.Setenv("BACKUP_TEST_RELEASE", release)
+	defer func() { _ = os.WriteFile(release, []byte("release"), 0o600) }()
 	script := filepath.Join(bin, "rsync")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 3\necho 'Total transferred file size: 0 bytes'\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile [ ! -e \"$BACKUP_TEST_RELEASE\" ]; do sleep 0.05; done\necho 'Total transferred file size: 0 bytes'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -352,6 +361,7 @@ func TestConcurrencyLimitQueuesSecondRun(t *testing.T) {
 	if !observedLimit {
 		t.Fatal("did not observe one running task and one queued task at concurrency 1")
 	}
+	mustWrite(t, release, "release")
 	for _, id := range ids {
 		histories := waitForHistory(t, manager, id, 1)
 		if histories[0].Status != StatusSuccess {

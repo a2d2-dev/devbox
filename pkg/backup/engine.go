@@ -70,7 +70,7 @@ func (e *engine) runBackup(ctx context.Context, task Task) (version string, tran
 		destination = task.Target
 	}
 
-	args := []string{"--archive", "--stats", "--itemize-changes", "--human-readable"}
+	args := []string{"--archive", "--stats", "--itemize-changes"}
 	if task.Delete {
 		args = append(args, "--delete")
 	}
@@ -387,7 +387,7 @@ func (e *engine) runRestore(ctx context.Context, task Task, request RestoreReque
 	if err != nil {
 		return 0, "", err
 	}
-	args := []string{"--archive", "--checksum", "--stats", "--itemize-changes", "--human-readable"}
+	args := []string{"--archive", "--checksum", "--stats", "--itemize-changes"}
 	args = addRemoteShell(args, source, destination)
 	args = append(args, endpointSpec(source, true), endpointSpec(destination, true))
 	out, err := command(ctx, "rsync", args...)
