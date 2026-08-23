@@ -730,6 +730,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
 
   const filteredList = storeApps.filter((a) => matchesAppCenterFilters(a, { view: tab, source: sourceFilter, category: cat, query: q }));
   const list = tab === 'latest' ? sortNewest(filteredList) : filteredList;
+  const featuredApps = tab === 'all' ? list.filter((app) => app.pinned).slice(0, 4) : [];
 
   // 状态：未配置任何来源 / 平台错误 / catalog 单源错误但缓存可用。
   const noSourcesConfigured = !platformApps && !catalogApps && sources.length === 0 && !storeErr && !catalogErr;
@@ -858,10 +859,10 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
           </button>
         </div>
 
-        {/* Featured（pinned）— 仅 all tab + 平台 pinned */}
-        {tab === 'all' && sourceFilter !== 'platform' && storeApps.filter((a) => a.pinned).length > 0 && (
+        {/* Featured（pinned）— 仅 all tab，且遵循当前组合筛选 */}
+        {featuredApps.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
-            {storeApps.filter((a) => a.pinned).slice(0, 4).map((f, i) => (
+            {featuredApps.map((f, i) => (
               <div key={i} style={{ padding: '20px 22px', borderRadius: 12, background: f.bg, color: 'white', position: 'relative', overflow: 'hidden', minHeight: 140, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 4px 14px -4px rgba(15,23,42,0.18)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)' }}>
