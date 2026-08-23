@@ -38,8 +38,8 @@ function stateBadgeStyle(state) {
   };
 }
 
-function fmtBytes(n) {
-  if (!n || n < 0) return '-';
+export function fmtBytes(n) {
+  if (n == null || n < 0) return '-';
   if (n >= 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
   if (n >= 1024) return (n / 1024).toFixed(0) + ' KB';
@@ -61,7 +61,7 @@ function fmtCPU(value) {
   return value == null ? '采样中' : `${value.toFixed(1)}%`
 }
 
-function fmtRate(value, status = 'available') {
+export function fmtRate(value, status = 'available') {
   if (status !== 'available') return status === 'unsupported' ? '不支持' : '无数据'
   if (value == null) return '采样中'
   return `${fmtBytes(value)}/s`

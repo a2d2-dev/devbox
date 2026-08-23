@@ -53,6 +53,8 @@ Issue #18 在现有监控、进程、Supervisor 和审计页面上补齐资源�
 
 返回 Supervisor 服务及其 CPU、CPU 时间、运行时长、内存、磁盘读写和监听端口。Linux 没有通用的逐进程网络字节计数，因此 `networkStatus` 明确返回 `unsupported`，不伪造为 0。
 
+前端将可检测到的零磁盘吞吐显示为 `0 B/s`；首次采样、读取失败和平台不支持分别显示“采样中”“无数据”和“不支持”，避免把缺失指标误写成 0，也避免把真实零值误写成缺失。
+
 ## 系统日志
 
 系统事件和操作审计统一存储为 `/var/lib/devbox/system-events.jsonl`，文件权限为 `0600`；开发和测试环境可用 `DEVBOX_SYSTEM_LOG_PATH` 覆盖路径。登录成功/失败、Supervisor 服务控制、应用安装/启停/卸载、终止进程和清空日志都写入该存储。payload 在写入前按敏感 key 和内联 `key=value` 模式脱敏。
