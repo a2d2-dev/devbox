@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/a2d2-dev/devbox/pkg/links"
 	"github.com/a2d2-dev/devbox/pkg/models"
 	"github.com/a2d2-dev/devbox/pkg/supervisor"
+	"github.com/a2d2-dev/devbox/pkg/users"
 	"github.com/a2d2-dev/devbox/pkg/vms"
 	"go.uber.org/zap"
 )
@@ -43,6 +45,9 @@ type Config struct {
 	BrowserDataPath string `mapstructure:"browser_data_path"`
 	// BrowserInsecureTLS 浏览器代理是否跳过远端 TLS 校验（内网自签证书场景），默认 false。
 	BrowserInsecureTLS bool `mapstructure:"browser_insecure_tls"`
+	// UsersDataPath is optional for tests and custom embedding. The main service
+	// stores users.db beside browser_data_path by default.
+	UsersDataPath string `mapstructure:"users_data_path"`
 	// Catalogs 第三方 HTTP/Git catalog source 聚合器（Issue #2 阶段4 扩展）。
 	// 为 nil 表示未配置 catalog（UI 隐藏 catalog 区）。
 	Catalogs             *apps.CatalogSet           `mapstructure:"-"`
@@ -63,6 +68,7 @@ type Server struct {
 	modelScanner         *models.Scanner
 	alertEngine          *alerts.Engine
 	auth                 *auth.Auth
+	users                *users.Store
 	supervisorMgr        *supervisor.Manager
 	hardware             *hardware.Collector
 	links                *links.Registry
@@ -74,6 +80,22 @@ type Server struct {
 
 // NewServer 创建控制台服务器
 func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, controller apps.Controller, storeMgr *apps.StoreManager) *Server {
+	usersPath := cfg.UsersDataPath
+	if usersPath == "" {
+		if cfg.BrowserDataPath != "" {
+			usersPath = filepath.Join(filepath.Dir(cfg.BrowserDataPath), "users.db")
+		} else {
+			usersPath = "/etc/devbox/users.db"
+		}
+	}
+	var userStore *users.Store
+	if err := os.MkdirAll(filepath.Dir(usersPath), 0o750); err != nil {
+		logger.Error("User database directory unavailable", zap.String("path", usersPath), zap.Error(err))
+	} else if opened, err := users.Open(usersPath); err != nil {
+		logger.Error("User database unavailable", zap.String("path", usersPath), zap.Error(err))
+	} else {
+		userStore = opened
+	}
 	s := &Server{
 		config:               cfg,
 		logger:               logger,
@@ -86,9 +108,11 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 		fileBrowser:          files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
 		modelScanner:         models.NewScanner(models.Config{}),
 		alertEngine:          alerts.NewEngine(col),
+		users:                userStore,
 		auth: auth.New(auth.Config{
 			Password:   cfg.AuthPassword,
 			SessionTTL: cfg.AuthSessionTTL,
+			Users:      userStore,
 		}),
 		supervisorMgr: supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
 		hardware:      hardware.New(60 * time.Second),
@@ -232,6 +256,9 @@ func (s *Server) registerRoutes() {
 
 	// 硬件清单路由
 	s.registerHardwareRoutes()
+
+	// Console accounts, groups and file-root grants.
+	s.registerUserRoutes()
 
 	// 服务导航路由 (tkeel-links 的功能吸收)
 	s.registerLinksRoutes()

@@ -18,6 +18,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
+		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -34,7 +35,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, ok := s.auth.Verify(req.Password)
+	token, principal, ok := s.auth.VerifyCredentials(req.Username, req.Password)
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -48,6 +49,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	s.jsonOK(w, map[string]interface{}{
 		"authenticated": true,
 		"token":         token,
+		"user":          principal,
 		"message":       "验证成功",
 	})
 }
@@ -55,17 +57,22 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	enabled := s.auth != nil && s.auth.Enabled()
 	authenticated := false
+	var principal interface{}
 
 	if s.auth != nil {
 		token := r.Header.Get("Authorization")
 		if token == "" {
 			token = r.URL.Query().Get("token")
 		}
-		authenticated = s.auth.ValidateToken(token)
+		if p, ok := s.auth.Principal(token); ok {
+			authenticated = true
+			principal = p
+		}
 	}
 
 	s.jsonOK(w, map[string]interface{}{
 		"enabled":       enabled,
 		"authenticated": authenticated,
+		"user":          principal,
 	})
 }

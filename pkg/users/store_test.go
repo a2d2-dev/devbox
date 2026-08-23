@@ -1,0 +1,67 @@
+package users
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func testStore(t *testing.T) *Store {
+	t.Helper()
+	s, err := Open(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func TestValidation(t *testing.T) {
+	require.ErrorIs(t, ValidateUsername("x"), ErrInvalidUsername)
+	require.NoError(t, ValidateUsername("dev.user-1"))
+	require.ErrorIs(t, ValidatePassword("alllowercase"), ErrWeakPassword)
+	require.NoError(t, ValidatePassword("Devbox-2026"))
+}
+
+func TestUsersAuthenticateAndProtectLastAdmin(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	admin, err := s.CreateUser(ctx, CreateUser{Username: "admin", DisplayName: "Admin", Password: "Devbox-2026", Role: RoleAdmin, Enabled: true})
+	require.NoError(t, err)
+	_, ok := s.Authenticate(ctx, "admin", "Devbox-2026")
+	require.True(t, ok)
+	_, ok = s.Authenticate(ctx, "admin", "wrong")
+	require.False(t, ok)
+	require.ErrorIs(t, s.DeleteUser(ctx, admin.ID), ErrLastAdmin)
+	user, err := s.CreateUser(ctx, CreateUser{Username: "developer", Password: "Developer-2026", Role: RoleUser, Enabled: true})
+	require.NoError(t, err)
+	_, err = s.CreateUser(ctx, CreateUser{Username: "DEVELOPER", Password: "Different-2026", Role: RoleUser, Enabled: true})
+	require.ErrorIs(t, err, ErrConflict)
+	role := RoleAdmin
+	_, err = s.UpdateUser(ctx, user.ID, UpdateUser{Role: &role})
+	require.NoError(t, err)
+	require.NoError(t, s.DeleteUser(ctx, admin.ID))
+}
+
+func TestGroupAndDirectRootAuthorization(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	u, err := s.CreateUser(ctx, CreateUser{Username: "developer", Password: "Developer-2026", Role: RoleUser, Enabled: true})
+	require.NoError(t, err)
+	direct, err := s.CreateRoot(ctx, "Models", "/data/models")
+	require.NoError(t, err)
+	shared, err := s.CreateRoot(ctx, "Datasets", "/data/datasets")
+	require.NoError(t, err)
+	require.NoError(t, s.SetUserRoots(ctx, u.ID, []string{direct.ID}))
+	g, err := s.CreateGroup(ctx, "ML Team", "", []string{u.ID})
+	require.NoError(t, err)
+	require.NoError(t, s.SetGroupRoots(ctx, g.ID, []string{shared.ID}))
+	paths, err := s.AllowedPaths(ctx, u.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"/data/models", "/data/datasets"}, paths)
+	require.NoError(t, s.DeleteRoot(ctx, direct.ID))
+	ids, err := s.UserRootIDs(ctx, u.ID)
+	require.NoError(t, err)
+	require.Empty(t, ids)
+	require.True(t, errors.Is(s.DeleteRoot(ctx, "missing"), ErrNotFound))
+}

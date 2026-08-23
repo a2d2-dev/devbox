@@ -2,12 +2,15 @@ package console
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
+	"github.com/a2d2-dev/devbox/pkg/auth"
 	"go.uber.org/zap"
 )
 
@@ -28,10 +31,24 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Query().Get("path")
+	allowed, err := s.authorizedFilePaths(r, path, true)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	entries, err := s.fileBrowser.List(path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if allowed != nil {
+		filtered := entries[:0]
+		for _, entry := range entries {
+			if pathWithinAny(entry.AbsPath, allowed, true) {
+				filtered = append(filtered, entry)
+			}
+		}
+		entries = filtered
 	}
 	s.jsonOK(w, entries)
 }
@@ -55,6 +72,10 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := r.FormValue("path")
+	if _, err := s.authorizedFilePaths(r, path, false); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	name := r.FormValue("name")
 
 	file, header, err := r.FormFile("file")
@@ -104,6 +125,10 @@ func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if _, err := s.authorizedFilePaths(r, r.URL.Query().Get("path"), false); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	full, err := s.fileBrowser.ResolveFile(r.URL.Query().Get("path"), r.URL.Query().Get("name"))
 	if err != nil {
 		msg := err.Error()
@@ -120,6 +145,49 @@ func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFile(w, r, full)
+}
+
+func (s *Server) authorizedFilePaths(r *http.Request, requested string, allowAncestor bool) ([]string, error) {
+	if s.users == nil {
+		return nil, nil
+	}
+	p, ok := auth.PrincipalFromContext(r.Context())
+	if !ok || p.IsAdmin() || p.Legacy {
+		return nil, nil
+	}
+	paths, err := s.users.AllowedPaths(r.Context(), p.UserID)
+	if err != nil {
+		return nil, err
+	}
+	work := s.config.WorkDir
+	if work == "" {
+		work = "/data"
+	}
+	target := requested
+	if target == "" {
+		target = work
+	} else if !filepath.IsAbs(target) {
+		target = filepath.Join(work, target)
+	}
+	target = filepath.Clean(target)
+	if !pathWithinAny(target, paths, allowAncestor) {
+		return nil, errors.New("access denied: path is not assigned to this account")
+	}
+	return paths, nil
+}
+
+func pathWithinAny(path string, roots []string, allowAncestor bool) bool {
+	path = filepath.Clean(path)
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
+			return true
+		}
+		if allowAncestor && strings.HasPrefix(root, path+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {

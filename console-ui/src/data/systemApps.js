@@ -22,6 +22,7 @@ export const SYSTEM_APPS = [
   { id: 'supervisor',          kind: 'system', name: '进程守护', icon: 'shield',    color: '#0d9488', bg: 'linear-gradient(160deg,#14b8a6,#0f766e)' },
   { id: 'virtual-machines',    kind: 'system', name: '虚拟机',   icon: 'server',    color: '#155e75', bg: 'linear-gradient(160deg,#22d3ee,#155e75)' },
   { id: 'hardware',            kind: 'system', name: '硬件中心', icon: 'cpu',       color: '#7c3aed', bg: 'linear-gradient(160deg,#a855f7,#6d28d9)' },
+	{ id: 'users',               kind: 'system', name: '用户与权限', icon: 'user',     color: '#0f766e', bg: 'linear-gradient(160deg,#14b8a6,#0f766e)' },
   { id: 'links',               kind: 'system', name: '服务导航', icon: 'network',   color: '#0369a1', bg: 'linear-gradient(160deg,#38bdf8,#0369a1)' },
   { id: 'disks',               kind: 'system', name: '磁盘',     icon: 'hardDrive', color: '#1e40af', bg: 'linear-gradient(160deg,#3b82f6,#1e3a8a)' },
   { id: 'network-connections', kind: 'system', name: '网络连接', icon: 'network',   color: '#0e7490', bg: 'linear-gradient(160deg,#06b6d4,#0e7490)' },

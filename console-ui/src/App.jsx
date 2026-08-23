@@ -47,6 +47,7 @@ import AuditLog from './pages/AuditLog'
 import Supervisor from './pages/Supervisor'
 import VirtualMachines from './pages/VirtualMachines'
 import Hardware from './pages/Hardware'
+import Users from './pages/Users'
 import Links from './pages/Links'
 import Diagnostics from './pages/Settings'
 import { AppShell } from './components/AppShell'
@@ -383,9 +384,9 @@ export default function App() {
     actions: {
       'toggle-shortcut-help': () => setShortcutHelpOpen(open => !open),
       'show-desktop': showDesktop,
-      'minimize-window': minimizeWindow,
+	  'minimize-window': () => { if (activeId) minimizeApp(activeId); },
       'toggle-maximized': () => setMaximized(current => !current),
-      'close-window': closeWindow,
+	  'close-window': () => { if (activeId) closeApp(activeId); },
       'focus-dock-app': (index) => {
         const app = shortcutDockApps[index];
         if (app) focusApp(app.id);
@@ -534,9 +535,10 @@ export default function App() {
                 {appId === 'supervisor'&& <Supervisor/>}
                 {appId === 'virtual-machines' && <VirtualMachines/>}
                 {appId === 'hardware'  && <Hardware/>}
+	                {appId === 'users'     && <Users/>}
                 {appId === 'links'     && <Links/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','compose-manager','alerts','audit','supervisor','virtual-machines','hardware','links','diag','settings'].includes(appId)
+	                {!['dashboard','store','compose-manager','alerts','audit','supervisor','virtual-machines','hardware','users','links','diag','settings'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)}/>}
 
