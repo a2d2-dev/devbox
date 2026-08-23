@@ -39,39 +39,47 @@ type Config struct {
 	// WorkDir 是文件浏览器的工作区根（chroot 语义）。留空默认 /data。
 	// 前端「工作区」= 这里，path="" 落到这里，越界返 403。
 	WorkDir string `mapstructure:"work_dir"`
+	// Catalogs 第三方 HTTP/Git catalog source 聚合器（Issue #2 阶段4 扩展）。
+	// 为 nil 表示未配置 catalog（UI 隐藏 catalog 区）。
+	Catalogs             *apps.CatalogSet           `mapstructure:"-"`
+	CatalogSourceManager *apps.CatalogSourceManager `mapstructure:"-"`
 }
 
 // Server 本地控制台 HTTP 服务器
 type Server struct {
-	config        Config
-	logger        *zap.Logger
-	mux           *http.ServeMux
-	collector     *collector.Collector
-	appManager    *apps.Manager
-	storeManager  *apps.StoreManager
-	fileBrowser   *files.Browser
-	modelScanner  *models.Scanner
-	alertEngine   *alerts.Engine
-	auth          *auth.Auth
-	supervisorMgr *supervisor.Manager
-	hardware      *hardware.Collector
-	links         *links.Registry
-	gpuHistory    *gpuhistory.Collector
-	vmManager     *vms.Manager
+	config               Config
+	logger               *zap.Logger
+	mux                  *http.ServeMux
+	collector            *collector.Collector
+	controller           apps.Controller
+	storeManager         *apps.StoreManager
+	catalogs             *apps.CatalogSet
+	catalogSourceManager *apps.CatalogSourceManager
+	fileBrowser          *files.Browser
+	modelScanner         *models.Scanner
+	alertEngine          *alerts.Engine
+	auth                 *auth.Auth
+	supervisorMgr        *supervisor.Manager
+	hardware             *hardware.Collector
+	links                *links.Registry
+	gpuHistory           *gpuhistory.Collector
+	vmManager            *vms.Manager
 }
 
 // NewServer 创建控制台服务器
-func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, appMgr *apps.Manager, storeMgr *apps.StoreManager) *Server {
+func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, controller apps.Controller, storeMgr *apps.StoreManager) *Server {
 	s := &Server{
-		config:       cfg,
-		logger:       logger,
-		mux:          http.NewServeMux(),
-		collector:    col,
-		appManager:   appMgr,
-		storeManager: storeMgr,
-		fileBrowser:  files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
-		modelScanner: models.NewScanner(models.Config{}),
-		alertEngine:  alerts.NewEngine(col),
+		config:               cfg,
+		logger:               logger,
+		mux:                  http.NewServeMux(),
+		collector:            col,
+		controller:           controller,
+		storeManager:         storeMgr,
+		catalogs:             cfg.Catalogs,
+		catalogSourceManager: cfg.CatalogSourceManager,
+		fileBrowser:          files.NewBrowser(files.Config{RootDir: cfg.WorkDir}),
+		modelScanner:         models.NewScanner(models.Config{}),
+		alertEngine:          alerts.NewEngine(col),
 		auth: auth.New(auth.Config{
 			Password:   cfg.AuthPassword,
 			SessionTTL: cfg.AuthSessionTTL,
@@ -191,8 +199,17 @@ func (s *Server) registerRoutes() {
 	// 网络信息
 	s.mux.HandleFunc("/api/v1/network", s.handleNetwork)
 
-	// 应用商店路由
+	// 应用商店路由（阶段4 Compose 商店统一）
 	s.mux.HandleFunc("/api/v1/store/apps", s.handleStoreApps)
+	s.mux.HandleFunc("/api/v1/store/version", s.handleStoreVersion)
+	s.mux.HandleFunc("/api/v1/store/install", s.handleStoreInstall)
+	// 第三方 catalog 路由（阶段4 扩展：HTTP/Git 文件原生 catalog source）
+	s.mux.HandleFunc("/api/v1/catalogs", s.handleCatalogs)
+	s.mux.HandleFunc("/api/v1/catalogs/apps", s.handleCatalogApps)
+	s.mux.HandleFunc("/api/v1/catalogs/version", s.handleCatalogVersion)
+	s.mux.HandleFunc("/api/v1/catalogs/install", s.handleCatalogInstall)
+	s.mux.HandleFunc("/api/v1/catalogs/sources", s.handleCatalogSources)
+	s.mux.HandleFunc("/api/v1/catalogs/sources/", s.handleCatalogSources)
 	// 代理应用图标到 apiserver
 	s.mux.HandleFunc("/app-icons/", s.handleProxyAppIcons)
 
