@@ -26,7 +26,7 @@
 | `npx vitest run` | 通过 | 10 个测试文件、48 个测试全部通过，3.02s |
 | `git diff --cached --check` | 通过 | 无冲突标记或空白错误 |
 
-新增的 `TestRegularUserCannotCallPrivilegedWriteEndpoints` 以真实普通用户 Principal 覆盖 24 个特权请求；多用户文件测试继续覆盖授权目录列表、越界内容访问与符号链接逃逸。
+新增的 `TestRegularUserCannotCallPrivilegedWriteEndpoints` 以真实普通用户 Principal 覆盖 27 个特权请求；多用户文件测试继续覆盖授权目录列表、越界内容访问与符号链接逃逸。
 
 ### 浏览器行为
 
