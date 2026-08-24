@@ -124,6 +124,11 @@ CREATE TABLE IF NOT EXISTS group_file_roots (
  group_id TEXT NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
  root_id TEXT NOT NULL REFERENCES file_roots(id) ON DELETE CASCADE,
  PRIMARY KEY(group_id,root_id)
+);
+CREATE TABLE IF NOT EXISTS user_prefs (
+ user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ prefs_json TEXT NOT NULL DEFAULT '{}',
+ updated_at TEXT
 );`)
 	return err
 }

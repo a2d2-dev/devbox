@@ -421,6 +421,9 @@ func (s *Server) registerRoutes() {
 	// Console accounts, groups and file-root grants.
 	s.registerUserRoutes()
 
+	// Per-user preference persistence (theme/wallpaper/layout ...).
+	s.registerAccountPrefsRoutes()
+
 	// 服务导航路由 (tkeel-links 的功能吸收)
 	s.registerLinksRoutes()
 
