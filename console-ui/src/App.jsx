@@ -53,6 +53,7 @@ import Links from './pages/Links'
 import Backup from './pages/Backup'
 import Downloads from './pages/Downloads'
 import Diagnostics from './pages/Settings'
+import Account from './pages/Account'
 import NetworkSecurity from './pages/NetworkSecurity'
 import { AppShell } from './components/AppShell'
 import AppMgmtDrawer from './components/AppMgmtDrawer'
@@ -527,6 +528,7 @@ export default function App() {
           onOpenShortcutHelp={() => setShortcutHelpOpen(true)}
           loginUser={loginUser}
           onLogout={handleLogout}
+          onOpenApp={launchApp}
         />
       </div>
 
@@ -608,7 +610,8 @@ export default function App() {
                 {appId === 'downloads' && <Downloads/>}
                 {appId === 'network-security' && <NetworkSecurity/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','users','links','backup','downloads','network-security','diag','settings'].includes(appId)
+                {appId === 'account'   && <Account/>}
+                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','users','links','backup','downloads','network-security','diag','settings','account'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp}/>}
 

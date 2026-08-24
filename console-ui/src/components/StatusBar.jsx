@@ -4,7 +4,7 @@ import { Icon } from '../icons'
 import { StatusDot, useClock } from './ui'
 import { AnimatePresence, PopScale } from '../motion'
 
-export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenAlerts, onOpenShortcutHelp, theme = 'light', deviceLabel, DEVICE, loginUser, onLogout }) {
+export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenAlerts, onOpenShortcutHelp, theme = 'light', deviceLabel, DEVICE, loginUser, onLogout, onOpenApp }) {
   const isDarkBar = theme === 'dark'
   const now = useClock();
   const hh = String(now.getHours()).padStart(2, '0');
@@ -170,14 +170,14 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
         </div>
 
         {/* 用户菜单（含退出登录） */}
-        {(loginUser || onLogout) && <UserMenu user={loginUser || 'user'} theme={theme} onLogout={onLogout}/>}
+        {(loginUser || onLogout) && <UserMenu user={loginUser || 'user'} theme={theme} onLogout={onLogout} onOpenApp={onOpenApp}/>}
       </div>
     </div>
   );
 }
 
-// UserMenu — 顶栏用户头像下拉，提供退出登录入口
-function UserMenu({ user, theme, onLogout }) {
+// UserMenu — 顶栏用户头像下拉，提供个人设置与退出登录入口
+function UserMenu({ user, theme, onLogout, onOpenApp }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   useEffect(() => {
@@ -217,6 +217,14 @@ function UserMenu({ user, theme, onLogout }) {
               <div style={{ fontSize: 12.5, fontWeight: 600, color: '#0f172a' }}>{user}</div>
               <div style={{ fontSize: 10.5, color: '#64748b', marginTop: 2 }}>已登录</div>
             </div>
+            <button className="edge-menu-item" onClick={() => { setOpen(false); onOpenApp && onOpenApp({ id: 'account' }) }} style={{
+              width: '100%', textAlign: 'left', padding: '8px 12px',
+              border: 'none', background: 'transparent', cursor: 'pointer',
+              fontSize: 13, color: '#0f172a', fontWeight: 500,
+              borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <Icon name="user" size={13} stroke={1.8}/>个人设置
+            </button>
             <button className="edge-menu-item" onClick={() => { setOpen(false); onLogout && onLogout() }} style={{
               width: '100%', textAlign: 'left', padding: '8px 12px',
               border: 'none', background: 'transparent', cursor: 'pointer',
