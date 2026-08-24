@@ -181,13 +181,25 @@ func (a *Auth) SessionPrincipal(token string) (Principal, bool) {
 func (a *Auth) ValidateToken(token string) bool { _, ok := a.Principal(token); return ok }
 
 func (a *Auth) RevokeUser(userID string) {
+	a.revokeUser(userID, "")
+}
+
+// RevokeUserExcept revokes every session belonging to userID except the one
+// identified by keepToken. It reuses the existing session store so callers such
+// as self-service password changes can invalidate other devices while keeping
+// the caller's current session alive. keepToken accepts bare and Bearer forms.
+func (a *Auth) RevokeUserExcept(userID, keepToken string) {
+	a.revokeUser(userID, normalizeToken(keepToken))
+}
+
+func (a *Auth) revokeUser(userID, keepToken string) {
 	if userID == "" {
 		return
 	}
 	a.mu.RLock()
 	tokens := make([]string, 0)
 	for token, sess := range a.sessions {
-		if sess.principal.UserID == userID {
+		if sess.principal.UserID == userID && token != keepToken {
 			tokens = append(tokens, token)
 		}
 	}
