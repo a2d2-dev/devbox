@@ -19,7 +19,7 @@ export const Chip = ({ tone = 'gray', children, style }) => {
     green: { bg: '#ecfdf5', fg: '#047857', bd: '#a7f3d0' },
     amber: { bg: '#fffbeb', fg: '#b45309', bd: '#fde68a' },
     red:   { bg: '#fef2f2', fg: '#b91c1c', bd: '#fecaca' },
-    blue:  { bg: '#eff6ff', fg: '#1d4ed8', bd: '#bfdbfe' },
+    blue:  { bg: '#e6f4ff', fg: '#005eeb', bd: '#99c7ff' },
     gray:  { bg: '#f1f5f9', fg: '#475569', bd: '#e2e8f0' },
     violet:{ bg: '#f5f3ff', fg: '#6d28d9', bd: '#ddd6fe' },
   };

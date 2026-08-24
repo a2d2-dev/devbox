@@ -92,7 +92,7 @@ export function StatusBar({ cpu, gpu, mem, alertCount, online, lastSync, onOpenA
           background: C.logoBg, color: 'white',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
-          boxShadow: '0 2px 4px rgba(37,99,235,0.3)',
+          boxShadow: '0 2px 4px rgba(0,102,255,0.3)',
         }}>E</div>
         <div style={{ minWidth: 0, lineHeight: 1.15 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.text, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -198,7 +198,7 @@ function UserMenu({ user, theme, onLogout }) {
       }}>
         <span style={{
           width: 22, height: 22, borderRadius: '50%',
-          background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+          background: 'linear-gradient(135deg, #3388ff, #005eeb)',
           color: 'white', fontSize: 11.5, fontWeight: 600,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>{initial}</span>

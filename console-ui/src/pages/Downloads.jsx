@@ -16,7 +16,7 @@ const FILTERS = [
 
 const STATUS = {
   waiting: { label: '等待', tone: '#64748b', bg: '#f1f5f9' },
-  downloading: { label: '下载中', tone: '#2563eb', bg: '#eff6ff' },
+  downloading: { label: '下载中', tone: '#0066ff', bg: '#e6f4ff' },
   paused: { label: '已暂停', tone: '#b45309', bg: '#fffbeb' },
   completed: { label: '已完成', tone: '#047857', bg: '#ecfdf5' },
   error: { label: '错误', tone: '#b91c1c', bg: '#fef2f2' },
@@ -81,7 +81,7 @@ export default function Downloads() {
           <div className="downloads-mark"><Icon name="download" size={20} stroke={2}/></div>
           <div><strong>下载任务</strong><span>{data?.rootDirectory || '工作区下载目录'}</span></div>
         </div>
-        <RateStat icon="arrowDown" label="实时下载" value={`${formatBytes(data?.statistics?.downloadSpeedBytesPerSec || 0)}/s`} tone="#2563eb"/>
+        <RateStat icon="arrowDown" label="实时下载" value={`${formatBytes(data?.statistics?.downloadSpeedBytesPerSec || 0)}/s`} tone="#0066ff"/>
         <RateStat icon="arrowUp" label="实时上传" value={`${formatBytes(data?.statistics?.uploadSpeedBytesPerSec || 0)}/s`} tone="#0f766e"/>
         <RateStat icon="database" label="累计下载" value={formatBytes(data?.statistics?.totalDownloadedBytes || 0)} tone="#475569"/>
       </header>

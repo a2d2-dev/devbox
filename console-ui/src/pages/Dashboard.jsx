@@ -89,7 +89,7 @@ export default function DashboardApp({ onOpenApp }) {
         if (mRes && mRes.gpuData) setGpus(mRes.gpuData);
         if (aRes && Array.isArray(aRes) && aRes.length > 0) {
           const sysApps = (liveApps).filter(a => a.kind === 'system');
-          const mapped = aRes.map(a => ({id: a.id, kind: 'app', name: a.name, state: a.state, version: a.version || 'latest', icon: 'apps', color: '#3b82f6', bg: 'linear-gradient(160deg,#3b82f6,#1d4ed8)', category: '', desc: a.image}));
+          const mapped = aRes.map(a => ({id: a.id, kind: 'app', name: a.name, state: a.state, version: a.version || 'latest', icon: 'apps', color: '#3388ff', bg: 'linear-gradient(160deg,#3388ff,#005eeb)', category: '', desc: a.image}));
           setLiveApps([...sysApps, ...mapped]);
         }
       } catch {}

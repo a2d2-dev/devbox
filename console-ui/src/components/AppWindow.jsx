@@ -241,7 +241,7 @@ export default function AppWindow({
             height: 26, padding: '0 10px', borderRadius: 6,
             appearance: 'none',
             background: mgmtOpen ? T.blueSoft : undefined,
-            border: `1px solid ${mgmtOpen ? '#bfdbfe' : 'transparent'}`,
+            border: `1px solid ${mgmtOpen ? '#99c7ff' : 'transparent'}`,
             color: mgmtOpen ? T.blueDeep : T.ink3,
             cursor: 'pointer', fontSize: 11.5, fontWeight: 600,
             marginRight: 4,
