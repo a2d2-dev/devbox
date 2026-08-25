@@ -266,7 +266,7 @@ export default function UninstallDialog({ app, onClose, onDone, trackTask = fals
             }}>{displayError}</div>
           )}
           {trackTask && taskId && !displayError && (
-            <div style={{ padding: '8px 10px', marginBottom: 12, borderRadius: 7, background: '#eff6ff', border: '1px solid #bfdbfe', fontSize: 11.5, color: '#1e40af' }}>
+            <div style={{ padding: '8px 10px', marginBottom: 12, borderRadius: 7, background: '#e6f4ff', border: '1px solid #99c7ff', fontSize: 11.5, color: '#0043b8' }}>
               卸载任务 {task?.status || 'queued'} · {task?.phase || 'queued'}{task?.message ? ` · ${task.message}` : ''}
             </div>
           )}

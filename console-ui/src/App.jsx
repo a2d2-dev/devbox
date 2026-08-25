@@ -70,11 +70,11 @@ import { useGlobalShortcuts } from './shortcuts/useGlobalShortcuts'
 import { useOverlayStack } from './overlays/OverlayProvider'
 
 const TWEAK_DEFAULTS = {
-  "preset": "platform-dark",
-  "wallpaper": "grid",
+  "preset": "fnos",
+  "wallpaper": "fnos",
   "iconStyle": "gradient",
-  "topbar": "dark",
-  "accent": "#2563eb",
+  "topbar": "light",
+  "accent": "#0066ff",
   "layout": "workstation",
   "iconSize": "md",
   // deviceLabel 已删 — 从 /api/v1/device 拿真实 deviceName (K8s node name，如 edge-004)
@@ -85,15 +85,20 @@ const TWEAK_DEFAULTS = {
 
 // Style presets — each one sets multiple sub-tweaks at once
 const PRESETS = {
+  'fnos': {
+    label: '飞牛同款',
+    desc: '浅色玻璃顶栏 · 深灰壁纸 · 飞牛蓝',
+    set: { topbar: 'light', iconStyle: 'gradient', accent: '#0066ff', wallpaper: 'fnos' },
+  },
   'platform-dark': {
     label: '云端同款',
     desc: '深色顶栏 · 与管理平台一致',
-    set: { topbar: 'dark', iconStyle: 'gradient', accent: '#2563eb', wallpaper: 'grid' },
+    set: { topbar: 'dark', iconStyle: 'gradient', accent: '#0066ff', wallpaper: 'grid' },
   },
   'aurora-light': {
     label: '极光浅色',
     desc: '浅色玻璃顶栏 · 渐变图标',
-    set: { topbar: 'light', iconStyle: 'gradient', accent: '#2563eb', wallpaper: 'grid' },
+    set: { topbar: 'light', iconStyle: 'gradient', accent: '#0066ff', wallpaper: 'grid' },
   },
   'field-cyan': {
     label: '现场青绿',
@@ -480,7 +485,7 @@ export default function App() {
   const alertCount = Array.isArray(alerts) ? alerts.filter(a => a.state === 'active').length : 0;
 
   // Custom wallpaper
-  const bgClass = t.wallpaper === 'grid' ? 'edge-bg' : '';
+  const bgClass = t.wallpaper === 'fnos' ? 'fnos-desktop-bg' : t.wallpaper === 'grid' ? 'edge-bg' : '';
   const bgStyle = t.wallpaper === 'topo'
     ? { background: '#eef3fa', backgroundImage: 'radial-gradient(circle at 20% 20%, rgba(59,130,246,0.15), transparent 40%), radial-gradient(circle at 80% 70%, rgba(20,184,166,0.12), transparent 45%), radial-gradient(circle at 50% 100%, rgba(99,102,241,0.10), transparent 50%)' }
     : t.wallpaper === 'plain'
@@ -665,7 +670,7 @@ export default function App() {
               display: 'flex', alignItems: 'center', gap: 10,
               padding: '8px 10px', borderRadius: 8, textAlign: 'left',
               background: t.preset === id ? T.blueSoft : 'white',
-              border: `1px solid ${t.preset === id ? '#bfdbfe' : T.border}`,
+              border: `1px solid ${t.preset === id ? '#99c7ff' : T.border}`,
               cursor: 'pointer',
             }}>
               <div style={{
@@ -711,9 +716,9 @@ export default function App() {
                      onChange={(v) => setT('topbar', v)}/>
         <TweakRadio  label="图标"   value={t.iconStyle} options={[{ value: 'gradient', label: '渐变' }, { value: 'flat', label: '扁平' }]}
                      onChange={(v) => setT('iconStyle', v)}/>
-        <TweakRadio  label="背景"   value={t.wallpaper} options={[{ value: 'grid', label: '网格' }, { value: 'topo', label: '光晕' }, { value: 'plain', label: '纯色' }]}
+        <TweakRadio  label="背景"   value={t.wallpaper} options={[{ value: 'fnos', label: '壁纸' }, { value: 'grid', label: '网格' }, { value: 'topo', label: '光晕' }, { value: 'plain', label: '纯色' }]}
                      onChange={(v) => setT('wallpaper', v)}/>
-        <TweakColor  label="主色"   value={t.accent}    options={['#2563eb', '#06b6d4', '#10b981', '#8b5cf6', '#0f172a']}
+        <TweakColor  label="主色"   value={t.accent}    options={['#0066ff', '#06b6d4', '#10b981', '#8b5cf6', '#0f172a']}
                      onChange={(v) => setT('accent', v)}/>
         <TweakToggle label="显示最近使用" value={t.showRecent} onChange={(v) => setT('showRecent', v)}/>
 
@@ -746,7 +751,7 @@ export default function App() {
             width: '100%', height: 30, borderRadius: 6, marginBottom: 4,
             background: activeId === id ? T.blueSoft : openApps.includes(id) ? '#f1f5f9' : 'white',
             color: activeId === id ? T.blueDeep : T.ink2,
-            border: `1px solid ${activeId === id ? '#bfdbfe' : T.border}`,
+            border: `1px solid ${activeId === id ? '#99c7ff' : T.border}`,
             fontSize: 12, fontWeight: 500, textAlign: 'left', paddingLeft: 10, cursor: 'pointer',
             display: 'flex', alignItems: 'center', gap: 6,
           }}>

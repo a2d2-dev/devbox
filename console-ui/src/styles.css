@@ -1,14 +1,14 @@
 html, body {
   margin: 0; padding: 0; height: 100%;
-  font-family: "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
-  -webkit-font-smoothing: antialiased; color: #0f172a;
-  background: #eef3fa; overflow: hidden;
+  font-family: "PingFang SC", "SF Pro SC", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; color: #0b0b0c;
+  background: #f3f3f3; overflow: hidden;
 }
 *, *::before, *::after { box-sizing: border-box; }
 button, input { font-family: inherit; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+*::-webkit-scrollbar-thumb { background: rgba(11,11,12,0.18); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(11,11,12,0.30); }
 *::-webkit-scrollbar-track { background: transparent; }
 
 .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-feature-settings: "tnum"; }
@@ -44,23 +44,34 @@ button, input { font-family: inherit; }
 .edge-dock-item { transition: transform 0.14s ease; }
 .edge-dock-item:hover { transform: translateY(-4px) scale(1.08); }
 
-/* Background grid pattern */
-.edge-bg {
-  background-color: #eef3fa;
+/* fnOS 桌面壁纸背景（原创壁纸 + 深灰渐变兜底） */
+.fnos-desktop-bg {
+  background-color: #3a424f;
   background-image:
-    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(239, 246, 255, 0) 40%),
-    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(59,130,246,0.10), transparent 60%),
-    radial-gradient(ellipse 60% 40% at 85% 100%, rgba(16,185,129,0.05), transparent 60%),
-    linear-gradient(to right, rgba(148,163,184,0.16) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(148,163,184,0.16) 1px, transparent 1px);
+    linear-gradient(110deg, rgba(74,85,104,0.35) 0.26%, rgba(58,66,79,0.35) 97.78%),
+    url("/wallpaper.svg");
+  background-size: auto, cover;
+  background-position: center, center;
+  background-repeat: no-repeat, no-repeat;
+}
+
+/* Background grid pattern (legacy theme) */
+.edge-bg {
+  background-color: #f3f3f3;
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(230, 244, 255, 0) 40%),
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(0,102,255,0.08), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 85% 100%, rgba(0,158,97,0.05), transparent 60%),
+    linear-gradient(to right, rgba(11,11,12,0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(11,11,12,0.05) 1px, transparent 1px);
   background-size: auto, auto, auto, 56px 56px, 56px 56px;
   background-position: 0 0, 0 0, 0 0, -1px -1px, -1px -1px;
 }
 
 .edge-glass {
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: saturate(180%) blur(18px);
-  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
 }
 
 .edge-press {
@@ -95,19 +106,19 @@ button, input { font-family: inherit; }
 
 .edge-material-chrome,
 .edge-glass {
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: saturate(180%) blur(18px);
-  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
 }
 .edge-material-surface {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: saturate(160%) blur(12px);
-  -webkit-backdrop-filter: saturate(160%) blur(12px);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: saturate(160%) blur(16px);
+  -webkit-backdrop-filter: saturate(160%) blur(16px);
 }
 .edge-material-overlay {
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: saturate(190%) blur(24px);
-  -webkit-backdrop-filter: saturate(190%) blur(24px);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: saturate(190%) blur(28px);
+  -webkit-backdrop-filter: saturate(190%) blur(28px);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,7 +1,7 @@
 import { T } from '../tokens'
 import { Icon } from '../icons'
 
-export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gradient', accent = '#2563eb', labelSize = 12.5 }) {
+export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gradient', accent = '#0066ff', labelSize = 12.5 }) {
   const isError = app.state === 'error';
   const stateColor = {
     running: T.green, error: T.red, warn: T.amber, stopped: T.ink4,

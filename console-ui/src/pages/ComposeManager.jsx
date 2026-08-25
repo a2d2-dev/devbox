@@ -212,7 +212,7 @@ function Header({ composeCap, filter, setFilter, counts, authed, onRequireAuth, 
 }
 
 function TaskBanner({ task, label }) {
-  const color = task.status === 'failed' ? '#dc2626' : task.status === 'succeeded' ? '#16a34a' : '#2563eb';
+  const color = task.status === 'failed' ? '#dc2626' : task.status === 'succeeded' ? '#16a34a' : '#0066ff';
   return (
     <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: '#fff', border: `1px solid ${color}33` }}>
       <span style={{ color, fontWeight: 600 }}>{label}</span>
@@ -262,7 +262,7 @@ function AppCard({ app, storeApps, catalogApps, disabled, onAction, onUninstall,
           <a key={i} href={e.url} target="_blank" rel="noreferrer"
              title={e.name || e.url}
              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: T.blue, textDecoration: 'none',
-               fontSize: 11.5, padding: '1px 7px', borderRadius: 4, background: T.blueSoft, border: '1px solid #bfdbfe' }}>
+               fontSize: 11.5, padding: '1px 7px', borderRadius: 4, background: T.blueSoft, border: '1px solid #99c7ff' }}>
             <Icon name="external" size={10} stroke={2}/>{e.name || openHost(e.url)}
           </a>
         ))}
@@ -632,9 +632,9 @@ function SummaryPill({ icon, label, value, tone }) {
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 4,
       fontSize: 11, padding: '2px 8px', borderRadius: 999,
-      background: tone === 'blue' ? '#eff6ff' : T.surfaceAlt,
-      color: tone === 'blue' ? '#1d4ed8' : T.ink3,
-      border: `1px solid ${tone === 'blue' ? '#bfdbfe' : T.borderSoft}`,
+      background: tone === 'blue' ? '#e6f4ff' : T.surfaceAlt,
+      color: tone === 'blue' ? '#005eeb' : T.ink3,
+      border: `1px solid ${tone === 'blue' ? '#99c7ff' : T.borderSoft}`,
     }}>
       <Icon name={icon} size={11} stroke={2}/>{label} <strong className="mono tnum" style={{ color: T.ink }}>{value}</strong>
     </span>
@@ -704,7 +704,7 @@ function DiscoveredCard({ app, disabled, onTakeover }) {
             {endpoints.map((e, i) => (
               <a key={i} href={e.url} target="_blank" rel="noreferrer" title={e.name || e.url}
                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: T.blue, textDecoration: 'none',
-                   fontSize: 11.5, padding: '1px 7px', borderRadius: 4, background: T.blueSoft, border: '1px solid #bfdbfe' }}>
+                   fontSize: 11.5, padding: '1px 7px', borderRadius: 4, background: T.blueSoft, border: '1px solid #99c7ff' }}>
                 <Icon name="external" size={10} stroke={2}/>{e.name || openHost(e.url)}
               </a>
             ))}

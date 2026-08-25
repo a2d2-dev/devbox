@@ -160,7 +160,7 @@ export function AuthModal({ reason, onClose, onSuccess }) {
               width: 32, height: 32, borderRadius: 9,
               background: T.blueSoft, color: T.blueDeep,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              border: '1px solid #bfdbfe',
+              border: '1px solid #99c7ff',
             }}>
               <Icon name="shield" size={17} stroke={1.8}/>
             </div>
@@ -245,8 +245,8 @@ export function AuthModal({ reason, onClose, onSuccess }) {
             {/* Status bar */}
             <div style={{
               padding: '10px 14px', borderRadius: 8,
-              background: state === 'confirming' ? '#eff4ff' : T.surfaceAlt,
-              border: `1px solid ${state === 'confirming' ? '#bfdbfe' : T.borderSoft}`,
+              background: state === 'confirming' ? '#e6f4ff' : T.surfaceAlt,
+              border: `1px solid ${state === 'confirming' ? '#99c7ff' : T.borderSoft}`,
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
               {state === 'waiting' && (
@@ -267,7 +267,7 @@ export function AuthModal({ reason, onClose, onSuccess }) {
                 <>
                   <svg width="14" height="14" viewBox="0 0 24 24" style={{ animation: 'spin 1s linear infinite' }}>
                     <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-                    <circle cx="12" cy="12" r="9" stroke="rgba(37,99,235,0.25)" strokeWidth="2.5" fill="none"/>
+                    <circle cx="12" cy="12" r="9" stroke="rgba(0,102,255,0.25)" strokeWidth="2.5" fill="none"/>
                     <path d="M12 3a9 9 0 0 1 9 9" stroke={T.blue} strokeWidth="2.5" strokeLinecap="round" fill="none"/>
                   </svg>
                   <span style={{ fontSize: 12.5, color: T.blueDeep, fontWeight: 600 }}>

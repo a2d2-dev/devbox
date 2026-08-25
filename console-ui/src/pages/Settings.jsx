@@ -176,7 +176,7 @@ function SMBPage({ settings, setSettings, probe, save, busy, message }) {
         <button type="button" onClick={apply} disabled={!probe?.installed || !probe?.testparmInstalled} className="edge-press edge-btn-primary" style={{ ...btnPrimary, opacity: !probe?.installed || !probe?.testparmInstalled ? 0.45 : 1 }}><Icon name="check" size={13}/>校验并应用</button>
         <span style={{ fontSize: 11.5, color: action?.error ? T.red : T.green }}>{action?.text}</span>
       </div>
-      {preview && <pre style={{ margin: '10px 0 0', padding: 14, minHeight: 130, maxHeight: 240, overflow: 'auto', borderRadius: 7, background: '#101827', color: '#dbeafe', fontSize: 11.5, lineHeight: 1.55, fontFamily: T.mono, whiteSpace: 'pre-wrap' }}>{preview}</pre>}
+      {preview && <pre style={{ margin: '10px 0 0', padding: 14, minHeight: 130, maxHeight: 240, overflow: 'auto', borderRadius: 7, background: '#101827', color: '#cce4ff', fontSize: 11.5, lineHeight: 1.55, fontFamily: T.mono, whiteSpace: 'pre-wrap' }}>{preview}</pre>}
       <SaveBar busy={busy} onSave={save} message={message}/>
     </>
   )

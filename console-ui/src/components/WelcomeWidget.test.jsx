@@ -5,8 +5,7 @@ import { setAuthRequired, setAuthToken } from '../hooks/useApi'
 import { WelcomeWidget } from './WelcomeWidget'
 
 const completedSteps = {
-  storage: 'pending',
-  recommendedApps: 'completed',
+  recommendedApps: 'pending',
   remoteAccess: 'completed',
   securityContact: 'completed',
 }
@@ -40,11 +39,11 @@ describe('WelcomeWidget persistence flow', () => {
     const fetchMock = installOnboardingAPI()
     render(<WelcomeWidget onOpenApp={vi.fn()} deviceName="devbox-test"/>)
 
-    expect(await screen.findByText('初始化存储')).toBeInTheDocument()
+    expect(await screen.findByText('安装推荐应用')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '跳过' }))
     expect(await screen.findByText(/1 个步骤已跳过/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '恢复已跳过步骤' }))
-    expect(await screen.findByText('初始化存储')).toBeInTheDocument()
+    expect(await screen.findByText('安装推荐应用')).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/onboarding', expect.objectContaining({ method: 'PATCH' }))
   })
 
@@ -60,15 +59,17 @@ describe('WelcomeWidget persistence flow', () => {
   it('can restore a skipped step while another step is pending', async () => {
     const user = userEvent.setup()
     installOnboardingAPI({
-      storage: 'skipped',
       recommendedApps: 'pending',
-      remoteAccess: 'completed',
+      remoteAccess: 'skipped',
       securityContact: 'completed',
     })
     render(<WelcomeWidget onOpenApp={vi.fn()} deviceName="devbox-test"/>)
 
     expect(await screen.findByText('安装推荐应用')).toBeInTheDocument()
+    // remoteAccess 被跳过，restore 后重新变 pending；但首个 pending 仍是 recommendedApps，
+    // 所以 current 仍展示"安装推荐应用"，而"恢复已跳过步骤"入口应消失。
     await user.click(screen.getByRole('button', { name: /恢复已跳过步骤/ }))
-    expect(await screen.findByText('初始化存储')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('button', { name: /恢复已跳过步骤/ })).not.toBeInTheDocument())
+    expect(screen.getByText('安装推荐应用')).toBeInTheDocument()
   })
 })

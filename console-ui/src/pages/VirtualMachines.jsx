@@ -108,7 +108,7 @@ function VMRow({ vm, active, onClick }) {
   return (
     <button onClick={onClick} style={{
       width: '100%', padding: 12, borderRadius: 8, textAlign: 'left',
-      border: `1px solid ${active ? '#bfdbfe' : T.border}`,
+      border: `1px solid ${active ? '#99c7ff' : T.border}`,
       background: active ? T.blueSoft : T.surface,
       cursor: 'pointer',
       display: 'grid', gridTemplateColumns: '1fr auto', gap: 8,

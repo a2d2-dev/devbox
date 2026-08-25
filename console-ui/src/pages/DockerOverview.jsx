@@ -83,7 +83,7 @@ export default function DockerOverview({ onRequireAuth, onOpenCompose }) {
     <div style={{ width: '100%', minWidth: 0, height: '100%', overflow: 'auto', background: T.bg }}>
       <div style={{ padding: '20px clamp(14px, 3vw, 28px) 32px', maxWidth: 1180, margin: '0 auto' }}>
         <header style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 8, background: '#2563eb', color: 'white', display: 'grid', placeItems: 'center' }}>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: '#0066ff', color: 'white', display: 'grid', placeItems: 'center' }}>
             <Icon name="server" size={19} stroke={1.8}/>
           </div>
           <div>

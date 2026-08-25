@@ -4,7 +4,6 @@ import { Icon } from '../icons'
 import { authFetch } from '../hooks/useApi'
 
 const GUIDES = [
-  { id: 'storage', appId: 'disks', icon: 'hardDrive', title: '初始化存储', desc: '确认工作区与磁盘状态，准备文件和应用数据空间。', action: '打开磁盘管理' },
   { id: 'recommendedApps', appId: 'store', icon: 'store', title: '安装推荐应用', desc: '从应用商店选择开发环境和常用服务。', action: '浏览应用商店' },
   { id: 'remoteAccess', appId: 'links', icon: 'network', title: '了解远程访问', desc: '在服务导航中确认可访问入口与网络地址。', action: '查看服务入口' },
   { id: 'securityContact', appId: 'settings', icon: 'shield', title: '设置安全联系邮箱', desc: '保存用于安全通知和运维联系的邮箱地址。', action: '查看系统设置' },
@@ -94,7 +93,6 @@ export function WelcomeWidget({ onOpenApp, deviceName }) {
           <div style={{ width: 34, height: 34, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center', background: T.blueSoft, color: T.blue }}><Icon name={current.icon} size={17} stroke={1.8}/></div>
           <div style={{ minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>{current.title}</div><div style={{ marginTop: 3, fontSize: 11, lineHeight: 1.55, color: T.ink3 }}>{current.desc}</div></div>
         </div>
-        {current.id === 'storage' && state?.readiness?.storageConfigured === false && <div style={warningStyle}>存储空间未创建：{state.readiness.storageReason || '请先检查工作区目录'}</div>}
         {current.id === 'securityContact' && <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" aria-label="安全联系邮箱" style={emailStyle}/>}
         <button type="button" onClick={() => onOpenApp?.({ id: current.appId })} style={openButton}><Icon name={current.icon} size={12} stroke={1.8}/>{current.action}</button>
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
@@ -114,7 +112,6 @@ export function WelcomeWidget({ onOpenApp, deviceName }) {
 }
 
 const shellStyle = { padding: 15, borderRadius: 8, background: 'rgba(255,255,255,0.78)', border: '1px solid rgba(255,255,255,0.94)', boxShadow: '0 6px 20px -8px rgba(15,23,42,0.16)', backdropFilter: 'blur(12px)' }
-const warningStyle = { marginTop: 10, padding: '8px 9px', borderRadius: 6, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontSize: 10.5, lineHeight: 1.5 }
 const emailStyle = { width: '100%', boxSizing: 'border-box', height: 34, marginTop: 10, padding: '0 9px', borderRadius: 6, border: `1px solid ${T.border}`, background: '#fff', color: T.ink, fontSize: 12, outline: 'none' }
 const openButton = { width: '100%', height: 32, marginTop: 10, borderRadius: 6, border: `1px solid ${T.border}`, background: '#fff', color: T.ink2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }
 const secondaryButton = { flex: 1, height: 32, borderRadius: 6, border: `1px solid ${T.border}`, background: '#fff', color: T.ink3, fontSize: 11.5, cursor: 'pointer' }
