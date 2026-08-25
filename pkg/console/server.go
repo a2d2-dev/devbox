@@ -421,6 +421,13 @@ func (s *Server) registerRoutes() {
 	// Console accounts, groups and file-root grants.
 	s.registerUserRoutes()
 
+	// Self-service ("me") account endpoints: view/update own profile, change
+	// own password, backed by the session principal only.
+	s.registerAccountRoutes()
+
+	// Per-user preference persistence (theme/wallpaper/layout ...).
+	s.registerAccountPrefsRoutes()
+
 	// 服务导航路由 (tkeel-links 的功能吸收)
 	s.registerLinksRoutes()
 
@@ -432,6 +439,8 @@ func (s *Server) registerRoutes() {
 
 	// 认证路由
 	s.registerAuthRoutes()
+	// 本人登录历史（脱敏）与退出其他设备（Issue #30 T3）
+	s.registerAccountSessionRoutes()
 	s.registerOnboardingRoutes()
 
 	// 浏览器应用（代理 + 书签/历史）
