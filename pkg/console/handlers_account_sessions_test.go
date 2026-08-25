@@ -67,6 +67,32 @@ func TestLogoutOthersRequiresSession(t *testing.T) {
 	}
 }
 
+// TestAccountSessionsLegacyAdminOK verifies the login-history endpoint is
+// unaffected by the empty-UserID case that broke preferences. The sessions
+// handler works purely by principal.Username (which the legacy single-password
+// admin always has) and never inspects UserID, so a legacy admin session must
+// return 200 — not 401 or 403 — even though its principal has no users row.
+func TestAccountSessionsLegacyAdminOK(t *testing.T) {
+	s := newAccountSessionsTestServer(t)
+	// issueLogin mints a principal with no UserID, exactly the legacy shape.
+	token := issueLogin(t, s, "admin", "203.0.113.9", "curl/8.0")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/account/sessions", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("legacy admin sessions: expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var sessions []accountSession
+	if err := json.Unmarshal(rec.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session row for legacy admin, got %d", len(sessions))
+	}
+}
+
 func TestAccountSessionsMasksIPAndUA(t *testing.T) {
 	s := newAccountSessionsTestServer(t)
 	fullIP := "203.0.113.42"

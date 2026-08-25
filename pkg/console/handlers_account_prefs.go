@@ -22,11 +22,23 @@ func (s *Server) handleAccountPreferences(w http.ResponseWriter, r *http.Request
 	if !s.requireUsers(w) {
 		return
 	}
-	userID, ok := s.currentUserID(r)
+	// Distinguish "no valid session" (401) from "valid session but no backing
+	// users row" (legacy single-password admin, empty UserID). The latter is an
+	// authenticated request that simply has no per-account preference storage:
+	// answering it with 401 would trip the frontend's authFetch contract
+	// (401 + token => session expired => global logout) and evict a logged-in
+	// legacy admin in a loop. Return 403 with a distinct reason instead, mirroring
+	// the not_a_managed_account rejection in handlers_account.go.
+	p, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
 		writeAccountUnauthorized(w)
 		return
 	}
+	if p.UserID == "" {
+		writeAccountNotManaged(w)
+		return
+	}
+	userID := p.UserID
 	switch r.Method {
 	case http.MethodGet:
 		raw, err := s.users.GetPrefs(r.Context(), userID)
@@ -53,21 +65,22 @@ func (s *Server) handleAccountPreferences(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// currentUserID resolves the authenticated user's id. It returns false for
-// anonymous or legacy principals that have no backing users row, which keeps
-// preference storage strictly per-account.
-func (s *Server) currentUserID(r *http.Request) (string, bool) {
-	p, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || p.UserID == "" {
-		return "", false
-	}
-	return p.UserID, true
-}
-
 func writeAccountUnauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+}
+
+// writeAccountNotManaged rejects an authenticated-but-unbacked principal (a
+// legacy single-password admin with no users row) with 403 rather than 401.
+// The session is valid, so this is an authorization outcome, not an
+// authentication one, and keeping it off 401 prevents the frontend from
+// treating it as an expired session and logging the caller out.
+func writeAccountNotManaged(w http.ResponseWriter) {
+	writeJSONErrStatus(w, http.StatusForbidden, map[string]string{
+		"error":  "账号未托管,偏好不可用",
+		"reason": "not_a_managed_account",
+	})
 }
 
 // decodeAccountPrefs decodes an arbitrary JSON object. Unlike decodeJSON it does
