@@ -1119,3 +1119,23 @@ export async function preflightCatalogApp({ sourceId, appId, version, values }) 
   if (!r.ok) throw await readErr(r);
   return r.json();
 }
+
+// ─── Account: 登录设备 / 会话（Issue #30 T7）─────────────────────────
+//
+// 登录历史（倒序）。后端已脱敏：ipMasked 已打码、deviceLabel 由 UA 归纳、
+// 无原始 UA / token。前端只展示，绝不还原或拼接。单次拉取 + 手动 refresh
+// （登录历史是用户驱动的，不轮询）。
+export function useSessions() {
+  return usePoll('/account/sessions', {
+    interval: 0,
+    fallback: null,
+    transform: (rows) => (Array.isArray(rows) ? rows : []),
+  });
+}
+
+// logoutOthers：POST /account/logout-others → 204，吊销本人除当前外全部会话。
+export async function logoutOthers() {
+  const r = await authFetch(`${API}/account/logout-others`, { method: 'POST' });
+  if (!r.ok) throw await readErr(r);
+  return true;
+}
