@@ -35,10 +35,10 @@ const EVENT_TYPES = [
   { value: 'SETTING_CHANGE', label: '系统设置变更', tone: 'slate', notImpl: true },
 ]
 
-const TONE_COLOR = { green: '#059669', red: '#dc2626', blue: '#2563eb', amber: '#d97706', violet: '#7c3aed', slate: '#475569' }
+const TONE_COLOR = { green: '#059669', red: '#dc2626', blue: '#0066ff', amber: '#d97706', violet: '#7c3aed', slate: '#475569' }
 
 const LEVEL_META = {
-  info: { label: '信息', color: '#2563eb' },
+  info: { label: '信息', color: '#0066ff' },
   warning: { label: '警告', color: '#d97706' },
   error: { label: '错误', color: '#dc2626' },
 }

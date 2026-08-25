@@ -135,7 +135,7 @@ export default function ModelsFace() {
                       {m.tags.map(t => (
                         <span key={t} style={{
                           fontSize: 10, padding: '1px 5px', borderRadius: 3,
-                          background: t === '新' ? '#fef2f2' : t === 'Chat' ? '#eff4ff' : t === 'Image' ? '#fdf2f8' : t === 'Embedding' ? '#f5f3ff' : T.surfaceAlt,
+                          background: t === '新' ? '#fef2f2' : t === 'Chat' ? '#e6f4ff' : t === 'Image' ? '#fdf2f8' : t === 'Embedding' ? '#f5f3ff' : T.surfaceAlt,
                           color: t === '新' ? T.red : t === 'Chat' ? T.blueDeep : t === 'Image' ? '#9d174d' : t === 'Embedding' ? '#5b21b6' : T.ink3,
                           fontWeight: 600,
                         }}>{t}</span>

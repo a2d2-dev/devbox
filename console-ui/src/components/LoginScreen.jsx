@@ -153,21 +153,20 @@ export function LoginScreen({ onLogin, deviceName }) {
         position: 'relative', width: '52%', flexShrink: 0, overflow: 'hidden',
         display: 'flex', flexDirection: 'column', padding: '46px 52px',
         color: '#e2e8f0',
-        background: '#0b1220',
+        background: 'linear-gradient(110deg, #4a5568 0.26%, #3a424f 97.78%)',
         backgroundImage:
-          'radial-gradient(ellipse 70% 50% at 25% 8%, rgba(37,99,235,0.30), transparent 60%),' +
-          'radial-gradient(ellipse 60% 45% at 92% 100%, rgba(16,185,129,0.16), transparent 60%),' +
-          'linear-gradient(to right, rgba(148,163,184,0.07) 1px, transparent 1px),' +
-          'linear-gradient(to bottom, rgba(148,163,184,0.07) 1px, transparent 1px)',
-        backgroundSize: 'auto, auto, 54px 54px, 54px 54px',
+          'radial-gradient(ellipse 70% 50% at 22% 12%, rgba(91,127,184,0.45), transparent 60%),' +
+          'radial-gradient(ellipse 60% 45% at 90% 96%, rgba(43,95,107,0.40), transparent 60%),' +
+          'radial-gradient(ellipse 45% 40% at 72% 28%, rgba(0,102,255,0.18), transparent 60%),' +
+          'linear-gradient(110deg, #4a5568 0.26%, #3a424f 97.78%)',
       }}>
         {/* Brand mark */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
             width: 40, height: 40, borderRadius: 11,
-            background: 'linear-gradient(150deg,#3b82f6,#1d4ed8)',
+            background: 'linear-gradient(150deg,#3388ff,#005eeb)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 6px 18px -4px rgba(37,99,235,0.6), inset 0 1px 0 rgba(255,255,255,0.4)',
+            boxShadow: '0 6px 18px -4px rgba(0,102,255,0.6), inset 0 1px 0 rgba(255,255,255,0.4)',
           }}>
             <Icon name="cpu" size={21} stroke={1.8} style={{ color: '#fff' }}/>
           </div>
@@ -278,16 +277,16 @@ export function LoginScreen({ onLogin, deviceName }) {
 				</div>
 
                 <button type="submit" disabled={phase === 'verifying' || !username || (authRequirements.passwordRequired && !password)} style={{
-                  height: 46, marginTop: 6, borderRadius: 10, border: 'none',
+                  height: 44, marginTop: 6, borderRadius: 12, border: 'none',
                   cursor: phase === 'verifying' || !username || (authRequirements.passwordRequired && !password) ? 'default' : 'pointer',
                   background: phase === 'verifying' || !username || (authRequirements.passwordRequired && !password)
-                    ? '#cbd5e1'
-                    : 'linear-gradient(150deg,#3b82f6,#1d4ed8)',
+                    ? '#c9c9c9'
+                    : '#0066ff',
                   color: '#fff', fontSize: 14.5, fontWeight: 600,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9,
                   boxShadow: phase === 'verifying' || !username || (authRequirements.passwordRequired && !password)
                     ? 'none'
-                    : '0 8px 20px -8px rgba(37,99,235,0.6)',
+                    : '0 8px 20px -8px rgba(0,102,255,0.6)',
                   transition: 'background .15s, box-shadow .15s',
                 }}>
                   {phase === 'verifying' ? (
@@ -355,7 +354,7 @@ const codeStyle = { padding: '2px 5px', borderRadius: 4, background: '#f1f5f9', 
 const T = {
   ink: '#0f172a', ink2: '#334155', ink3: '#64748b', ink4: '#94a3b8',
   border: '#e2e8f0', borderSoft: '#eef1f5', surfaceAlt: '#f8fafc',
-  blue: '#2563eb', blueDeep: '#1d4ed8',
+  blue: '#0066ff', blueDeep: '#005eeb',
   red: '#ef4444', green: '#10b981',
 }
 
@@ -421,10 +420,10 @@ function Field({ icon, type = 'text', value, onChange, placeholder, trailing, au
   const [focus, setFocus] = useState(false)
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 10, height: 46, padding: '0 12px',
-      borderRadius: 10, background: focus ? '#ffffff' : T.surfaceAlt,
+      display: 'flex', alignItems: 'center', gap: 10, height: 44, padding: '0 12px',
+      borderRadius: 12, background: focus ? '#ffffff' : T.surfaceAlt,
       border: `1.5px solid ${focus ? T.blue : T.border}`,
-      boxShadow: focus ? '0 0 0 3px rgba(37,99,235,0.12)' : 'none',
+      boxShadow: focus ? '0 0 0 3px rgba(0,102,255,0.12)' : 'none',
       transition: 'border-color .15s, box-shadow .15s, background .15s',
     }}>
       <Icon name={icon} size={17} stroke={1.8}

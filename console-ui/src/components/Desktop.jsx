@@ -322,7 +322,7 @@ function DesktopWidgets({ onOpenApp, deviceName }) {
 }
 
 // ─── Desktop ────────────────────────────────────────────────────
-export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsLoading, deployedAppsError, onRetryDeployedApps, showRecent = true, iconStyle = 'gradient', accent = '#2563eb', layout = 'workstation', iconSize = 'md', APPS, RECENT_IDS, DEVICE }) {
+export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsLoading, deployedAppsError, onRetryDeployedApps, showRecent = true, iconStyle = 'gradient', accent = '#0066ff', layout = 'workstation', iconSize = 'md', APPS, RECENT_IDS, DEVICE }) {
   const runningCount = deployedApps.filter(a => a.state === 'running').length;
   const errorCount   = deployedApps.filter(a => a.state === 'error').length;
 

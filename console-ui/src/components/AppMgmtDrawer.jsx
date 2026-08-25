@@ -532,7 +532,7 @@ resources: ${appSummary.resources}`;
       <EnvVarsSection env={app.env}/>
 
       <div style={{ marginTop: 10, padding: 10,
-        background: T.blueSoft, border: '1px solid #bfdbfe', borderRadius: 7,
+        background: T.blueSoft, border: '1px solid #99c7ff', borderRadius: 7,
         fontSize: 11.5, color: T.ink2, lineHeight: 1.55,
         display: 'flex', gap: 8, alignItems: 'flex-start',
       }}>
@@ -604,7 +604,7 @@ function SensitiveField({ name, value, source, error }) {
         {source && (
           <div style={{
             display: 'inline-block', marginLeft: 6, padding: '0 5px', borderRadius: 3,
-            background: '#dbeafe', color: '#1e40af', fontSize: 10, fontWeight: 500,
+            background: '#cce4ff', color: '#0043b8', fontSize: 10, fontWeight: 500,
             verticalAlign: 'middle',
           }} title={`来自 ${source}`}>
             {source.split(':')[0]}
@@ -851,7 +851,7 @@ function MgmtVersions({ app }) {
 
       <div style={{
         marginTop: 10, padding: 10,
-        background: T.blueSoft, border: '1px solid #bfdbfe', borderRadius: 7,
+        background: T.blueSoft, border: '1px solid #99c7ff', borderRadius: 7,
         fontSize: 11.5, color: T.ink2, lineHeight: 1.55,
         display: 'flex', gap: 8, alignItems: 'flex-start',
       }}>
@@ -1274,7 +1274,7 @@ export default function AppMgmtDrawer({ app, open, onClose, onUninstall, metrics
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {isCompose && operationTask && (
-            <div style={{ margin: '10px 14px 0', padding: '8px 10px', borderRadius: 7, background: operationTask.status === 'failed' ? '#fef2f2' : '#eff6ff', border: `1px solid ${operationTask.status === 'failed' ? '#fecaca' : '#bfdbfe'}`, color: operationTask.status === 'failed' ? '#b91c1c' : '#1e40af', fontSize: 11.5 }}>
+            <div style={{ margin: '10px 14px 0', padding: '8px 10px', borderRadius: 7, background: operationTask.status === 'failed' ? '#fef2f2' : '#e6f4ff', border: `1px solid ${operationTask.status === 'failed' ? '#fecaca' : '#99c7ff'}`, color: operationTask.status === 'failed' ? '#b91c1c' : '#0043b8', fontSize: 11.5 }}>
               操作任务 {operationTask.status || 'queued'} · {operationTask.phase || 'queued'}{operationTask.message ? ` · ${operationTask.message}` : ''}
             </div>
           )}

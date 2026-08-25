@@ -58,7 +58,7 @@ export default function ContainerShellFace({ appId, app }) {
       theme: {
         background: '#0b1220',
         foreground: '#e2e8f0',
-        cursor: '#60a5fa',
+        cursor: '#66a8ff',
         selectionBackground: 'rgba(96,165,250,0.32)',
       },
       scrollback: 5000,
@@ -164,7 +164,7 @@ export default function ContainerShellFace({ appId, app }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8,
         padding: '8px 12px', borderBottom: `1px solid ${T.ink2}`,
         background: '#0f172a', flexShrink: 0 }}>
-        <Icon name="terminal" size={14} stroke={1.8} style={{ color: '#60a5fa' }}/>
+        <Icon name="terminal" size={14} stroke={1.8} style={{ color: '#66a8ff' }}/>
         <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'ui-monospace, monospace' }}>
           容器 Shell · {appId}
         </span>

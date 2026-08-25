@@ -23,3 +23,6 @@ docs/artifacts/
 
 # 使用 npm（package-lock.json 为准）
 pnpm-lock.yaml
+
+# Matt 流程本地 tracker（不入库）
+.scratch/

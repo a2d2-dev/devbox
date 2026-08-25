@@ -608,7 +608,7 @@ function PartitionRow({ partition: p, idx }) {
         {containerKind ? (
           <span title={containerKind.tip} style={{
             display: 'inline-block', padding: '1px 7px', borderRadius: 3,
-            background: '#dbeafe', color: '#1e40af', fontSize: 11, fontWeight: 600,
+            background: '#cce4ff', color: '#0043b8', fontSize: 11, fontWeight: 600,
           }}>
             {containerKind.label}
           </span>

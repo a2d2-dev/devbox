@@ -396,7 +396,7 @@ function FileIcon({ type, size = 14 }) {
     dir:   { color: '#dcb67a', icon: 'folder' },
     py:    { color: '#3572a5', icon: 'code' },
     yaml:  { color: '#fbc02d', icon: 'code' },
-    md:    { color: '#3b82f6', icon: 'book' },
+    md:    { color: '#3388ff', icon: 'book' },
     txt:   { color: '#9e9e9e', icon: 'code' },
     env:   { color: '#737373', icon: 'lock' },
     ipynb: { color: '#f37726', icon: 'jupyter' },
@@ -681,7 +681,7 @@ function PlotPlaceholder() {
         const bw = (w - 60) / bins.length;
         const bh = (b / max) * (h - 40);
         return <rect key={i} x={42 + i * bw} y={h - 22 - bh} width={bw - 2} height={bh}
-          fill="#3b82f6" opacity="0.85"/>;
+          fill="#3388ff" opacity="0.85"/>;
       })}
       <text x={w/2} y={12} textAnchor="middle" fontSize="11" fill="#333">Token length distribution</text>
       {[0, 200, 400, 600, 800, 1000, 1200].map((v, i) => (
@@ -755,8 +755,8 @@ function OllamaFace({ onMgmt }) {
               return (
                 <div key={m.name} onClick={() => setActiveModel(m.name)} style={{
                   padding: '10px', borderRadius: 8, cursor: 'pointer',
-                  background: on ? '#eff4ff' : 'transparent',
-                  border: `1px solid ${on ? '#bfdbfe' : 'transparent'}`,
+                  background: on ? '#e6f4ff' : 'transparent',
+                  border: `1px solid ${on ? '#99c7ff' : 'transparent'}`,
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <Icon name="sparkle" size={12} stroke={1.8} style={{ color: on ? T.blueDeep : T.ink3 }}/>
@@ -1077,7 +1077,7 @@ function ComfyUIFace({ onMgmt }) {
           <ComfyNode x={300} y={120} title="Empty Latent Image"  color="#10b981" rows={[['width', '1024'], ['height', '1024'], ['batch', '4']]} outputs={['LATENT']}/>
           <ComfyNode x={300} y={320} title="KSampler"            color="#f59e0b" rows={[['steps', '32'], ['cfg', '7.5'], ['sampler', 'dpmpp_2m'], ['seed', '8421337']]} outputs={['LATENT']} highlight/>
           <ComfyNode x={580} y={250} title="VAE Decode"          color="#ec4899" rows={[]} outputs={['IMAGE']}/>
-          <ComfyNode x={830} y={250} title="Save Image"          color="#3b82f6" rows={[['filename', 'edgex_${seed}']]} outputs={[]}/>
+          <ComfyNode x={830} y={250} title="Save Image"          color="#3388ff" rows={[['filename', 'edgex_${seed}']]} outputs={[]}/>
 
           {/* Connections (SVG lines) */}
           <svg style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} width="100%" height="100%">
@@ -1098,7 +1098,7 @@ function ComfyUIFace({ onMgmt }) {
           }}>
             <div style={{ fontSize: 9, color: '#888', marginBottom: 4 }}>MINIMAP</div>
             <div style={{ position: 'relative', width: '100%', height: '78%' }}>
-              {[[8,12,40,18,'#7c3aed'],[8,40,40,18,'#0891b2'],[8,62,40,18,'#0891b2'],[58,22,40,18,'#10b981'],[58,52,40,18,'#f59e0b'],[110,40,30,18,'#ec4899'],[140,40,18,18,'#3b82f6']].map((b, i) => (
+              {[[8,12,40,18,'#7c3aed'],[8,40,40,18,'#0891b2'],[8,62,40,18,'#0891b2'],[58,22,40,18,'#10b981'],[58,52,40,18,'#f59e0b'],[110,40,30,18,'#ec4899'],[140,40,18,18,'#3388ff']].map((b, i) => (
                 <div key={i} style={{ position: 'absolute', left: b[0], top: b[1], width: b[2], height: b[3], background: b[4], borderRadius: 2, opacity: 0.7 }}/>
               ))}
             </div>
@@ -1357,7 +1357,7 @@ function SDWebUIFace({ onMgmt }) {
           {/* Big preview */}
           <div style={{
             aspectRatio: '1', borderRadius: 10,
-            background: 'linear-gradient(135deg, #fb7185 0%, #ec4899 30%, #8b5cf6 60%, #3b82f6 100%)',
+            background: 'linear-gradient(135deg, #fb7185 0%, #ec4899 30%, #8b5cf6 60%, #3388ff 100%)',
             position: 'relative', overflow: 'hidden', marginBottom: 10,
             boxShadow: '0 8px 30px -10px rgba(15,23,42,0.3)',
           }}>

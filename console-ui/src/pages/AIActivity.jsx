@@ -56,7 +56,7 @@ function Pill({ tone = 'slate', children }) {
   const map = {
     red: { bg: T.redSoft, fg: '#b91c1c', bd: '#fecaca' },
     amber: { bg: T.amberSoft, fg: '#a16207', bd: '#fde68a' },
-    blue: { bg: T.blueSoft, fg: T.blueDeep, bd: '#bfdbfe' },
+    blue: { bg: T.blueSoft, fg: T.blueDeep, bd: '#99c7ff' },
     green: { bg: T.greenSoft, fg: '#047857', bd: '#bbf7d0' },
     slate: { bg: T.surfaceAlt, fg: T.ink3, bd: T.border },
   }[tone];
@@ -74,7 +74,7 @@ function SoftButton({ tone = 'slate', icon, children, onClick, disabled, title }
   const map = {
     red: { bg: '#fff1f2', fg: '#dc2626', bd: '#fecdd3' },
     amber: { bg: '#fffbeb', fg: '#b45309', bd: '#fde68a' },
-    blue: { bg: '#eff6ff', fg: T.blue, bd: '#bfdbfe' },
+    blue: { bg: '#e6f4ff', fg: T.blue, bd: '#99c7ff' },
     green: { bg: '#ecfdf5', fg: '#047857', bd: '#bbf7d0' },
     slate: { bg: '#f8fafc', fg: T.ink2, bd: T.border },
     dark: { bg: '#1e293b', fg: '#fff', bd: '#1e293b' },
@@ -269,7 +269,7 @@ function TranscriptTail({ card }) {
       height: '100%',
       overflow: 'auto',
       background: '#0f172a',
-      color: '#dbeafe',
+      color: '#cce4ff',
       fontFamily: T.mono,
       fontSize: 11,
       lineHeight: 1.55,
@@ -626,7 +626,7 @@ function SessionsConsole({ rows }) {
                 border: 'none',
                 borderBottom: i === rows.length - 1 ? 'none' : `1px solid ${T.borderSoft}`,
                 borderLeft: `2px solid ${on ? T.blue : 'transparent'}`,
-                background: on ? '#eff6ff' : T.surface,
+                background: on ? '#e6f4ff' : T.surface,
                 cursor: 'pointer',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -739,7 +739,7 @@ function ConfigList({ rows }) {
               maxHeight: 220,
               overflow: 'auto',
               background: '#0f172a',
-              color: '#dbeafe',
+              color: '#cce4ff',
               fontSize: 10.5,
               lineHeight: 1.45,
               whiteSpace: 'pre-wrap',
@@ -870,7 +870,7 @@ function ConfigConsole({ rows }) {
                 padding: 12,
                 outline: 'none',
                 background: '#0f172a',
-                color: '#dbeafe',
+                color: '#cce4ff',
                 fontFamily: T.mono,
                 fontSize: 11,
                 lineHeight: 1.55,
@@ -1086,7 +1086,7 @@ export default function AIActivity() {
                 inactiveWeight={600}
                 style={{ gap: 4 }}
                 itemStyle={aiTabItemStyle}
-                activeItemStyle={{ background: '#eff6ff' }}
+                activeItemStyle={{ background: '#e6f4ff' }}
                 renderLabel={(t2) => (
                   <>
                     <Icon name={t2.icon} size={13} stroke={2}/>{t2.label}

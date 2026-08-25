@@ -15,19 +15,19 @@ export const DEVICE = {
 
 export const APPS = [
   // ─ System tools (8) ─
-  { id: 'dashboard', kind: 'system', name: '仪表盘',     icon: 'dashboard', color: T.blue,   bg: 'linear-gradient(160deg,#3b82f6,#1d4ed8)' },
+  { id: 'dashboard', kind: 'system', name: '仪表盘',     icon: 'dashboard', color: T.blue,   bg: 'linear-gradient(160deg,#3388ff,#005eeb)' },
   { id: 'store',     kind: 'system', name: '应用商店',   icon: 'store',     color: T.green,  bg: 'linear-gradient(160deg,#34d399,#059669)' },
   { id: 'files',     kind: 'system', name: '文件',       icon: 'folder',    color: '#0891b2', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
   { id: 'models',    kind: 'system', name: '模型仓库',   icon: 'brain',     color: T.violet, bg: 'linear-gradient(160deg,#a78bfa,#7c3aed)' },
   { id: 'processes', kind: 'system', name: '进程',       icon: 'system',    color: '#475569', bg: 'linear-gradient(160deg,#64748b,#1e293b)' },
-  { id: 'disks',     kind: 'system', name: '磁盘',       icon: 'hardDrive', color: '#1e40af', bg: 'linear-gradient(160deg,#3b82f6,#1e3a8a)' },
+  { id: 'disks',     kind: 'system', name: '磁盘',       icon: 'hardDrive', color: '#0043b8', bg: 'linear-gradient(160deg,#3388ff,#002a70)' },
   { id: 'network-connections', kind: 'system', name: '网络连接', icon: 'network', color: '#0e7490', bg: 'linear-gradient(160deg,#06b6d4,#0e7490)' },
   { id: 'alerts',    kind: 'system', name: '告警中心',   icon: 'bell',      color: T.amber,  bg: 'linear-gradient(160deg,#fbbf24,#d97706)', badge: 2 },
   { id: 'settings',  kind: 'system', name: '系统设置',     icon: 'gear',      color: T.slate,  bg: 'linear-gradient(160deg,#64748b,#334155)' },
 
   // ─ Deployed apps (8) ─
   { id: 'vscode',    kind: 'app', name: 'VS Code',
-    icon: 'code', color: '#0078d4', bg: 'linear-gradient(160deg,#3b82f6,#1e40af)',
+    icon: 'code', color: '#0078d4', bg: 'linear-gradient(160deg,#3388ff,#0043b8)',
     state: 'running', version: '4.96.4', preset: 'code-server',
     category: '开发环境', gpu: 'CPU', gpuPct: 0, qps: null, p99: null,
     desc: '浏览器中的 VS Code，远程开发首选',
@@ -130,7 +130,7 @@ export const STORE_FEATURED = [
 
 export const STORE_APPS = [
   // ─ Installed ─
-  { id: 'vscode',    name: 'VS Code Server',     cat: '开发环境', ver: 'v4.96.4',  base: 'CUDA 12.4', size: '2.1 GB', icon: 'code',      bg: 'linear-gradient(160deg,#3b82f6,#1e40af)', desc: '浏览器版 VS Code，code-server 4.x，支持远程开发',                                  installed: true,  rating: 4.9, downloads: '46.2k', source: 'coder.com' },
+  { id: 'vscode',    name: 'VS Code Server',     cat: '开发环境', ver: 'v4.96.4',  base: 'CUDA 12.4', size: '2.1 GB', icon: 'code',      bg: 'linear-gradient(160deg,#3388ff,#0043b8)', desc: '浏览器版 VS Code，code-server 4.x，支持远程开发',                                  installed: true,  rating: 4.9, downloads: '46.2k', source: 'coder.com' },
   { id: 'jupyter',   name: 'JupyterLab',         cat: '开发环境', ver: 'v4.3.1',   base: 'CUDA 12.4', size: '3.8 GB', icon: 'jupyter',   bg: 'linear-gradient(160deg,#fb923c,#c2410c)', desc: 'Jupyter Lab 4 · PyTorch / Transformers / pandas 预装',                                installed: true,  rating: 4.8, downloads: '54.1k', source: 'jupyter.org' },
   { id: 'ollama',    name: 'Ollama',             cat: 'AI 推理',  ver: 'v0.4.7',   base: 'CUDA 12.4', size: '0.4 GB', icon: 'ollama',    bg: 'linear-gradient(160deg,#475569,#0f172a)', desc: '本地大模型推理，OpenAI 兼容 API，模型库一键拉取',                                       installed: true,  rating: 4.9, downloads: '38.2k', source: 'ollama.ai' },
   { id: 'vllm',      name: 'vLLM',               cat: 'AI 推理',  ver: 'v0.6.4',   base: 'CUDA 12.4', size: '8.1 GB', icon: 'vllm',      bg: 'linear-gradient(160deg,#fb7185,#be123c)', desc: '高性能 LLM 推理服务 · PagedAttention 显存优化 · 吞吐量提升 24×',                       installed: true,  rating: 4.9, downloads: '24.7k', source: 'vllm.ai' },
@@ -155,7 +155,7 @@ export const STORE_APPS = [
   { id: 'jupyterhub',name: 'JupyterHub',         cat: '开发环境', ver: 'v5.2.1',   base: 'Python 3.11', size: '2.6 GB', icon: 'jupyter', bg: 'linear-gradient(160deg,#fb923c,#9a3412)', desc: '多用户 Jupyter，团队共享 GPU 节点首选',                                                  installed: false, rating: 4.6, downloads: '4.1k',  source: 'jupyter.org' },
   { id: 'lobe',      name: 'Lobe Chat',          cat: 'AI 应用',  ver: 'v1.32.0',  base: 'Node 22',     size: '1.1 GB', icon: 'openwebui', bg: 'linear-gradient(160deg,#a78bfa,#7c3aed)', desc: '现代化 ChatGPT/LLMs UI · 多模态 + 插件 + Agent',                                        installed: false, rating: 4.8, downloads: '22.7k', source: 'lobehub.com' },
   { id: 'librechat', name: 'LibreChat',          cat: 'AI 应用',  ver: 'v0.7.5',   base: 'Node 22',     size: '1.4 GB', icon: 'openwebui', bg: 'linear-gradient(160deg,#0ea5e9,#0c4a6e)', desc: '开源 ChatGPT 克隆 · 多账号 / 多模型 / 文件分析',                                        installed: false, rating: 4.6, downloads: '13.8k', source: 'librechat.ai' },
-  { id: 'dify',      name: 'Dify',               cat: 'AI 应用',  ver: 'v0.13.1',  base: 'Docker',      size: '3.2 GB', icon: 'sparkle', bg: 'linear-gradient(160deg,#60a5fa,#2563eb)', desc: '开源 LLM 应用开发平台 · 可视化工作流 + RAG 引擎',                                      installed: false, rating: 4.7, downloads: '15.9k', source: 'dify.ai' },
+  { id: 'dify',      name: 'Dify',               cat: 'AI 应用',  ver: 'v0.13.1',  base: 'Docker',      size: '3.2 GB', icon: 'sparkle', bg: 'linear-gradient(160deg,#66a8ff,#0066ff)', desc: '开源 LLM 应用开发平台 · 可视化工作流 + RAG 引擎',                                      installed: false, rating: 4.7, downloads: '15.9k', source: 'dify.ai' },
   { id: 'flowise',   name: 'Flowise',            cat: 'AI 应用',  ver: 'v2.2.1',   base: 'Node 22',     size: '1.6 GB', icon: 'wrench',  bg: 'linear-gradient(160deg,#22d3ee,#0e7490)', desc: '拖拽式 LangChain 工作流构建器',                                                        installed: false, rating: 4.5, downloads: '13.6k', source: 'flowiseai.com' },
   { id: 'langflow',  name: 'LangFlow',           cat: 'AI 应用',  ver: 'v1.1.0',   base: 'Python 3.11', size: '1.8 GB', icon: 'wrench', bg: 'linear-gradient(160deg,#34d399,#065f46)', desc: 'LangChain 可视化编排 IDE',                                                              installed: false, rating: 4.5, downloads: '9.4k',  source: 'langflow.org' },
   { id: 'ragflow',   name: 'RAGFlow',            cat: 'AI 应用',  ver: 'v0.15.1',  base: 'CUDA 12.4',   size: '4.1 GB', icon: 'book',    bg: 'linear-gradient(160deg,#fb7185,#be123c)', desc: '深度文档理解 RAG 引擎，OCR + 多格式解析 + 引用追溯',                                    installed: false, rating: 4.7, downloads: '7.6k',  source: 'ragflow.io' },

@@ -36,8 +36,8 @@ import { normalizeCategory, deriveAppCenterStatus, APP_STATUS, matchesAppCenterF
 function guessAppStyle(id, name, category) {
   const n = (id + ' ' + name).toLowerCase();
   const styles = {
-    code: { icon: 'code', bg: 'linear-gradient(160deg,#3b82f6,#1e40af)' },
-    vscode: { icon: 'code', bg: 'linear-gradient(160deg,#3b82f6,#1e40af)' },
+    code: { icon: 'code', bg: 'linear-gradient(160deg,#3388ff,#0043b8)' },
+    vscode: { icon: 'code', bg: 'linear-gradient(160deg,#3388ff,#0043b8)' },
     jupyter: { icon: 'jupyter', bg: 'linear-gradient(160deg,#fb923c,#c2410c)' },
     ollama: { icon: 'ollama', bg: 'linear-gradient(160deg,#475569,#0f172a)' },
     vllm: { icon: 'vllm', bg: 'linear-gradient(160deg,#fb7185,#be123c)' },
@@ -46,7 +46,7 @@ function guessAppStyle(id, name, category) {
     lobe: { icon: 'openwebui', bg: 'linear-gradient(160deg,#a78bfa,#7c3aed)' },
     webui: { icon: 'openwebui', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
     mysql: { icon: 'database', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
-    postgres: { icon: 'database', bg: 'linear-gradient(160deg,#60a5fa,#2563eb)' },
+    postgres: { icon: 'database', bg: 'linear-gradient(160deg,#66a8ff,#0066ff)' },
     redis: { icon: 'database', bg: 'linear-gradient(160deg,#fb7185,#e11d48)' },
     comfy: { icon: 'palette', bg: 'linear-gradient(160deg,#a78bfa,#6d28d9)' },
   };
@@ -56,7 +56,7 @@ function guessAppStyle(id, name, category) {
   const catStyles = {
     'ai-inference': { icon: 'sparkle', bg: 'linear-gradient(160deg,#818cf8,#4338ca)' },
     'ai-tools': { icon: 'wrench', bg: 'linear-gradient(160deg,#34d399,#059669)' },
-    'dev-environment': { icon: 'code', bg: 'linear-gradient(160deg,#3b82f6,#1d4ed8)' },
+    'dev-environment': { icon: 'code', bg: 'linear-gradient(160deg,#3388ff,#005eeb)' },
     'database': { icon: 'database', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
   };
   return catStyles[category] || { icon: 'apps', bg: 'linear-gradient(160deg,#64748b,#334155)' };
@@ -438,7 +438,7 @@ function StoreCard({ app, onOpen, onOpenApp }) {
       style={{
         background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, cursor: 'pointer',
         transition: 'all 0.15s ease', display: 'flex', flexDirection: 'column', gap: 10,
-        '--edge-row-hover-bg': T.surface, '--edge-row-hover-border-color': '#bfdbfe',
+        '--edge-row-hover-bg': T.surface, '--edge-row-hover-border-color': '#99c7ff',
         '--edge-row-hover-box-shadow': '0 6px 14px -6px rgba(15,23,42,0.12)',
       }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
@@ -466,16 +466,16 @@ function StoreCard({ app, onOpen, onOpenApp }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 10, borderTop: `1px dashed ${T.border}` }}>
         {app.cat && <span style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 3, background: T.surfaceAlt, color: T.ink3, border: `1px solid ${T.borderSoft}` }}>{app.cat}</span>}
         <span style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, fontWeight: 600, flexShrink: 0,
-          background: app.runtime === 'compose' ? '#eff6ff' : T.surfaceAlt,
-          color: app.runtime === 'compose' ? '#1d4ed8' : T.ink3,
-          border: `1px solid ${app.runtime === 'compose' ? '#bfdbfe' : T.borderSoft}` }}>
+          background: app.runtime === 'compose' ? '#e6f4ff' : T.surfaceAlt,
+          color: app.runtime === 'compose' ? '#005eeb' : T.ink3,
+          border: `1px solid ${app.runtime === 'compose' ? '#99c7ff' : T.borderSoft}` }}>
           {app.runtime === 'compose' ? 'Compose' : 'K8s'}
         </span>
         <div style={{ flex: 1 }}/>
         {app.status === 'incompatible'
           ? <span title={app.notInstallableReason || ''} style={{ fontSize: 10.5, color: '#b91c1c', fontWeight: 600, flexShrink: 0 }}>查看兼容性</span>
           : app.status === 'installing'
-            ? <span style={{ fontSize: 10.5, color: '#1d4ed8', fontWeight: 600, flexShrink: 0 }}>查看进度</span>
+            ? <span style={{ fontSize: 10.5, color: '#005eeb', fontWeight: 600, flexShrink: 0 }}>查看进度</span>
             : app.installed
             ? <button onClick={(e) => { e.stopPropagation(); onOpenApp && onOpenApp({ id: app.devboxId || app.id }); }} className="edge-press edge-btn-secondary" style={{ ...btnSecondary, height: 26, padding: '0 10px', fontSize: 11.5 }}>
                 <Icon name="apps" size={11} stroke={2}/>管理
@@ -800,7 +800,7 @@ export default function AppStore({ onOpenApp, authed, onRequireAuth }) {
                   background: on ? T.blueSoft : 'transparent', color: on ? T.blueDeep : T.ink2, fontSize: 12.5, fontWeight: on ? 600 : 500 }}>
                 <Icon name={CAT_ICON[c.id] || c.icon || 'apps'} size={14} stroke={1.8}/>
                 <span style={{ flex: 1 }}>{c.name}</span>
-                <span className="mono tnum" style={{ fontSize: 10.5, color: on ? T.blueDeep : T.ink4, background: on ? '#dbeafe' : T.surfaceAlt, padding: '0 6px', borderRadius: 999, lineHeight: '17px' }}>{c.count}</span>
+                <span className="mono tnum" style={{ fontSize: 10.5, color: on ? T.blueDeep : T.ink4, background: on ? '#cce4ff' : T.surfaceAlt, padding: '0 6px', borderRadius: 999, lineHeight: '17px' }}>{c.count}</span>
               </div>
             );
           })}

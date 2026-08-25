@@ -110,9 +110,9 @@ function DiskIOPanel({ disks }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <div style={{
                   width: 30, height: 30, borderRadius: 7,
-                  background: d.rotational ? '#fffbeb' : '#eff4ff',
+                  background: d.rotational ? '#fffbeb' : '#e6f4ff',
                   color: d.rotational ? T.amber : T.blue,
-                  border: `1px solid ${d.rotational ? '#fde68a' : '#bfdbfe'}`,
+                  border: `1px solid ${d.rotational ? '#fde68a' : '#99c7ff'}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
                   <Icon name="hardDrive" size={15} stroke={1.8}/>
@@ -122,9 +122,9 @@ function DiskIOPanel({ disks }) {
                     {d.path || `/dev/${d.name}`}
                     <span style={{
                       marginLeft: 7, padding: '1px 6px', borderRadius: 3,
-                      background: d.rotational ? '#fffbeb' : '#eff4ff',
+                      background: d.rotational ? '#fffbeb' : '#e6f4ff',
                       color: d.rotational ? '#b45309' : T.blueDeep,
-                      border: `1px solid ${d.rotational ? '#fde68a' : '#bfdbfe'}`,
+                      border: `1px solid ${d.rotational ? '#fde68a' : '#99c7ff'}`,
                       fontSize: 10.5, fontFamily: 'inherit',
                     }}>{d.kind || (d.rotational ? 'HDD' : 'SSD')}</span>
                   </div>

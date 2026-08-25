@@ -104,7 +104,7 @@ function Badge({ children, tone = "gray" }) {
   const c = {
     green: ["#ecfdf5", "#047857"],
     red: ["#fef2f2", "#b91c1c"],
-    blue: ["#eff6ff", "#1d4ed8"],
+    blue: ["#e6f4ff", "#005eeb"],
     amber: ["#fffbeb", "#a16207"],
     gray: [T.surfaceAlt, T.ink3],
   }[tone];
@@ -182,7 +182,7 @@ function Preview({
     <div
       style={{
         marginTop: 12,
-        border: "1px solid #bfdbfe",
+        border: "1px solid #99c7ff",
         borderRadius: 7,
         overflow: "hidden",
       }}
@@ -190,10 +190,10 @@ function Preview({
       <div
         style={{
           padding: "8px 10px",
-          background: "#eff6ff",
+          background: "#e6f4ff",
           fontSize: 11.5,
           fontWeight: 700,
-          color: "#1e40af",
+          color: "#0043b8",
           display: "flex",
           alignItems: "center",
         }}
@@ -213,7 +213,7 @@ function Preview({
           maxHeight: 260,
           overflow: "auto",
           background: "#0f172a",
-          color: "#dbeafe",
+          color: "#cce4ff",
           fontSize: 11,
           lineHeight: 1.55,
           whiteSpace: "pre-wrap",
