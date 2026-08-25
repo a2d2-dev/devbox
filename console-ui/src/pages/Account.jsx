@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
+import ProfilePanel from './account/ProfilePanel'
 
 // Account —「个人设置」系统 app（issue #30 T4 骨架）
 //
@@ -16,12 +17,6 @@ const tabs = [
 ]
 
 const placeholders = {
-  profile: {
-    title: '我的账号',
-    subtitle: '账户信息与安全设置',
-    icon: 'user',
-    hint: '账户资料、密码与安全设置即将上线。',
-  },
   appearance: {
     title: '主题壁纸',
     subtitle: '外观主题与桌面壁纸',
@@ -56,6 +51,8 @@ function EmptyState({ icon, hint }) {
 }
 
 function TabPanel({ tab }) {
+  // profile tab 由 T5 实现真实内容；appearance/devices 仍为占位（并行任务实现）。
+  if (tab === 'profile') return <ProfilePanel/>
   const meta = placeholders[tab]
   return (
     <>
