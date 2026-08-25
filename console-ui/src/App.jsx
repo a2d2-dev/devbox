@@ -71,6 +71,7 @@ import { useOverlayStack } from './overlays/OverlayProvider'
 
 const TWEAK_DEFAULTS = {
   "preset": "fnos",
+  "theme": "light",
   "wallpaper": "fnos",
   "iconStyle": "gradient",
   "topbar": "light",
@@ -615,7 +616,7 @@ export default function App() {
                 {appId === 'downloads' && <Downloads/>}
                 {appId === 'network-security' && <NetworkSecurity/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
-                {appId === 'account'   && <Account/>}
+                {appId === 'account'   && <Account t={t} setT={setT}/>}
                 {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','users','links','backup','downloads','network-security','diag','settings','account'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp}/>}

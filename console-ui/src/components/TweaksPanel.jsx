@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
+import { authFetch, getAuthToken } from '../hooks/useApi'
 
 const __TWEAKS_STYLE = `
   .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
@@ -111,7 +112,29 @@ const __TWEAKS_STYLE = `
 `;
 
 // ── useTweaks ───────────────────────────────────────────────────────────────
+// Preference state source of truth for the whole desktop shell. State lives in
+// React + localStorage (offline fallback), and — for logged-in users — is
+// mirrored to the per-account backend so appearance follows the account across
+// devices/browsers (issue #30 T6).
 const STORAGE_KEY = 'edgex-user-prefs';
+const PREFS_URL = '/api/v1/account/preferences';
+
+// Server-side whitelist (pkg/users/prefs.go). Only these keys are persisted to
+// the account; everything else (preset, online, …) stays local-only. The PUT
+// endpoint REPLACES the whole record, so every write sends the full whitelisted
+// subset rather than a delta — otherwise unsent keys would be wiped server-side.
+const BACKEND_PREF_KEYS = [
+  'theme', 'wallpaper', 'accent', 'iconStyle',
+  'layout', 'iconSize', 'topbar', 'showRecent',
+];
+
+function pickBackendPrefs(values) {
+  const out = {};
+  for (const k of BACKEND_PREF_KEYS) {
+    if (values[k] !== undefined) out[k] = values[k];
+  }
+  return out;
+}
 
 function loadFromStorage(defaults) {
   try {
@@ -128,17 +151,84 @@ function saveToStorage(values) {
 
 export function useTweaks(defaults) {
   const [values, setValues] = useState(() => loadFromStorage(defaults));
+  // Latest values snapshot, so the debounced writer always flushes the full
+  // current whitelist without re-subscribing effects on every keystroke.
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+  const putTimer = useRef(null);
+  const hydrated = useRef(false);
+
+  // 1) Hydrate from the account. A non-empty remote record overrides local
+  //    values (last-writer per account wins across devices). Unauthenticated or
+  //    failed requests degrade silently to the localStorage-seeded state.
+  //
+  //    Runs on mount (covers a page refresh where the token is already restored)
+  //    AND on the `authchange` event (covers a fresh login, where App mounts this
+  //    hook before any token exists, so the mount pass would otherwise skip).
+  useEffect(() => {
+    let cancelled = false;
+    const hydrate = async () => {
+      if (cancelled || hydrated.current) return;
+      if (!getAuthToken()) return;            // pre-login: stay on local fallback
+      hydrated.current = true;                // guard against double-hydrate
+      try {
+        const resp = await authFetch(PREFS_URL);
+        if (!resp.ok) { hydrated.current = false; return; } // allow retry on next signal
+        const remote = await resp.json();
+        if (cancelled || !remote || typeof remote !== 'object') return;
+        if (Object.keys(remote).length === 0) return; // empty account → keep local
+        setValues((prev) => {
+          const next = { ...prev, ...remote };
+          saveToStorage(next);
+          valuesRef.current = next;
+          return next;
+        });
+      } catch { hydrated.current = false; /* offline → allow retry on next signal */ }
+    };
+    hydrate();                                // page-refresh path
+    const onAuth = (e) => {
+      // De-auth (logout): drop the guard so the NEXT login re-hydrates the new
+      // account rather than keeping the previous one's prefs in this same tab.
+      if (e && e.detail && e.detail.authed === false) { hydrated.current = false; return; }
+      hydrate();                              // fresh-login path
+    };
+    window.addEventListener('authchange', onAuth);
+    return () => { cancelled = true; window.removeEventListener('authchange', onAuth); };
+  }, []);
+
+  // Debounced write-back of the full whitelisted subset (PUT replaces the whole
+  // record). Never fires pre-login; failures are swallowed (localStorage already
+  // holds the change, so the user loses nothing offline).
+  const scheduleBackendSync = useCallback(() => {
+    if (!getAuthToken()) return;
+    if (putTimer.current) clearTimeout(putTimer.current);
+    putTimer.current = setTimeout(() => {
+      putTimer.current = null;
+      const body = pickBackendPrefs(valuesRef.current);
+      authFetch(PREFS_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).catch(() => { /* silent: offline fallback stays in localStorage */ });
+    }, 500);
+  }, []);
+
+  useEffect(() => () => { if (putTimer.current) clearTimeout(putTimer.current); }, []);
+
   const setTweak = useCallback((keyOrEdits, val) => {
     const edits = typeof keyOrEdits === 'object' && keyOrEdits !== null
       ? keyOrEdits : { [keyOrEdits]: val };
     setValues((prev) => {
       const next = { ...prev, ...edits };
       saveToStorage(next);
+      valuesRef.current = next;
       return next;
     });
+    // 2) Mirror to the account (debounced) whenever a whitelisted key changes.
+    if (BACKEND_PREF_KEYS.some((k) => k in edits)) scheduleBackendSync();
     window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, '*');
     window.dispatchEvent(new CustomEvent('tweakchange', { detail: edits }));
-  }, []);
+  }, [scheduleBackendSync]);
   return [values, setTweak];
 }
 

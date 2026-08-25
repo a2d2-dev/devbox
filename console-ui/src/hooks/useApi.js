@@ -18,6 +18,12 @@ export function setAuthToken(t, persistence = 'persistent') {
 		storage.setItem(TOKEN_KEY, t);
 	}
 	_expiryNotified = false;
+	// Notify token-dependent hooks (e.g. useTweaks) that a session just became
+	// available, so they can hydrate account-scoped state that was skipped
+	// pre-login. Fired only when a token is actually set.
+	if (t && typeof window !== 'undefined') {
+		try { window.dispatchEvent(new CustomEvent('authchange', { detail: { authed: true } })); } catch { /* SSR/no-DOM */ }
+	}
 }
 
 export function getAuthToken() { return _token; }
@@ -30,6 +36,13 @@ export function clearAuth() {
 	_token = '';
 	localStorage.removeItem(TOKEN_KEY);
 	sessionStorage.removeItem(TOKEN_KEY);
+	// Notify token-dependent hooks that the session ended, so account-scoped
+	// state (e.g. useTweaks' hydrate guard) can reset and re-hydrate cleanly on
+	// the next login — otherwise a second user in the same tab would keep the
+	// previous account's preferences until a full page refresh.
+	if (typeof window !== 'undefined') {
+		try { window.dispatchEvent(new CustomEvent('authchange', { detail: { authed: false } })); } catch { /* SSR/no-DOM */ }
+	}
 }
 
 function authHeaders() {

@@ -2,13 +2,14 @@ import { useState } from 'react'
 import { T } from '../tokens'
 import { Icon } from '../icons'
 import ProfilePanel from './account/ProfilePanel'
+import AppearanceSettings from '../components/AppearanceSettings'
 
-// Account —「个人设置」系统 app（issue #30 T4 骨架）
+// Account —「个人设置」系统 app（issue #30 T4 骨架 → T6 主题壁纸）
 //
-// 三 tab 骨架：我的账号 / 主题壁纸 / 登录设备。
-// 本票只实现可切换的 tab 外壳 + 占位空状态；每个 tab 的真实内容与后端对接由
-// 后续子任务补齐（out of scope）。样式沿用 Settings.jsx 的侧栏 + 卡片结构，
-// 颜色一律取自 tokens.js 的 T.*，以随调色板自适应。
+// 三 tab：我的账号 / 主题壁纸 / 登录设备。主题壁纸 tab（T6）已接入真实内容
+// （<AppearanceSettings/>，读写 App.jsx 的 useTweaks 偏好，写回后端）；其余两个
+// tab 仍为占位空状态，由后续子任务补齐（并行开发中，勿动其占位区）。样式沿用
+// Settings.jsx 的侧栏 + 卡片结构，颜色一律取自 tokens.js 的 T.*，以随调色板自适应。
 
 const tabs = [
   { id: 'profile', label: '我的账号', icon: 'user' },
@@ -50,9 +51,12 @@ function EmptyState({ icon, hint }) {
   )
 }
 
-function TabPanel({ tab }) {
-  // profile tab 由 T5 实现真实内容；appearance/devices 仍为占位（并行任务实现）。
+function TabPanel({ tab, t, setT }) {
+  // profile tab（T5）与主题壁纸 tab（T6）均为真实内容；devices 由 T7 分支接入。
   if (tab === 'profile') return <ProfilePanel/>
+  if (tab === 'appearance') {
+    return <AppearanceSettings t={t} setT={setT}/>
+  }
   const meta = placeholders[tab]
   return (
     <>
@@ -71,7 +75,7 @@ function TabPanel({ tab }) {
   )
 }
 
-export default function Account() {
+export default function Account({ t = {}, setT = () => {} }) {
   const [active, setActive] = useState('profile')
 
   return (
@@ -102,7 +106,7 @@ export default function Account() {
       </aside>
       <main className="account-main" style={{ minWidth: 0, minHeight: 0, overflow: 'auto', padding: '20px clamp(16px, 3vw, 30px)' }}>
         <div style={{ maxWidth: 980, margin: '0 auto' }}>
-          <TabPanel tab={active}/>
+          <TabPanel tab={active} t={t} setT={setT}/>
         </div>
       </main>
     </div>
