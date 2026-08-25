@@ -18,6 +18,12 @@ export function setAuthToken(t, persistence = 'persistent') {
 		storage.setItem(TOKEN_KEY, t);
 	}
 	_expiryNotified = false;
+	// Notify token-dependent hooks (e.g. useTweaks) that a session just became
+	// available, so they can hydrate account-scoped state that was skipped
+	// pre-login. Fired only when a token is actually set.
+	if (t && typeof window !== 'undefined') {
+		try { window.dispatchEvent(new CustomEvent('authchange', { detail: { authed: true } })); } catch { /* SSR/no-DOM */ }
+	}
 }
 
 export function getAuthToken() { return _token; }
@@ -30,6 +36,13 @@ export function clearAuth() {
 	_token = '';
 	localStorage.removeItem(TOKEN_KEY);
 	sessionStorage.removeItem(TOKEN_KEY);
+	// Notify token-dependent hooks that the session ended, so account-scoped
+	// state (e.g. useTweaks' hydrate guard) can reset and re-hydrate cleanly on
+	// the next login — otherwise a second user in the same tab would keep the
+	// previous account's preferences until a full page refresh.
+	if (typeof window !== 'undefined') {
+		try { window.dispatchEvent(new CustomEvent('authchange', { detail: { authed: false } })); } catch { /* SSR/no-DOM */ }
+	}
 }
 
 function authHeaders() {
@@ -1105,4 +1118,24 @@ export async function preflightCatalogApp({ sourceId, appId, version, values }) 
   });
   if (!r.ok) throw await readErr(r);
   return r.json();
+}
+
+// ─── Account: 登录设备 / 会话（Issue #30 T7）─────────────────────────
+//
+// 登录历史（倒序）。后端已脱敏：ipMasked 已打码、deviceLabel 由 UA 归纳、
+// 无原始 UA / token。前端只展示，绝不还原或拼接。单次拉取 + 手动 refresh
+// （登录历史是用户驱动的，不轮询）。
+export function useSessions() {
+  return usePoll('/account/sessions', {
+    interval: 0,
+    fallback: null,
+    transform: (rows) => (Array.isArray(rows) ? rows : []),
+  });
+}
+
+// logoutOthers：POST /account/logout-others → 204，吊销本人除当前外全部会话。
+export async function logoutOthers() {
+  const r = await authFetch(`${API}/account/logout-others`, { method: 'POST' });
+  if (!r.ok) throw await readErr(r);
+  return true;
 }
