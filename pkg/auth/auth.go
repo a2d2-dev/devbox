@@ -209,6 +209,37 @@ func (a *Auth) revokeUser(userID, keepToken string) {
 	}
 }
 
+// RevokeUserSessionsExcept revokes every session belonging to username except
+// the session identified by keepToken. Matching is by principal username so it
+// works for both database users and the legacy single-password admin (whose
+// UserID is empty). It returns the number of sessions revoked. keepToken is
+// normalized so bare and Bearer forms both match the caller's current session.
+func (a *Auth) RevokeUserSessionsExcept(username, keepToken string) int {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return 0
+	}
+	keepToken = normalizeToken(keepToken)
+	a.mu.RLock()
+	tokens := make([]string, 0)
+	for token, sess := range a.sessions {
+		if token == keepToken {
+			continue
+		}
+		if strings.EqualFold(sess.principal.Username, username) {
+			tokens = append(tokens, token)
+		}
+	}
+	a.mu.RUnlock()
+	revoked := 0
+	for _, token := range tokens {
+		if a.removeSession(token) {
+			revoked++
+		}
+	}
+	return revoked
+}
+
 type principalKey struct{}
 
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {

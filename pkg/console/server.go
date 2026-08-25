@@ -439,6 +439,8 @@ func (s *Server) registerRoutes() {
 
 	// 认证路由
 	s.registerAuthRoutes()
+	// 本人登录历史（脱敏）与退出其他设备（Issue #30 T3）
+	s.registerAccountSessionRoutes()
 	s.registerOnboardingRoutes()
 
 	// 浏览器应用（代理 + 书签/历史）

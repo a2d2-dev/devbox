@@ -110,3 +110,22 @@ func TestValidateTokenPrunesOtherExpiredSessions(t *testing.T) {
 	a.mu.RUnlock()
 	require.False(t, exists)
 }
+
+func TestRevokeUserSessionsExcept(t *testing.T) {
+	a := New(Config{Password: "pw"})
+	keep := a.IssueSession(Principal{Username: "alice"})
+	other1 := a.IssueSession(Principal{Username: "alice"})
+	other2 := a.IssueSession(Principal{Username: "Alice"}) // case-insensitive match
+	stranger := a.IssueSession(Principal{Username: "bob"})
+
+	// Bearer-prefixed keep token must still be recognized as the current session.
+	revoked := a.RevokeUserSessionsExcept("alice", "Bearer "+keep)
+	require.Equal(t, 2, revoked)
+	require.True(t, a.ValidateToken(keep))
+	require.False(t, a.ValidateToken(other1))
+	require.False(t, a.ValidateToken(other2))
+	require.True(t, a.ValidateToken(stranger))
+
+	// Empty username is a no-op guard.
+	require.Equal(t, 0, a.RevokeUserSessionsExcept("", keep))
+}
