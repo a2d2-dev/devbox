@@ -13,21 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func loginToken(t *testing.T, h http.Handler, username, password string) string {
-	t.Helper()
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
-	var res struct {
-		Token string `json:"token"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
-	require.NotEmpty(t, res.Token)
-	return res.Token
-}
+// loginToken is shared with handlers_account_test.go in this package.
 
 func prefsServer(t *testing.T) (http.Handler, *users.Store) {
 	t.Helper()
