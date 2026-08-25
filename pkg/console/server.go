@@ -425,6 +425,9 @@ func (s *Server) registerRoutes() {
 	// own password, backed by the session principal only.
 	s.registerAccountRoutes()
 
+	// Per-user preference persistence (theme/wallpaper/layout ...).
+	s.registerAccountPrefsRoutes()
+
 	// 服务导航路由 (tkeel-links 的功能吸收)
 	s.registerLinksRoutes()
 
