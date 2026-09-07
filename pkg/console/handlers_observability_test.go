@@ -320,6 +320,8 @@ func TestAuditHandlerFiltersPagesAndClearAuditsItself(t *testing.T) {
 	server := newObservabilityTestServer(t, "pw")
 	token, _ := server.auth.Verify("pw")
 	server.sessionUsers[token] = "admin"
+	fullIP := "203.0.113.42"
+	rawUA := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 	_, _ = server.systemLog.Append(eventlog.Input{Level: "info", Module: "auth", Event: "one"})
 	_, _ = server.systemLog.Append(eventlog.Input{Level: "error", Module: "process", Event: "two"})
 
@@ -332,14 +334,80 @@ func TestAuditHandlerFiltersPagesAndClearAuditsItself(t *testing.T) {
 
 	del := httptest.NewRequest(http.MethodDelete, "/api/v1/audit/events", nil)
 	del.Header.Set("Authorization", "Bearer "+token)
+	del.Header.Set("User-Agent", rawUA)
+	del.RemoteAddr = fullIP + ":4321"
 	rec = httptest.NewRecorder()
 	server.handleAuditEvents(rec, del)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	body := rec.Body.String()
+	if strings.Contains(body, fullIP) {
+		t.Fatalf("full IP leaked: %s", body)
+	}
+	if strings.Contains(body, "Mozilla") || strings.Contains(body, "AppleWebKit") || strings.Contains(body, "Safari/537.36") || strings.Contains(body, "user_agent") {
+		t.Fatalf("raw UA leaked: %s", body)
+	}
+	if !strings.Contains(body, `"source_ip":"203.0.113.x"`) || !strings.Contains(body, `"deviceLabel":"Chrome · macOS"`) || !strings.Contains(body, `"deviceType":"desktop"`) {
+		t.Fatalf("clear response was not sanitized consistently: %s", body)
+	}
 	page := server.systemLog.Query(eventlog.Query{})
 	if page.Total != 2 || page.Events[0].EventType != "LOG_CLEAR" || page.Events[0].Outcome != "success" || page.Events[1].Outcome != "intent" || page.Events[0].Username != "admin" {
 		t.Fatalf("unexpected events after clear: %#v", page)
+	}
+	if page.Events[0].SourceIP != fullIP || page.Events[0].UserAgent != rawUA {
+		t.Fatalf("store should keep raw clear event fields: %#v", page.Events[0])
+	}
+}
+
+func TestAuditHandlerMasksIPAndUserAgentButKeepsStoreRaw(t *testing.T) {
+	server := newObservabilityTestServer(t, "pw")
+	fullIPv4 := "203.0.113.42"
+	fullIPv6 := "2001:db8:1234:5678::1"
+	rawUA := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	_, _ = server.systemLog.Append(eventlog.Input{
+		Level: "info", Module: "auth", Username: "admin", Event: "login", EventType: "LOGIN_SUCCESS",
+		SourceIP: fullIPv4, UserAgent: rawUA,
+	})
+	_, _ = server.systemLog.Append(eventlog.Input{
+		Level: "warning", Module: "auth", Username: "admin", Event: "login v6", EventType: "LOGIN_SUCCESS",
+		SourceIP: fullIPv6, UserAgent: rawUA,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/events?limit=10", nil)
+	rec := httptest.NewRecorder()
+	server.handleAuditEvents(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, fullIPv4) || strings.Contains(body, fullIPv6) || strings.Contains(body, "2001:db8:1234") {
+		t.Fatalf("full IP leaked: %s", body)
+	}
+	if strings.Contains(body, "Mozilla") || strings.Contains(body, "AppleWebKit") || strings.Contains(body, "Safari/537.36") || strings.Contains(body, "user_agent") {
+		t.Fatalf("raw UA leaked: %s", body)
+	}
+
+	var page auditPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Events) != 2 {
+		t.Fatalf("unexpected page: %#v", page)
+	}
+	if page.Events[0].SourceIP != "2001:db8::/32" || page.Events[1].SourceIP != "203.0.113.x" {
+		t.Fatalf("unexpected masked IPs: %#v", page.Events)
+	}
+	for _, event := range page.Events {
+		if event.DeviceLabel != "Chrome · macOS" || event.DeviceType != "desktop" {
+			t.Fatalf("unexpected device fields: %#v", event)
+		}
+	}
+
+	rawPage := server.systemLog.Query(eventlog.Query{})
+	if rawPage.Events[0].SourceIP != fullIPv6 || rawPage.Events[0].UserAgent != rawUA ||
+		rawPage.Events[1].SourceIP != fullIPv4 || rawPage.Events[1].UserAgent != rawUA {
+		t.Fatalf("store should keep raw forensic fields: %#v", rawPage.Events)
 	}
 }
 

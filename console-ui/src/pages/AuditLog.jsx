@@ -301,7 +301,7 @@ function DetailDrawer({ ev, meta, onClose }) {
           <DetailField label="源 IP" value={ev.source_ip || '-'} mono/>
           <DetailField label="结果" value={ev.outcome}
             valueStyle={{ color: ev.outcome === 'success' ? '#059669' : '#dc2626', fontWeight: 600 }}/>
-          <DetailField label="User Agent" value={ev.user_agent || '-'} small/>
+          <DetailField label="设备" value={auditDeviceLabel(ev)} small/>
           <div style={{ marginTop: 16, fontSize: 11, fontWeight: 600, color: T.ink4 }}>PAYLOAD</div>
           <pre style={{
             margin: '6px 0 0', padding: 12, background: T.surfaceAlt,
@@ -312,6 +312,12 @@ function DetailDrawer({ ev, meta, onClose }) {
       </div>
     </>
   )
+}
+
+export function auditDeviceLabel(ev) {
+  const label = ev?.deviceLabel || ev?.device_label || 'Unknown device'
+  const type = ev?.deviceType || ev?.device_type || 'unknown'
+  return type && type !== 'unknown' ? `${label} (${type})` : label
 }
 
 function DetailField({ label, value, mono, small, valueStyle }) {
