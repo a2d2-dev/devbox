@@ -296,7 +296,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 			writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
-		s.jsonOK(w, s.systemLog.Query(query))
+		s.jsonOK(w, sanitizeAuditPage(s.systemLog.Query(query)))
 	case http.MethodDelete:
 		if s.auth == nil || !s.auth.Enabled() || !s.auth.ValidateToken(r.Header.Get("Authorization")) {
 			writeJSONErrStatus(w, http.StatusForbidden, map[string]any{"error": "清空日志需要已启用的控制台认证", "reason": "permission_required"})
