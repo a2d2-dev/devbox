@@ -320,6 +320,8 @@ func TestAuditHandlerFiltersPagesAndClearAuditsItself(t *testing.T) {
 	server := newObservabilityTestServer(t, "pw")
 	token, _ := server.auth.Verify("pw")
 	server.sessionUsers[token] = "admin"
+	fullIP := "203.0.113.42"
+	rawUA := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 	_, _ = server.systemLog.Append(eventlog.Input{Level: "info", Module: "auth", Event: "one"})
 	_, _ = server.systemLog.Append(eventlog.Input{Level: "error", Module: "process", Event: "two"})
 
@@ -332,14 +334,29 @@ func TestAuditHandlerFiltersPagesAndClearAuditsItself(t *testing.T) {
 
 	del := httptest.NewRequest(http.MethodDelete, "/api/v1/audit/events", nil)
 	del.Header.Set("Authorization", "Bearer "+token)
+	del.Header.Set("User-Agent", rawUA)
+	del.RemoteAddr = fullIP + ":4321"
 	rec = httptest.NewRecorder()
 	server.handleAuditEvents(rec, del)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	body := rec.Body.String()
+	if strings.Contains(body, fullIP) {
+		t.Fatalf("full IP leaked: %s", body)
+	}
+	if strings.Contains(body, "Mozilla") || strings.Contains(body, "AppleWebKit") || strings.Contains(body, "Safari/537.36") || strings.Contains(body, "user_agent") {
+		t.Fatalf("raw UA leaked: %s", body)
+	}
+	if !strings.Contains(body, `"source_ip":"203.0.113.x"`) || !strings.Contains(body, `"deviceLabel":"Chrome · macOS"`) || !strings.Contains(body, `"deviceType":"desktop"`) {
+		t.Fatalf("clear response was not sanitized consistently: %s", body)
+	}
 	page := server.systemLog.Query(eventlog.Query{})
 	if page.Total != 2 || page.Events[0].EventType != "LOG_CLEAR" || page.Events[0].Outcome != "success" || page.Events[1].Outcome != "intent" || page.Events[0].Username != "admin" {
 		t.Fatalf("unexpected events after clear: %#v", page)
+	}
+	if page.Events[0].SourceIP != fullIP || page.Events[0].UserAgent != rawUA {
+		t.Fatalf("store should keep raw clear event fields: %#v", page.Events[0])
 	}
 }
 

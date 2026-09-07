@@ -319,7 +319,7 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 			writeJSONErrStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "清空日志失败", "reason": "audit_unavailable"})
 			return
 		}
-		s.jsonOK(w, map[string]any{"cleared": cleared, "auditEvent": event})
+		s.jsonOK(w, map[string]any{"cleared": cleared, "auditEvent": sanitizeAuditEvent(event)})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

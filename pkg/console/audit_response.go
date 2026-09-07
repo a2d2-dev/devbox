@@ -35,13 +35,17 @@ type auditPage struct {
 func sanitizeAuditPage(page eventlog.Page) auditPage {
 	events := make([]auditEvent, 0, len(page.Events))
 	for _, event := range page.Events {
-		deviceLabel, deviceType := parseUA(event.UserAgent)
-		events = append(events, auditEvent{
-			ID: event.ID, Level: event.Level, Module: event.Module, TS: event.TS,
-			Username: event.Username, Event: event.Event, EventType: event.EventType, Outcome: event.Outcome,
-			ResourceKind: event.ResourceKind, ResourceID: event.ResourceID, SourceIP: maskIP(event.SourceIP),
-			DeviceLabel: deviceLabel, DeviceType: deviceType, Payload: event.Payload,
-		})
+		events = append(events, sanitizeAuditEvent(event))
 	}
 	return auditPage{Events: events, Total: page.Total, Limit: page.Limit, Offset: page.Offset}
+}
+
+func sanitizeAuditEvent(event eventlog.Event) auditEvent {
+	deviceLabel, deviceType := parseUA(event.UserAgent)
+	return auditEvent{
+		ID: event.ID, Level: event.Level, Module: event.Module, TS: event.TS,
+		Username: event.Username, Event: event.Event, EventType: event.EventType, Outcome: event.Outcome,
+		ResourceKind: event.ResourceKind, ResourceID: event.ResourceID, SourceIP: maskIP(event.SourceIP),
+		DeviceLabel: deviceLabel, DeviceType: deviceType, Payload: event.Payload,
+	}
 }
