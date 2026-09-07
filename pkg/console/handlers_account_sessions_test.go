@@ -31,11 +31,14 @@ func newAccountSessionsTestServer(t *testing.T) *Server {
 	return server
 }
 
-// issueLogin creates a live session for username and records a LOGIN_SUCCESS
-// audit event that carries a full IP and raw User-Agent, mimicking production.
+// issueLogin creates a live managed-account session for username and records a
+// LOGIN_SUCCESS audit event, mimicking production login side effects.
 func issueLogin(t *testing.T, s *Server, username, ip, ua string) string {
 	t.Helper()
-	token := s.auth.IssueSession(auth.Principal{Username: username, DisplayName: username})
+	token := s.auth.IssueSessionWithMetadata(
+		auth.Principal{UserID: username + "-id", Username: username, DisplayName: username},
+		auth.SessionMetadata{SourceIP: ip, UserAgent: ua},
+	)
 	s.sessionUsers[token] = username
 	if _, err := s.systemLog.Append(eventlog.Input{
 		Level: "info", Module: "auth", Username: username,
@@ -67,29 +70,41 @@ func TestLogoutOthersRequiresSession(t *testing.T) {
 	}
 }
 
-// TestAccountSessionsLegacyAdminOK verifies the login-history endpoint is
-// unaffected by the empty-UserID case that broke preferences. The sessions
-// handler works purely by principal.Username (which the legacy single-password
-// admin always has) and never inspects UserID, so a legacy admin session must
-// return 200 — not 401 or 403 — even though its principal has no users row.
-func TestAccountSessionsLegacyAdminOK(t *testing.T) {
+func TestAccountSessionsLegacyAdminForbidden(t *testing.T) {
 	s := newAccountSessionsTestServer(t)
-	// issueLogin mints a principal with no UserID, exactly the legacy shape.
-	token := issueLogin(t, s, "admin", "203.0.113.9", "curl/8.0")
+	token := s.auth.IssueSessionWithMetadata(
+		auth.Principal{Username: "admin", DisplayName: "admin", Legacy: true},
+		auth.SessionMetadata{SourceIP: "203.0.113.9", UserAgent: "curl/8.0"},
+	)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/account/sessions", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("legacy admin sessions: expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("legacy admin sessions: expected 403, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	var sessions []accountSession
-	if err := json.Unmarshal(rec.Body.Bytes(), &sessions); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(rec.Body.String(), "not_a_managed_account") {
+		t.Fatalf("expected not_a_managed_account reason, body=%s", rec.Body.String())
 	}
-	if len(sessions) != 1 {
-		t.Fatalf("expected 1 session row for legacy admin, got %d", len(sessions))
+}
+
+func TestRevokeSpecificSessionLegacyAdminForbidden(t *testing.T) {
+	s := newAccountSessionsTestServer(t)
+	token := s.auth.IssueSessionWithMetadata(
+		auth.Principal{Username: "admin", DisplayName: "admin", Legacy: true},
+		auth.SessionMetadata{SourceIP: "203.0.113.9", UserAgent: "curl/8.0"},
+	)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/account/sessions/not-real", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("legacy admin session revoke: expected 403, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not_a_managed_account") {
+		t.Fatalf("expected not_a_managed_account reason, body=%s", rec.Body.String())
 	}
 }
 
@@ -241,6 +256,99 @@ func TestLogoutOthersDoesNotTouchOtherUsers(t *testing.T) {
 	}
 	if !s.auth.ValidateToken(theirs) {
 		t.Fatal("another user's session must not be revoked")
+	}
+}
+
+func TestRevokeSpecificSessionRevokesOnlyThatToken(t *testing.T) {
+	s := newAccountSessionsTestServer(t)
+	target := issueLogin(t, s, "heidi", "192.0.2.30", "curl/8.0")
+	current := issueLogin(t, s, "heidi", "192.0.2.31", "Mozilla/5.0 Firefox/121.0")
+	other := issueLogin(t, s, "heidi", "192.0.2.32", "curl/8.0")
+
+	reqList := httptest.NewRequest(http.MethodGet, "/api/v1/account/sessions", nil)
+	reqList.Header.Set("Authorization", "Bearer "+current)
+	recList := httptest.NewRecorder()
+	s.mux.ServeHTTP(recList, reqList)
+	if recList.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", recList.Code, recList.Body.String())
+	}
+	var sessions []accountSession
+	if err := json.Unmarshal(recList.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range sessions {
+		if strings.Contains(row.ID, target) || strings.Contains(row.ID, current) || strings.Contains(row.ID, other) {
+			t.Fatalf("session id must not expose a token: %#v", row)
+		}
+	}
+	var targetID string
+	authRows, err := s.auth.ListUserSessions("heidi-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range authRows {
+		if row.Token == target {
+			targetID = row.ID
+			break
+		}
+	}
+	if targetID == "" {
+		t.Fatalf("target session id not found: %#v", sessions)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/account/sessions/"+targetID, nil)
+	req.Header.Set("Authorization", "Bearer "+current)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if s.auth.ValidateToken(target) {
+		t.Fatal("target token should be revoked")
+	}
+	if !s.auth.ValidateToken(current) || !s.auth.ValidateToken(other) {
+		t.Fatal("current and unrelated same-user sessions must remain valid")
+	}
+}
+
+func TestRevokeSpecificSessionRejectsCurrent(t *testing.T) {
+	s := newAccountSessionsTestServer(t)
+	current := issueLogin(t, s, "ivan", "192.0.2.40", "curl/8.0")
+	rows, err := s.auth.ListUserSessions("ivan-id")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("sessions err=%v rows=%#v", err, rows)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/account/sessions/"+rows[0].ID, nil)
+	req.Header.Set("Authorization", "Bearer "+current)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "current_session") {
+		t.Fatalf("expected current_session reason, body=%s", rec.Body.String())
+	}
+	if !s.auth.ValidateToken(current) {
+		t.Fatal("current token must remain valid")
+	}
+}
+
+func TestRevokeSpecificSessionHidesCrossUserSession(t *testing.T) {
+	s := newAccountSessionsTestServer(t)
+	mine := issueLogin(t, s, "judy", "192.0.2.50", "curl/8.0")
+	issueLogin(t, s, "mallory", "192.0.2.51", "curl/8.0")
+	rows, err := s.auth.ListUserSessions("mallory-id")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("sessions err=%v rows=%#v", err, rows)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/account/sessions/"+rows[0].ID, nil)
+	req.Header.Set("Authorization", "Bearer "+mine)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

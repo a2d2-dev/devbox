@@ -3,16 +3,17 @@ import { T } from '../tokens'
 import { Icon } from '../icons'
 import ProfilePanel from './account/ProfilePanel'
 import AppearanceSettings from '../components/AppearanceSettings'
-import { useSessions, logoutOthers } from '../hooks/useApi'
+import { useSessions, logoutOthers, revokeSession } from '../hooks/useApi'
 
 // Account —「个人设置」系统 app（issue #30 T4 骨架 → T5/T6/T7 全量接入）
 //
 // 三 tab：我的账号（T5 <ProfilePanel/>）/ 主题壁纸（T6 <AppearanceSettings/>，
 // 读写 App.jsx 的 useTweaks 偏好并防抖写回后端）/ 登录设备（T7）：
-//   GET  /api/v1/account/sessions       登录历史（倒序，已脱敏）
+//   GET  /api/v1/account/sessions       活跃会话（倒序，已脱敏）
+//   DELETE /api/v1/account/sessions/{id} 退出指定非当前会话
 //   POST /api/v1/account/logout-others  退出本人除当前外全部会话
 // 安全：后端已脱敏（IP 打码 / UA 归纳 / 无 token）。前端只展示，绝不还原、
-// 拼接或打印任何完整 IP / 原始 UA / token。「退出指定设备」为二期，本票不做。
+// 拼接或打印任何完整 IP / 原始 UA / token。
 // 样式沿用 Settings.jsx 的侧栏 + 卡片结构，颜色一律取自 tokens.js 的 T.*。
 
 const tabs = [
@@ -58,7 +59,7 @@ function CurrentBadge() {
   )
 }
 
-function DeviceRow({ session }) {
+function DeviceRow({ session, onRevoke, busy }) {
   const icon = deviceIcon[session.deviceType] || deviceIcon.unknown
   const current = !!session.current
   return (
@@ -92,6 +93,22 @@ function DeviceRow({ session }) {
           </span>
         </div>
       </div>
+      {!current && (
+        <button
+          type="button"
+          onClick={() => onRevoke(session)}
+          disabled={busy}
+          aria-label={`退出 ${session.deviceLabel || '未知设备'}`}
+          style={{
+            height: 30, padding: '0 11px', borderRadius: 6, flex: '0 0 auto',
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            background: T.surface, color: T.red, border: `1px solid #fecaca`,
+            fontSize: 12, fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer',
+          }}
+        >
+          <Icon name="logout" size={13}/>退出
+        </button>
+      )}
     </div>
   )
 }
@@ -125,9 +142,39 @@ function ConfirmLogoutOthers({ busy, onCancel, onConfirm }) {
 
 const dialogBtn = { height: 32, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.ink2, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }
 
+function ConfirmRevokeSession({ session, busy, onCancel, onConfirm }) {
+  if (!session) return null
+  return (
+    <div role="dialog" aria-modal="true" aria-label="确认退出指定设备" onClick={busy ? undefined : onCancel}
+      style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(15,23,42,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 400, maxWidth: '100%', padding: 20, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: '0 18px 48px rgba(15,23,42,.2)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <div style={{ width: 34, height: 34, borderRadius: '50%', display: 'grid', placeItems: 'center', background: T.redSoft, color: T.red, flex: '0 0 auto' }}>
+            <Icon name="logout" size={17}/>
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>退出这台设备？</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: T.ink3 }}>{session.deviceLabel || '未知设备'}</div>
+          </div>
+        </div>
+        <div style={{ marginTop: 12, fontSize: 12.5, color: T.ink2, lineHeight: 1.7 }}>
+          将吊销该设备上的登录会话，它需要重新登录。当前设备不受影响。
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+          <button type="button" disabled={busy} onClick={onCancel} style={dialogBtn}>取消</button>
+          <button type="button" disabled={busy} onClick={onConfirm} style={{ ...dialogBtn, color: '#fff', background: T.red, borderColor: T.red }}>
+            {busy ? '正在退出…' : '确认退出'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DevicesPanel() {
   const { data: sessions, loading, error, refresh } = useSessions()
   const [confirming, setConfirming] = useState(false)
+  const [revokeTarget, setRevokeTarget] = useState(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState(null) // { tone: 'ok'|'err', text }
 
@@ -146,6 +193,22 @@ function DevicesPanel() {
     }
   }
 
+  const onRevokeConfirm = async () => {
+    if (!revokeTarget) return
+    setBusy(true)
+    try {
+      await revokeSession(revokeTarget.id)
+      setRevokeTarget(null)
+      setNotice({ tone: 'ok', text: '已退出指定设备。' })
+      refresh()
+    } catch (e) {
+      setRevokeTarget(null)
+      setNotice({ tone: 'err', text: '退出失败：' + (e?.message || '请稍后重试') })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const list = Array.isArray(sessions) ? sessions : []
   const hasList = list.length > 0
 
@@ -154,7 +217,7 @@ function DevicesPanel() {
       <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 12, gap: 12 }}>
         <div style={{ minWidth: 0 }}>
           <h1 style={{ margin: 0, fontSize: 18, color: T.ink, letterSpacing: 0 }}>登录设备</h1>
-          <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>显示最近登录记录。IP 与设备信息已脱敏。</div>
+          <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>显示当前活跃会话。IP 与设备信息已脱敏。</div>
         </div>
         <div style={{ flex: 1 }}/>
         <button
@@ -188,40 +251,43 @@ function DevicesPanel() {
       <section style={{ ...panel, position: 'relative' }}>
         <div style={{ minHeight: 43, padding: '0 16px', display: 'flex', alignItems: 'center', gap: 8, background: T.surfaceAlt, borderBottom: `1px solid ${T.borderSoft}` }}>
           <Icon name="shield" size={15} style={{ color: T.blueDeep }}/>
-          <h2 style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: T.ink, letterSpacing: 0 }}>登录记录</h2>
+          <h2 style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: T.ink, letterSpacing: 0 }}>活跃会话</h2>
           <div style={{ flex: 1 }}/>
           {hasList && <span style={{ fontSize: 11, color: T.ink4 }}>{list.length} 条</span>}
         </div>
 
         {loading && !sessions ? (
           <div style={{ padding: '40px 24px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, color: T.ink3, fontSize: 12.5 }}>
-            <Icon name="refresh" size={15}/>正在加载登录记录…
+            <Icon name="refresh" size={15}/>正在加载活跃会话…
           </div>
         ) : error && !hasList ? (
           <div style={{ padding: '40px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, textAlign: 'center' }}>
             <div style={{ width: 48, height: 48, borderRadius: '50%', display: 'grid', placeItems: 'center', background: T.redSoft, color: T.red }}>
               <Icon name="alertTri" size={22}/>
             </div>
-            <div style={{ fontSize: 12.5, color: T.ink2 }}>加载登录记录失败，请稍后重试。</div>
+            <div style={{ fontSize: 12.5, color: T.ink2 }}>加载活跃会话失败，请稍后重试。</div>
             <button type="button" onClick={refresh} style={dialogBtn}>
               <Icon name="refresh" size={13} style={{ marginRight: 5, verticalAlign: '-2px' }}/>重新加载
             </button>
           </div>
         ) : !hasList ? (
-          <EmptyStateText icon="shield" text="暂无登录记录"/>
+          <EmptyStateText icon="shield" text="暂无活跃会话"/>
         ) : (
           <div>
-            {list.map((s) => <DeviceRow key={s.id} session={s}/>)}
+            {list.map((s) => <DeviceRow key={s.id} session={s} busy={busy} onRevoke={(target) => { setNotice(null); setRevokeTarget(target) }}/>)}
           </div>
         )}
 
         {confirming && (
           <ConfirmLogoutOthers busy={busy} onCancel={() => setConfirming(false)} onConfirm={onConfirm}/>
         )}
+        {revokeTarget && (
+          <ConfirmRevokeSession session={revokeTarget} busy={busy} onCancel={() => setRevokeTarget(null)} onConfirm={onRevokeConfirm}/>
+        )}
       </section>
 
       <div style={{ marginTop: 10, fontSize: 11, color: T.ink4, lineHeight: 1.6 }}>
-        以上为登录历史记录，非当前活跃会话列表。「退出其他全部设备」仅吊销其他设备的登录会话，历史记录仍会保留展示。
+        以上为当前活跃会话。「退出其他全部设备」仅吊销其他设备的登录会话，当前设备不受影响。
       </div>
     </>
   )

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -128,4 +129,63 @@ func TestRevokeUserSessionsExcept(t *testing.T) {
 
 	// Empty username is a no-op guard.
 	require.Equal(t, 0, a.RevokeUserSessionsExcept("", keep))
+}
+
+func TestPersistentSessionSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.db")
+	store, err := OpenSessionStore(path)
+	require.NoError(t, err)
+
+	a := New(Config{Password: "pw", SessionTTL: 60, SessionStore: store})
+	token, p, ok := a.VerifyCredentials("admin", "pw")
+	require.True(t, ok)
+	require.Equal(t, "admin", p.Username)
+	require.True(t, a.ValidateToken(token))
+	require.NoError(t, store.Close())
+
+	reopened, err := OpenSessionStore(path)
+	require.NoError(t, err)
+	defer reopened.Close()
+	restarted := New(Config{Password: "pw", SessionTTL: 60, SessionStore: reopened})
+	principal, ok := restarted.SessionPrincipal("Bearer " + token)
+	require.True(t, ok)
+	require.Equal(t, "admin", principal.Username)
+}
+
+func TestPersistentSessionMetadataAndSpecificRevoke(t *testing.T) {
+	store, err := OpenSessionStore(filepath.Join(t.TempDir(), "sessions.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	a := New(Config{Password: "pw", SessionTTL: 60, SessionStore: store})
+	current := a.IssueSessionWithMetadata(
+		Principal{UserID: "u1", Username: "alice", DisplayName: "Alice", Role: users.RoleAdmin},
+		SessionMetadata{SourceIP: "203.0.113.10", UserAgent: "curl/8.0"},
+	)
+	other := a.IssueSessionWithMetadata(
+		Principal{UserID: "u1", Username: "alice", DisplayName: "Alice", Role: users.RoleAdmin},
+		SessionMetadata{SourceIP: "203.0.113.11", UserAgent: "Mozilla/5.0"},
+	)
+
+	rows, err := a.ListUserSessions("u1")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	var otherID string
+	for _, row := range rows {
+		require.NotEmpty(t, row.ID)
+		require.NotEqual(t, row.Token, row.ID)
+		require.NotEmpty(t, row.LoginAt)
+		require.NotEmpty(t, row.LastActiveAt)
+		if row.Token == other {
+			otherID = row.ID
+			require.Equal(t, "203.0.113.11", row.SourceIP)
+			require.Equal(t, "Mozilla/5.0", row.UserAgent)
+		}
+	}
+	require.NotEmpty(t, otherID)
+
+	revoked, currentRejected := a.RevokeUserSession("u1", otherID, current)
+	require.True(t, revoked)
+	require.False(t, currentRejected)
+	require.True(t, a.ValidateToken(current))
+	require.False(t, a.ValidateToken(other))
 }
