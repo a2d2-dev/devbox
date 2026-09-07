@@ -160,7 +160,8 @@ func TestAccountPasswordChangeFlow(t *testing.T) {
 	bad := doJSON(t, h, http.MethodPost, "/api/v1/account/password", current, map[string]any{
 		"currentPassword": "Wrong-pass-2026", "newPassword": "Brand-new-2027",
 	})
-	require.Equal(t, http.StatusUnauthorized, bad.Code)
+	require.Equal(t, http.StatusBadRequest, bad.Code)
+	require.Equal(t, "invalid_current_password", mustField(t, bad.Body.Bytes(), "reason"))
 	require.NotContains(t, bad.Body.String(), "Brand-new-2027")
 	_, stillOld := store.Authenticate(ctx, "developer", "Developer-2026")
 	require.True(t, stillOld, "password must be unchanged after a failed attempt")
