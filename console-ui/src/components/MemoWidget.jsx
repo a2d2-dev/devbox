@@ -70,10 +70,10 @@ export function MemoWidget() {
   return (
     <div style={{
       padding: 16,
-      background: 'rgba(255,255,255,0.7)',
+      background: T.overlayBg,
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
-      border: '1px solid rgba(255,255,255,0.9)',
+      border: `1px solid ${T.border}`,
       borderRadius: 14,
       boxShadow: '0 6px 20px -6px rgba(15,23,42,0.10)',
     }}>

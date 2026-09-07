@@ -1,43 +1,64 @@
 // ─── Design tokens ──────────────────────────────────────────────
-// fnOS / 飞牛 (Semi Design) 视觉语言。品牌主色 #0066ff，纯白卡片，
-// 深灰摄影感桌面背景，12px 圆角，PingFang SC 字体栈。
+// fnOS / 飞牛 (Semi Design) 视觉语言。品牌主色 #0066ff。
+// Color tokens resolve through CSS variables so the existing `T.*` imports can
+// switch themes without touching hundreds of inline style call sites.
+const v = (name) => `var(--${name})`;
+
 export const T = {
   // Font — 对齐 fnOS: PingFang SC / SF Pro，等宽保留给终端与数字
   sans: "'PingFang SC', 'SF Pro SC', 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif",
   mono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
 
   // Surface — Semi bg 层级：bg-0 浅灰底，卡片纯白
-  bg:        '#f3f3f3',
-  surface:   '#ffffff',
-  surfaceAlt:'#fafafa',
-  border:    '#e6e6e7',   // rgba(11,11,12,.10) 实色化
-  borderSoft:'#f0f0f0',
+  bg:        v('edge-bg'),
+  surface:   v('edge-surface'),
+  surfaceAlt:v('edge-surface-alt'),
+  border:    v('edge-border'),
+  borderSoft:v('edge-border-soft'),
 
   // Text — Semi grey-9 (#0b0b0c) 分级
-  ink:       '#0b0b0c',
-  ink2:      '#3d3d3e',   // ~75%
-  ink3:      '#7f7f80',   // ~50%
-  ink4:      '#b0b0b1',   // ~30%
+  ink:       v('edge-ink'),
+  ink2:      v('edge-ink-2'),
+  ink3:      v('edge-ink-3'),
+  ink4:      v('edge-ink-4'),
 
   // Brand & semantic — fnOS 品牌蓝 #0066ff
-  blue:      '#0066ff',
-  blueDeep:  '#005eeb',
-  blueSoft:  '#e6f4ff',
-  cyan:      '#00b8d4',
-  indigo:    '#3d5afe',
-  teal:      '#009e8e',
-  violet:    '#7c4dff',
-  green:     '#009e61',
-  greenSoft: '#e6f7ef',
-  amber:     '#e06c00',
-  amberSoft: '#fff7e8',
-  red:       '#db382c',
-  redSoft:   '#fdecea',
-  slate:     '#4b4b4c',
+  blue:      v('edge-blue'),
+  blueDeep:  v('edge-blue-deep'),
+  blueSoft:  v('edge-blue-soft'),
+  cyan:      v('edge-cyan'),
+  indigo:    v('edge-indigo'),
+  teal:      v('edge-teal'),
+  violet:    v('edge-violet'),
+  green:     v('edge-green'),
+  greenSoft: v('edge-green-soft'),
+  amber:     v('edge-amber'),
+  amberSoft: v('edge-amber-soft'),
+  red:       v('edge-red'),
+  redSoft:   v('edge-red-soft'),
+  slate:     v('edge-slate'),
 
   // Window chrome
-  windowBg:  '#ffffff',
-  titleBar:  '#fafafa',
+  windowBg:  v('edge-window-bg'),
+  titleBar:  v('edge-titlebar'),
+
+  // Shared chrome / controls
+  controlBg: v('edge-control-bg'),
+  controlBgHover: v('edge-control-bg-hover'),
+  overlayBg: v('edge-overlay-bg'),
+  sidebarBg: v('edge-sidebar-bg'),
+  sidebarFg: v('edge-sidebar-fg'),
+  sidebarMuted: v('edge-sidebar-muted'),
+  sidebarActiveBg: v('edge-sidebar-active-bg'),
+  sidebarActiveFg: v('edge-sidebar-active-fg'),
+  blueBorder: v('edge-blue-border'),
+  redBorder: v('edge-red-border'),
+  greenBorder: v('edge-green-border'),
+  amberBorder: v('edge-amber-border'),
+  codeBg: v('edge-code-bg'),
+  desktopTopoBg: v('edge-desktop-topo-bg'),
+  desktopTopoImage: v('edge-desktop-topo-image'),
+  desktopPlainBg: v('edge-desktop-plain-bg'),
 
   // Semantic tokens only; components should reference T.* keys so dark mode can swap values later.
   space: [0, 4, 8, 12, 16, 20, 24, 32, 40, 48],
@@ -75,3 +96,21 @@ export const T = {
 export const statusColor = (pct) => pct >= 70 ? T.amber : T.green;
 /** Soft variant for status badges */
 export const statusColorSoft = (pct) => pct >= 70 ? T.amberSoft : T.greenSoft;
+
+export function resolveThemePreference(preference, win = globalThis.window) {
+  if (preference === 'dark' || preference === 'light') return preference;
+  if (preference === 'system' && win?.matchMedia) {
+    return win.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return 'light';
+}
+
+export function applyThemePreference(preference, root = globalThis.document?.documentElement, win = globalThis.window) {
+  const resolved = resolveThemePreference(preference, win);
+  if (root) {
+    root.dataset.theme = resolved;
+    root.dataset.themePreference = preference || 'light';
+    root.style.colorScheme = resolved;
+  }
+  return resolved;
+}

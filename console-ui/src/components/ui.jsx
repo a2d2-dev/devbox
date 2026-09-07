@@ -16,11 +16,11 @@ export const StatusDot = ({ tone = 'green', size = 8, pulse = false }) => {
 
 export const Chip = ({ tone = 'gray', children, style }) => {
   const map = {
-    green: { bg: '#ecfdf5', fg: '#047857', bd: '#a7f3d0' },
-    amber: { bg: '#fffbeb', fg: '#b45309', bd: '#fde68a' },
-    red:   { bg: '#fef2f2', fg: '#b91c1c', bd: '#fecaca' },
-    blue:  { bg: '#e6f4ff', fg: '#005eeb', bd: '#99c7ff' },
-    gray:  { bg: '#f1f5f9', fg: '#475569', bd: '#e2e8f0' },
+    green: { bg: T.greenSoft, fg: T.green, bd: T.greenBorder },
+    amber: { bg: T.amberSoft, fg: T.amber, bd: T.amberBorder },
+    red:   { bg: T.redSoft, fg: T.red, bd: T.redBorder },
+    blue:  { bg: T.blueSoft, fg: T.blueDeep, bd: T.blueBorder },
+    gray:  { bg: T.surfaceAlt, fg: T.ink2, bd: T.border },
     violet:{ bg: '#f5f3ff', fg: '#6d28d9', bd: '#ddd6fe' },
   };
   const c = map[tone] || map.gray;
@@ -61,7 +61,7 @@ export const Ring = ({ value = 0, size = 96, thickness = 10, color = T.blue, tra
         background: `conic-gradient(${color} ${displayPct * 3.6}deg, ${track} 0)`,
       }}/>
       <div style={{
-        position: 'absolute', inset: thickness, borderRadius: '50%', background: 'white',
+        position: 'absolute', inset: thickness, borderRadius: '50%', background: T.surface,
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       }}>
         <div className="mono tnum" style={{ fontSize: size * 0.24, fontWeight: 700, color: T.ink, lineHeight: 1 }}>

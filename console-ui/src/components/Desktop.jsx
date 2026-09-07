@@ -28,10 +28,10 @@ function ClockCalendarWidget() {
   return (
     <div style={{
       width: '100%', padding: 18,
-      background: 'rgba(255,255,255,0.7)',
+      background: T.overlayBg,
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
-      border: `1px solid rgba(255,255,255,0.9)`,
+      border: `1px solid ${T.border}`,
       borderRadius: 14,
       boxShadow: '0 6px 20px -6px rgba(15,23,42,0.12)',
     }}>
@@ -116,8 +116,8 @@ export function RecentWidget({ apps, onOpen, variant = 'compact' }) {
           <div key={app.id} onClick={() => onOpen(app)} style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             padding: '6px 12px 6px 6px', borderRadius: 999,
-            background: 'rgba(255,255,255,0.7)',
-            border: '1px solid rgba(226,232,240,0.85)',
+            background: T.overlayBg,
+            border: `1px solid ${T.border}`,
             cursor: 'pointer',
             boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
           }}>
@@ -139,10 +139,10 @@ export function RecentWidget({ apps, onOpen, variant = 'compact' }) {
   return (
     <div style={{
       width: 188, padding: 12,
-      background: 'rgba(255,255,255,0.55)',
+      background: T.overlayBg,
       backdropFilter: 'blur(10px)',
       WebkitBackdropFilter: 'blur(10px)',
-      border: `1px solid rgba(255,255,255,0.8)`,
+      border: `1px solid ${T.border}`,
       borderRadius: 14,
       boxShadow: '0 4px 14px -4px rgba(15,23,42,0.10)',
     }}>
@@ -157,8 +157,8 @@ export function RecentWidget({ apps, onOpen, variant = 'compact' }) {
           <div key={app.id} onClick={() => onOpen(app)} style={{
             display: 'flex', alignItems: 'center', gap: 8,
             padding: 6, borderRadius: 8,
-            background: 'rgba(255,255,255,0.7)',
-            border: '1px solid rgba(226,232,240,0.7)',
+            background: T.surface,
+            border: `1px solid ${T.borderSoft}`,
             cursor: 'pointer',
           }}>
             <div style={{
@@ -185,10 +185,10 @@ function DeviceInfoCard({ DEVICE }) {
   return (
     <div style={{
       padding: 16,
-      background: 'rgba(255,255,255,0.7)',
+      background: T.overlayBg,
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
-      border: `1px solid rgba(255,255,255,0.9)`,
+      border: `1px solid ${T.border}`,
       borderRadius: 14,
       boxShadow: '0 6px 20px -6px rgba(15,23,42,0.10)',
     }}>
@@ -201,7 +201,7 @@ function DeviceInfoCard({ DEVICE }) {
         <div style={{ flex: 1 }}/>
         <span style={{
           fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 999,
-          background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0',
+          background: T.greenSoft, color: T.green, border: `1px solid ${T.greenBorder}`,
         }}>在线</span>
       </div>
 
@@ -228,9 +228,9 @@ function RunningChip({ error }) {
     return (
       <span style={{
         display: 'inline-flex', alignItems: 'center', gap: 5,
-        fontSize: 11, fontWeight: 600, color: '#b91c1c',
+        fontSize: 11, fontWeight: 600, color: T.red,
         padding: '2px 8px', borderRadius: 999,
-        background: '#fef2f2', border: '1px solid #fecaca',
+        background: T.redSoft, border: `1px solid ${T.redBorder}`,
         whiteSpace: 'nowrap', flexShrink: 0,
       }}>
         <StatusDot tone="red" size={6} pulse/>
@@ -242,7 +242,7 @@ function RunningChip({ error }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 5,
-      fontSize: 11, color: '#047857',
+      fontSize: 11, color: T.green,
       whiteSpace: 'nowrap', flexShrink: 0,
     }}>
       <StatusDot tone="green" size={6}/>
@@ -294,9 +294,9 @@ function DeployedApps({ apps, loading, error, onRetry, onOpen, iconStyle, accent
     : '尚未部署应用，可从应用商店选择服务。';
   return (
     <div className="desktop-deployed-empty" style={{ minHeight: 96, padding: '18px 20px', borderRadius: 8,
-      border: `1px dashed ${T.border}`, background: 'rgba(255,255,255,0.55)',
+      border: `1px dashed ${T.border}`, background: T.overlayBg,
       display: 'flex', alignItems: 'center', gap: 14 }}>
-      <div style={{ width: 38, height: 38, borderRadius: 8, background: '#f1f5f9',
+      <div style={{ width: 38, height: 38, borderRadius: 8, background: T.surfaceAlt,
         color: T.ink3, display: 'grid', placeItems: 'center' }}>
         <Icon name="apps" size={18} stroke={1.7}/>
       </div>

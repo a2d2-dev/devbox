@@ -18,7 +18,7 @@ export const btnPrimary = {
 };
 export const btnDanger = {
   ...btnSecondary,
-  background: 'white', color: T.red, border: '1px solid #fecaca',
+  background: T.controlBg, color: T.red, border: `1px solid ${T.redBorder}`,
 };
 
 const WINDOW_SHADOW = '0 24px 60px -12px rgba(15,23,42,0.32), 0 0 0 1px rgba(15,23,42,0.08)';
@@ -241,7 +241,7 @@ export default function AppWindow({
             height: 26, padding: '0 10px', borderRadius: 6,
             appearance: 'none',
             background: mgmtOpen ? T.blueSoft : undefined,
-            border: `1px solid ${mgmtOpen ? '#99c7ff' : 'transparent'}`,
+            border: `1px solid ${mgmtOpen ? T.blueBorder : 'transparent'}`,
             color: mgmtOpen ? T.blueDeep : T.ink3,
             cursor: 'pointer', fontSize: 11.5, fontWeight: 600,
             marginRight: 4,

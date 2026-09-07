@@ -21,14 +21,11 @@ const WALLPAPERS = [
   {
     id: 'topo', label: '光晕', desc: '柔和光斑渐变', className: '',
     style: {
-      background: '#eef3fa',
-      backgroundImage:
-        'radial-gradient(circle at 20% 20%, rgba(59,130,246,0.15), transparent 40%),' +
-        'radial-gradient(circle at 80% 70%, rgba(20,184,166,0.12), transparent 45%),' +
-        'radial-gradient(circle at 50% 100%, rgba(99,102,241,0.10), transparent 50%)',
+      background: T.desktopTopoBg,
+      backgroundImage: T.desktopTopoImage,
     },
   },
-  { id: 'plain', label: '纯色', desc: '极简纯色底', className: '', style: { background: '#f1f5f9' } },
+  { id: 'plain', label: '纯色', desc: '极简纯色底', className: '', style: { background: T.desktopPlainBg } },
 ]
 
 // 主色候选 — 与 TweaksPanel/App.jsx 的 TweakColor 选项一致（首项即 fnOS 蓝）。
@@ -40,11 +37,10 @@ const ACCENTS = [
   { value: '#0f172a', label: '墨' },
 ]
 
-// 主题模式 — 深色 / 跟随系统 首期仅存储不渲染（标注「即将支持」）。
 const THEME_MODES = [
-  { value: 'light',  label: '浅色',     soon: false },
-  { value: 'dark',   label: '深色',     soon: true },
-  { value: 'system', label: '跟随系统', soon: true },
+  { value: 'light',  label: '浅色' },
+  { value: 'dark',   label: '深色' },
+  { value: 'system', label: '跟随系统' },
 ]
 
 function CheckBadge() {
@@ -129,7 +125,7 @@ export default function AppearanceSettings({ t, setT }) {
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16,
         padding: '9px 13px', borderRadius: 8, background: T.blueSoft,
-        border: `1px solid #cfe4ff`, color: T.blueDeep, fontSize: 12, lineHeight: 1.5,
+        border: `1px solid ${T.blueBorder}`, color: T.blueDeep, fontSize: 12, lineHeight: 1.5,
       }}>
         <Icon name="cloud" size={15} style={{ flexShrink: 0 }}/>
         <span>外观设置会保存到你的账号，任何设备登录后自动恢复。</span>
@@ -164,7 +160,7 @@ export default function AppearanceSettings({ t, setT }) {
                 style={{
                   position: 'relative', width: 44, height: 44, borderRadius: '50%',
                   background: a.value, cursor: 'pointer', padding: 0,
-                  border: on ? '2px solid #fff' : '2px solid #fff',
+                  border: `2px solid ${T.surface}`,
                   boxShadow: on
                     ? `0 0 0 3px ${a.value}, 0 2px 8px rgba(15,23,42,0.2)`
                     : '0 0 0 1px rgba(15,23,42,0.12), 0 1px 3px rgba(15,23,42,0.12)',
@@ -180,7 +176,7 @@ export default function AppearanceSettings({ t, setT }) {
       </SectionCard>
 
       {/* 主题模式 — 浅色/深色/跟随系统 */}
-      <SectionCard icon="eye" title="主题模式" subtitle="深色与跟随系统即将支持">
+      <SectionCard icon="eye" title="主题模式" subtitle="选择后立即应用到整个控制台">
         <div role="radiogroup" aria-label="主题模式" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {THEME_MODES.map((m) => {
             const on = theme === m.value
@@ -195,7 +191,7 @@ export default function AppearanceSettings({ t, setT }) {
                   position: 'relative', minWidth: 120, padding: '12px 14px', borderRadius: 9,
                   cursor: 'pointer', textAlign: 'left',
                   background: on ? T.blueSoft : T.surface,
-                  border: `1px solid ${on ? '#99c7ff' : T.border}`,
+                  border: `1px solid ${on ? T.blueBorder : T.border}`,
                   boxShadow: on ? '0 0 0 2px rgba(0,102,255,0.12)' : 'none',
                   transition: 'box-shadow 0.15s, border-color 0.15s',
                   display: 'flex', alignItems: 'center', gap: 9,
@@ -210,22 +206,11 @@ export default function AppearanceSettings({ t, setT }) {
                 </span>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <span style={{ fontSize: 13, fontWeight: 650, color: on ? T.blueDeep : T.ink }}>{m.label}</span>
-                  {m.soon && (
-                    <span style={{
-                      alignSelf: 'flex-start', padding: '1px 7px', borderRadius: 999,
-                      background: T.amberSoft, color: T.amber, fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3,
-                    }}>即将支持</span>
-                  )}
                 </span>
               </button>
             )
           })}
         </div>
-        {theme !== 'light' && (
-          <div style={{ marginTop: 12, fontSize: 11.5, color: T.ink3, lineHeight: 1.5 }}>
-            已记住你的选择并保存到账号，深色 / 跟随系统的实际渲染将在后续版本上线，当前仍以浅色显示。
-          </div>
-        )}
       </SectionCard>
     </>
   )

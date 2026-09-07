@@ -16,7 +16,7 @@ const tabs = [
 
 const field = {
   height: 34, border: `1px solid ${T.border}`, borderRadius: 6,
-  padding: '0 10px', color: T.ink, background: 'white', fontSize: 12.5,
+  padding: '0 10px', color: T.ink, background: T.controlBg, fontSize: 12.5,
   boxSizing: 'border-box', outline: 'none', letterSpacing: 0,
 }
 
@@ -120,7 +120,7 @@ function WebDAVPage({ settings, setSettings, status, save, busy, message }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: T.ink2, fontSize: 12.5 }}><Icon name="lock" size={14}/>devbox</div>
         </FieldRow>
       </Section>
-      {status?.error && <div style={{ marginTop: 10, padding: '9px 12px', border: '1px solid #fecaca', background: T.redSoft, color: '#b91c1c', borderRadius: 6, fontSize: 11.5 }}>{status.error}</div>}
+      {status?.error && <div style={{ marginTop: 10, padding: '9px 12px', border: `1px solid ${T.redBorder}`, background: T.redSoft, color: T.red, borderRadius: 6, fontSize: 11.5 }}>{status.error}</div>}
       <SaveBar busy={busy} onSave={save} message={message}/>
     </>
   )
@@ -155,7 +155,7 @@ function SMBPage({ settings, setSettings, probe, save, busy, message }) {
         <div style={{ flex: 1 }}/>
         <Chip tone={probe?.active ? 'green' : probe?.installed ? 'amber' : 'gray'}>{probe?.active ? 'smbd 运行中' : probe?.installed ? '已安装 · 未运行' : '未安装'}</Chip>
       </div>
-      {!probe?.installed && <div style={{ padding: '11px 13px', border: '1px solid #fde68a', background: T.amberSoft, borderRadius: 7, color: '#92400e', fontSize: 11.5, marginBottom: 12 }}>
+      {!probe?.installed && <div style={{ padding: '11px 13px', border: `1px solid ${T.amberBorder}`, background: T.amberSoft, borderRadius: 7, color: T.amber, fontSize: 11.5, marginBottom: 12 }}>
         <div style={{ fontWeight: 700, marginBottom: 4 }}>Samba 未安装</div>
         <code style={{ fontFamily: T.mono }}>sudo apt install samba</code><span style={{ marginLeft: 8 }}>安装后刷新页面。DevBox 不会自动安装系统包。</span>
       </div>}
@@ -270,10 +270,10 @@ function MaintenancePage({ settings, setSettings, currentVersion, save, busy, me
       </div>
       <div style={{ marginTop: 12 }}><Section title="配置还原" icon="upload">
         <div style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 10 }}><input ref={fileRef} type="file" accept=".gz,.tgz,application/gzip" onChange={e => previewRestore(e.target.files?.[0])} style={{ display: 'none' }}/><button type="button" onClick={() => fileRef.current?.click()} className="edge-press edge-btn-secondary" style={btnSecondary}><Icon name="upload" size={13}/>选择备份文件</button><span style={{ fontSize: 11.5, color: T.ink3 }}>确认还原前将自动备份当前配置</span></div>
-        {restore && <div style={{ margin: '0 14px 14px', padding: 13, border: '1px solid #fde68a', background: T.amberSoft, borderRadius: 7 }}><div style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>影响预览</div>{restore.changes.map(change => <div key={change} style={{ fontSize: 11.5, color: '#92400e', marginTop: 5 }}>• {change}</div>)}<div style={{ display: 'flex', gap: 8, marginTop: 10 }}><input aria-label="还原确认词" value={restorePhrase} onChange={e => setRestorePhrase(e.target.value)} placeholder="输入 RESTORE" style={{ ...field, width: 180 }}/><button type="button" disabled={restorePhrase !== 'RESTORE'} onClick={confirmRestore} className="edge-press edge-btn-primary" style={{ ...btnPrimary, opacity: restorePhrase === 'RESTORE' ? 1 : 0.45 }}><Icon name="history" size={13}/>确认还原</button></div></div>}
+        {restore && <div style={{ margin: '0 14px 14px', padding: 13, border: `1px solid ${T.amberBorder}`, background: T.amberSoft, borderRadius: 7 }}><div style={{ fontSize: 12, fontWeight: 700, color: T.amber }}>影响预览</div>{restore.changes.map(change => <div key={change} style={{ fontSize: 11.5, color: T.amber, marginTop: 5 }}>• {change}</div>)}<div style={{ display: 'flex', gap: 8, marginTop: 10 }}><input aria-label="还原确认词" value={restorePhrase} onChange={e => setRestorePhrase(e.target.value)} placeholder="输入 RESTORE" style={{ ...field, width: 180 }}/><button type="button" disabled={restorePhrase !== 'RESTORE'} onClick={confirmRestore} className="edge-press edge-btn-primary" style={{ ...btnPrimary, opacity: restorePhrase === 'RESTORE' ? 1 : 0.45 }}><Icon name="history" size={13}/>确认还原</button></div></div>}
       </Section></div>
       <div style={{ marginTop: 12 }}><Section title="恢复出厂设置" icon="alertTri">
-        <div style={{ padding: 14, borderBottom: `1px solid ${T.borderSoft}`, fontSize: 11.5, color: '#991b1b', background: T.redSoft, lineHeight: 1.6 }}>仅清除 DevBox 维护配置与密钥并停止 WebDAV；不会重置操作系统、磁盘或已安装服务。</div>
+        <div style={{ padding: 14, borderBottom: `1px solid ${T.borderSoft}`, fontSize: 11.5, color: T.red, background: T.redSoft, lineHeight: 1.6 }}>仅清除 DevBox 维护配置与密钥并停止 WebDAV；不会重置操作系统、磁盘或已安装服务。</div>
         <div style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}><Toggle checked={resetChecked} onChange={setResetChecked} label="已阅读影响说明"/><input aria-label="重置确认词" value={resetPhrase} onChange={e => setResetPhrase(e.target.value)} placeholder="输入 RESET DEVBOX" style={{ ...field, width: 190 }}/><button type="button" disabled={!resetChecked || resetPhrase !== 'RESET DEVBOX'} onClick={reset} className="edge-press edge-btn-danger" style={{ ...btnDanger, opacity: resetChecked && resetPhrase === 'RESET DEVBOX' ? 1 : 0.45 }}><Icon name="trash" size={13}/>重置 DevBox</button></div>
       </Section></div>
       {action && <div style={{ marginTop: 10, fontSize: 11.5, color: action.error ? T.red : T.green }}>{action.text}</div>}
@@ -290,7 +290,7 @@ function DefaultsPage({ settings, setSettings, save, busy, message }) {
 }
 
 function AboutPage({ about }) {
-  return <><div style={{ marginBottom: 12 }}><h1 style={{ margin: 0, fontSize: 18, color: T.ink, letterSpacing: 0 }}>关于 DevBox</h1><div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>桌面算力平台</div></div><Section title="产品信息" icon="info"><div style={{ padding: 22, display: 'flex', alignItems: 'center', gap: 16 }}><div style={{ width: 52, height: 52, borderRadius: 8, background: '#172033', color: 'white', display: 'grid', placeItems: 'center' }}><Icon name="cpu" size={27}/></div><div><div style={{ fontSize: 20, fontWeight: 750, color: T.ink, letterSpacing: 0 }}>{about?.name || 'A2D2 DevBox'}</div><div style={{ fontFamily: T.mono, fontSize: 12, color: T.ink3, marginTop: 5 }}>Version {about?.version || 'dev'}</div></div></div><FieldRow label="开源许可证"><a href={about?.license?.url} target="_blank" rel="noreferrer" style={{ color: T.blueDeep, fontSize: 12.5, display: 'inline-flex', alignItems: 'center', gap: 5 }}>{about?.license?.name || 'Apache License 2.0'}<Icon name="external" size={12}/></a></FieldRow><FieldRow label="版权"><span style={{ color: T.ink2, fontSize: 12.5 }}>{about?.license?.copyright}</span></FieldRow><FieldRow label="LICENSE"><div style={{ color: T.ink3, fontSize: 11.5, lineHeight: 1.55 }}>{about?.license?.text}</div></FieldRow></Section><div style={{ marginTop: 12 }}><Section title="依赖 Attribution" icon="book"><div className="maintenance-deps" style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}>{(about?.dependencies || []).map((dep, i) => <div key={dep.name} style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', borderTop: `1px solid ${T.borderSoft}`, borderRight: i % 2 === 0 ? `1px solid ${T.borderSoft}` : 0 }}><span style={{ fontSize: 12.5, color: T.ink2 }}>{dep.name}</span><div style={{ flex: 1 }}/><Chip tone="gray">{dep.license}</Chip></div>)}</div></Section></div></>
+  return <><div style={{ marginBottom: 12 }}><h1 style={{ margin: 0, fontSize: 18, color: T.ink, letterSpacing: 0 }}>关于 DevBox</h1><div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>桌面算力平台</div></div><Section title="产品信息" icon="info"><div style={{ padding: 22, display: 'flex', alignItems: 'center', gap: 16 }}><div style={{ width: 52, height: 52, borderRadius: 8, background: T.sidebarBg, color: T.sidebarFg, display: 'grid', placeItems: 'center' }}><Icon name="cpu" size={27}/></div><div><div style={{ fontSize: 20, fontWeight: 750, color: T.ink, letterSpacing: 0 }}>{about?.name || 'A2D2 DevBox'}</div><div style={{ fontFamily: T.mono, fontSize: 12, color: T.ink3, marginTop: 5 }}>Version {about?.version || 'dev'}</div></div></div><FieldRow label="开源许可证"><a href={about?.license?.url} target="_blank" rel="noreferrer" style={{ color: T.blueDeep, fontSize: 12.5, display: 'inline-flex', alignItems: 'center', gap: 5 }}>{about?.license?.name || 'Apache License 2.0'}<Icon name="external" size={12}/></a></FieldRow><FieldRow label="版权"><span style={{ color: T.ink2, fontSize: 12.5 }}>{about?.license?.copyright}</span></FieldRow><FieldRow label="LICENSE"><div style={{ color: T.ink3, fontSize: 11.5, lineHeight: 1.55 }}>{about?.license?.text}</div></FieldRow></Section><div style={{ marginTop: 12 }}><Section title="依赖 Attribution" icon="book"><div className="maintenance-deps" style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}>{(about?.dependencies || []).map((dep, i) => <div key={dep.name} style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', borderTop: `1px solid ${T.borderSoft}`, borderRight: i % 2 === 0 ? `1px solid ${T.borderSoft}` : 0 }}><span style={{ fontSize: 12.5, color: T.ink2 }}>{dep.name}</span><div style={{ flex: 1 }}/><Chip tone="gray">{dep.license}</Chip></div>)}</div></Section></div></>
 }
 
 export default function Settings() {
@@ -339,10 +339,10 @@ export default function Settings() {
         .maintenance-smb-row { grid-template-columns: minmax(0,1fr) auto auto 34px !important; }
         .maintenance-smb-row > input:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
       }`}</style>
-      <aside className="maintenance-sidebar" style={{ background: '#172033', color: 'white', padding: '18px 10px', minHeight: 0 }}>
+      <aside className="maintenance-sidebar" style={{ background: T.sidebarBg, color: T.sidebarFg, padding: '18px 10px', minHeight: 0 }}>
         <div className="maintenance-sidebar-title" style={{ padding: '0 10px 14px', fontSize: 12.5, fontWeight: 700, letterSpacing: 0 }}>系统设置</div>
         <nav className="maintenance-nav" style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {tabs.map(tab => <button key={tab.id} type="button" onClick={() => { setActive(tab.id); setMessage(null) }} style={{ border: 0, borderRadius: 6, height: 36, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', background: active === tab.id ? 'rgba(255,255,255,0.13)' : 'transparent', color: active === tab.id ? 'white' : '#aab5c7', fontSize: 12.5, fontWeight: active === tab.id ? 650 : 500, textAlign: 'left', letterSpacing: 0 }}><Icon name={tab.icon} size={15}/>{tab.label}</button>)}
+          {tabs.map(tab => <button key={tab.id} type="button" onClick={() => { setActive(tab.id); setMessage(null) }} style={{ border: 0, borderRadius: 6, height: 36, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', background: active === tab.id ? T.sidebarActiveBg : 'transparent', color: active === tab.id ? T.sidebarActiveFg : T.sidebarMuted, fontSize: 12.5, fontWeight: active === tab.id ? 650 : 500, textAlign: 'left', letterSpacing: 0 }}><Icon name={tab.icon} size={15}/>{tab.label}</button>)}
         </nav>
       </aside>
       <main className="maintenance-main" style={{ minWidth: 0, minHeight: 0, overflow: 'auto', padding: '20px clamp(16px, 3vw, 30px)' }}>
