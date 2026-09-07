@@ -61,6 +61,9 @@ type Config struct {
 	// UsersDataPath is optional for tests and custom embedding. The main service
 	// stores users.db beside browser_data_path by default.
 	UsersDataPath string `mapstructure:"users_data_path"`
+	// SessionsDataPath is optional for tests and custom embedding. Empty stores
+	// sessions.db beside the users database.
+	SessionsDataPath string `mapstructure:"sessions_data_path"`
 	// BackupDataDir 保存备份任务与历史；空 = /var/lib/devbox/backup。
 	BackupDataDir string `mapstructure:"backup_data_dir"`
 	// BackupConcurrency 是备份与恢复共享的进程内并发上限；小于 1 时为 2。
@@ -146,6 +149,18 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 	} else {
 		userStore = opened
 	}
+	sessionsPath := cfg.SessionsDataPath
+	if sessionsPath == "" {
+		sessionsPath = filepath.Join(filepath.Dir(usersPath), "sessions.db")
+	}
+	var sessionStore *auth.SessionStore
+	if err := os.MkdirAll(filepath.Dir(sessionsPath), 0o750); err != nil {
+		logger.Error("Session database directory unavailable", zap.String("path", sessionsPath), zap.Error(err))
+	} else if opened, err := auth.OpenSessionStore(sessionsPath); err != nil {
+		logger.Error("Session database unavailable", zap.String("path", sessionsPath), zap.Error(err))
+	} else {
+		sessionStore = opened
+	}
 
 	logPath := strings.TrimSpace(cfg.SystemLogPath)
 	if logPath == "" {
@@ -181,6 +196,7 @@ func NewServer(logger *zap.Logger, cfg Config, col *collector.Collector, control
 			SessionTTL:      cfg.AuthSessionTTL,
 			Users:           userStore,
 			UsersConfigured: true,
+			SessionStore:    sessionStore,
 		}),
 		supervisorMgr: supervisor.NewManager(cfg.SupervisorSocket, cfg.SupervisorConfDir, logger),
 		hardware:      hardware.New(60 * time.Second),

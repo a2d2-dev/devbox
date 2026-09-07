@@ -1120,11 +1120,10 @@ export async function preflightCatalogApp({ sourceId, appId, version, values }) 
   return r.json();
 }
 
-// ─── Account: 登录设备 / 会话（Issue #30 T7）─────────────────────────
+// ─── Account: 登录设备 / 会话（Issue #30 T7, #35）────────────────────
 //
-// 登录历史（倒序）。后端已脱敏：ipMasked 已打码、deviceLabel 由 UA 归纳、
-// 无原始 UA / token。前端只展示，绝不还原或拼接。单次拉取 + 手动 refresh
-// （登录历史是用户驱动的，不轮询）。
+// 活跃会话（倒序）。后端已脱敏：ipMasked 已打码、deviceLabel 由 UA 归纳、
+// 无原始 UA / token。前端只展示，绝不还原或拼接。单次拉取 + 手动 refresh。
 export function useSessions() {
   return usePoll('/account/sessions', {
     interval: 0,
@@ -1136,6 +1135,13 @@ export function useSessions() {
 // logoutOthers：POST /account/logout-others → 204，吊销本人除当前外全部会话。
 export async function logoutOthers() {
   const r = await authFetch(`${API}/account/logout-others`, { method: 'POST' });
+  if (!r.ok) throw await readErr(r);
+  return true;
+}
+
+// revokeSession：DELETE /account/sessions/{id} → 204，吊销本人指定非当前会话。
+export async function revokeSession(id) {
+  const r = await authFetch(`${API}/account/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!r.ok) throw await readErr(r);
   return true;
 }

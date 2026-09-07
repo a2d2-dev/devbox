@@ -203,7 +203,10 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 
 	token := ""
 	if s.auth.Enabled() || (s.security != nil && s.security.ProtectionEnabled()) {
-		token = s.auth.IssueSession(principal)
+		token = s.auth.IssueSessionWithMetadata(principal, auth.SessionMetadata{
+			SourceIP:  ip,
+			UserAgent: r.UserAgent(),
+		})
 	}
 	s.loginLimiter.clear(key)
 	if s.bans != nil {
