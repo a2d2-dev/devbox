@@ -10,10 +10,8 @@ import { authFetch, clearAuth, getAuthToken } from '../../hooks/useApi'
 // POST /api/v1/account/password），无 mock。样式取自 tokens.js 的 T.*，
 // 与 Account.jsx 现有卡片外壳一致。密码字段永不写入 log/console。
 //
-// 注意：修改密码用 localAuthFetch 而非 authFetch。后端在「当前密码错误」时
-// 返回 401（reason=invalid_current_password），而 authFetch 把任何 401 都当成
-// 会话过期 → clearAuth + 跳回登录页。改密的 401 是业务错误、不是会话失效，
-// 必须就地渲染中文提示，因此这里带 token 直接 fetch，不触发全局登出。
+// 401 只表示会话无效，由 authFetch 统一触发全局登出；业务拒绝由后端返回
+// 400/403，并在本面板就地渲染中文提示。
 
 const panel = {
   background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
@@ -92,15 +90,6 @@ function passwordErrorText(reason, fallback) {
     case 'not_a_managed_account': return '当前账号不支持修改密码（非受管账号）。'
     default: return fallback || '修改失败，请稍后重试。'
   }
-}
-
-// localAuthFetch 带 token 直接 fetch，但不接管 401 全局登出逻辑。
-// 仅用于「401 是业务错误而非会话失效」的场景（改密的当前密码错误）。
-async function localAuthFetch(url, opts = {}) {
-  const token = getAuthToken()
-  const headers = { ...(opts.headers || {}) }
-  if (token) headers.Authorization = `Bearer ${token}`
-  return fetch(url, { ...opts, headers })
 }
 
 async function readReason(resp) {
@@ -256,7 +245,7 @@ function PasswordCard() {
     if (next.length < 10) { setErr('新密码至少需要 10 位。'); return }
     setSaving(true)
     try {
-      const resp = await localAuthFetch('/api/v1/account/password', {
+      const resp = await authFetch('/api/v1/account/password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentPassword: current, newPassword: next }),
