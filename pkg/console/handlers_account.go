@@ -172,7 +172,7 @@ func (s *Server) handleAccountPassword(w http.ResponseWriter, r *http.Request) {
 			Event: "修改本人密码失败", EventType: "PASSWORD_CHANGE", Outcome: "failure",
 			ResourceKind: "user", ResourceID: p.UserID,
 		})
-		writeJSONErrStatus(w, http.StatusUnauthorized, map[string]any{"error": "当前密码错误", "reason": "invalid_current_password"})
+		writeJSONErrStatus(w, http.StatusBadRequest, map[string]any{"error": "当前密码错误", "reason": "invalid_current_password"})
 		return
 	}
 	if err := users.ValidatePassword(req.NewPassword); err != nil {
