@@ -1,10 +1,13 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,6 +155,38 @@ func TestPersistentSessionSurvivesRestart(t *testing.T) {
 	require.Equal(t, "admin", principal.Username)
 }
 
+func TestPersistentSessionStoresOnlyTokenHash(t *testing.T) {
+	store, err := OpenSessionStore(filepath.Join(t.TempDir(), "sessions.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	a := New(Config{Password: "pw", SessionTTL: 60, SessionStore: store})
+	token := a.NewSession()
+
+	var storedHash string
+	require.NoError(t, store.db.QueryRowContext(context.Background(), `SELECT token_hash FROM auth_sessions`).Scan(&storedHash))
+	require.Equal(t, HashToken(token), storedHash)
+	require.NotEqual(t, token, storedHash)
+	err = store.db.QueryRowContext(context.Background(), `SELECT token FROM auth_sessions`).Scan(new(string))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no such column")
+}
+
+func TestIssueSessionLogsStorePutFailure(t *testing.T) {
+	store, err := OpenSessionStore(":memory:")
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+	a := New(Config{Password: "pw", SessionTTL: 60, SessionStore: store})
+
+	var logs bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	token := a.NewSession()
+	require.NotEmpty(t, token)
+	require.True(t, strings.Contains(logs.String(), "auth session store put failed"), logs.String())
+}
+
 func TestPersistentSessionMetadataAndSpecificRevoke(t *testing.T) {
 	store, err := OpenSessionStore(filepath.Join(t.TempDir(), "sessions.db"))
 	require.NoError(t, err)
@@ -165,6 +200,8 @@ func TestPersistentSessionMetadataAndSpecificRevoke(t *testing.T) {
 		Principal{UserID: "u1", Username: "alice", DisplayName: "Alice", Role: users.RoleAdmin},
 		SessionMetadata{SourceIP: "203.0.113.11", UserAgent: "Mozilla/5.0"},
 	)
+	removed := ""
+	a.SetSessionRemovedHook(func(token string) { removed = token })
 
 	rows, err := a.ListUserSessions("u1")
 	require.NoError(t, err)
@@ -172,10 +209,12 @@ func TestPersistentSessionMetadataAndSpecificRevoke(t *testing.T) {
 	var otherID string
 	for _, row := range rows {
 		require.NotEmpty(t, row.ID)
-		require.NotEqual(t, row.Token, row.ID)
+		require.Empty(t, row.Token)
+		require.NotEmpty(t, row.TokenHash)
+		require.NotEqual(t, row.TokenHash, row.ID)
 		require.NotEmpty(t, row.LoginAt)
 		require.NotEmpty(t, row.LastActiveAt)
-		if row.Token == other {
+		if row.TokenHash == HashToken(other) {
 			otherID = row.ID
 			require.Equal(t, "203.0.113.11", row.SourceIP)
 			require.Equal(t, "Mozilla/5.0", row.UserAgent)
@@ -188,4 +227,5 @@ func TestPersistentSessionMetadataAndSpecificRevoke(t *testing.T) {
 	require.False(t, currentRejected)
 	require.True(t, a.ValidateToken(current))
 	require.False(t, a.ValidateToken(other))
+	require.Equal(t, other, removed)
 }

@@ -72,7 +72,7 @@ func (s *Server) handleAccountSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session store unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	currentToken := bearerTokenValue(token)
+	currentTokenHash := auth.HashToken(bearerTokenValue(token))
 	sessions := make([]accountSession, 0, len(live))
 	for _, sess := range live {
 		label, deviceType := parseUA(sess.UserAgent)
@@ -83,7 +83,7 @@ func (s *Server) handleAccountSessions(w http.ResponseWriter, r *http.Request) {
 			LoginAt:      sess.LoginAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 			LastActiveAt: sess.LastActiveAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 			IPMasked:     maskIP(sess.SourceIP),
-			Current:      sess.Token == currentToken,
+			Current:      sess.TokenHash == currentTokenHash,
 		})
 	}
 	s.jsonOK(w, sessions)
@@ -135,7 +135,12 @@ func (s *Server) handleAccountLogoutOthers(w http.ResponseWriter, r *http.Reques
 		writeJSONErrStatus(w, http.StatusUnauthorized, map[string]any{"error": "身份验证失败", "reason": "unauthorized"})
 		return
 	}
-	revoked := s.auth.RevokeUserSessionsExcept(principal.Username, token)
+	revoked := 0
+	if principal.UserID != "" {
+		revoked = s.auth.RevokeUserExcept(principal.UserID, token)
+	} else {
+		revoked = s.auth.RevokeUserSessionsExcept(principal.Username, token)
+	}
 	s.recordEvent(r, eventlog.Input{
 		Level: "warning", Module: "auth", Username: principal.Username,
 		Event: "退出其他全部设备", EventType: "LOGOUT_OTHERS", Outcome: "success",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -61,6 +62,7 @@ type SessionMetadata struct {
 type Session struct {
 	ID           string
 	Token        string
+	TokenHash    string
 	Principal    Principal
 	SourceIP     string
 	UserAgent    string
@@ -174,7 +176,9 @@ func (a *Auth) IssueSessionWithMetadata(p Principal, meta SessionMetadata) strin
 	a.sessions[token] = sess
 	a.mu.Unlock()
 	if a.sessionStore != nil {
-		_ = a.sessionStore.Put(context.Background(), exportSession(sess))
+		if err := a.sessionStore.Put(context.Background(), exportSession(sess)); err != nil {
+			log.Printf("auth session store put failed: %v", err)
+		}
 	}
 	return token
 }
@@ -244,13 +248,13 @@ func (a *Auth) RevokeUser(userID string) {
 // identified by keepToken. It reuses the existing session store so callers such
 // as self-service password changes can invalidate other devices while keeping
 // the caller's current session alive. keepToken accepts bare and Bearer forms.
-func (a *Auth) RevokeUserExcept(userID, keepToken string) {
-	a.revokeUser(userID, normalizeToken(keepToken))
+func (a *Auth) RevokeUserExcept(userID, keepToken string) int {
+	return a.revokeUser(userID, normalizeToken(keepToken))
 }
 
-func (a *Auth) revokeUser(userID, keepToken string) {
+func (a *Auth) revokeUser(userID, keepToken string) int {
 	if userID == "" {
-		return
+		return 0
 	}
 	a.mu.RLock()
 	tokens := make([]string, 0)
@@ -261,21 +265,24 @@ func (a *Auth) revokeUser(userID, keepToken string) {
 	}
 	a.mu.RUnlock()
 	if a.sessionStore != nil {
-		if removed, err := a.sessionStore.DeleteUserExcept(context.Background(), userID, keepToken); err == nil && removed > 0 {
-			a.removeCachedUserExcept(userID, keepToken)
-			return
+		if removedHashes, err := a.sessionStore.DeleteUserExcept(context.Background(), userID, keepToken); err == nil && len(removedHashes) > 0 {
+			a.removeCachedTokenHashes(removedHashes)
+			return len(removedHashes)
 		}
 	}
+	revoked := 0
 	for _, token := range tokens {
-		a.removeSession(token)
+		if a.removeSession(token) {
+			revoked++
+		}
 	}
+	return revoked
 }
 
-// RevokeUserSessionsExcept revokes every session belonging to username except
-// the session identified by keepToken. Matching is by principal username so it
-// works for both database users and the legacy single-password admin (whose
-// UserID is empty). It returns the number of sessions revoked. keepToken is
-// normalized so bare and Bearer forms both match the caller's current session.
+// RevokeUserSessionsExcept revokes every legacy session belonging to username
+// except the session identified by keepToken. Managed users must be revoked by
+// stable user id through RevokeUserExcept so same-name legacy and managed
+// accounts cannot affect each other.
 func (a *Auth) RevokeUserSessionsExcept(username, keepToken string) int {
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -288,16 +295,16 @@ func (a *Auth) RevokeUserSessionsExcept(username, keepToken string) int {
 		if token == keepToken {
 			continue
 		}
-		if strings.EqualFold(sess.principal.Username, username) {
+		if sess.principal.UserID == "" && strings.EqualFold(sess.principal.Username, username) {
 			tokens = append(tokens, token)
 		}
 	}
 	a.mu.RUnlock()
 	if a.sessionStore != nil {
-		revoked, err := a.sessionStore.DeleteUsernameExcept(context.Background(), username, keepToken)
+		removedHashes, err := a.sessionStore.DeleteUsernameExcept(context.Background(), username, keepToken)
 		if err == nil {
-			a.removeCachedUsernameExcept(username, keepToken)
-			return revoked
+			a.removeCachedTokenHashes(removedHashes)
+			return len(removedHashes)
 		}
 	}
 	revoked := 0
@@ -372,8 +379,12 @@ func (a *Auth) PruneExpired() {
 	hook := a.onSessionRemoved
 	a.mu.Unlock()
 	if a.sessionStore != nil {
-		if tokens, err := a.sessionStore.PruneExpired(context.Background(), now); err == nil {
-			for _, token := range tokens {
+		if tokenHashes, err := a.sessionStore.PruneExpired(context.Background(), now); err == nil {
+			for _, tokenHash := range tokenHashes {
+				token, ok := a.cachedTokenByHash(tokenHash)
+				if !ok {
+					continue
+				}
 				found := false
 				for _, existing := range removed {
 					if existing == token {
@@ -432,9 +443,9 @@ func (a *Auth) RevokeUserSession(userID, sessionID, currentToken string) (bool, 
 		return false, true
 	}
 	if a.sessionStore != nil {
-		removed, err := a.sessionStore.DeleteUserSession(context.Background(), userID, sessionID)
+		tokenHash, removed, err := a.sessionStore.DeleteUserSession(context.Background(), userID, sessionID)
 		if err == nil && removed {
-			a.removeCachedSessionID(sessionID)
+			a.removeCachedTokenHashes([]string{tokenHash})
 			return true, false
 		}
 	}
@@ -478,24 +489,36 @@ func (a *Auth) touchSession(token string) {
 	}
 }
 
-func (a *Auth) removeCachedUserExcept(userID, keepToken string) {
+func (a *Auth) removeCachedTokenHashes(tokenHashes []string) {
+	if len(tokenHashes) == 0 {
+		return
+	}
+	hashSet := make(map[string]struct{}, len(tokenHashes))
+	for _, tokenHash := range tokenHashes {
+		hashSet[tokenHash] = struct{}{}
+	}
 	a.mu.Lock()
+	removed := make([]string, 0, len(tokenHashes))
 	for token, sess := range a.sessions {
-		if sess.principal.UserID == userID && token != keepToken {
+		if _, ok := hashSet[HashToken(token)]; ok {
 			delete(a.sessions, token)
+			removed = append(removed, token)
+			continue
+		}
+		if sess.token != "" {
+			if _, ok := hashSet[HashToken(sess.token)]; ok {
+				delete(a.sessions, token)
+				removed = append(removed, token)
+			}
 		}
 	}
+	hook := a.onSessionRemoved
 	a.mu.Unlock()
-}
-
-func (a *Auth) removeCachedUsernameExcept(username, keepToken string) {
-	a.mu.Lock()
-	for token, sess := range a.sessions {
-		if token != keepToken && strings.EqualFold(sess.principal.Username, username) {
-			delete(a.sessions, token)
+	if hook != nil {
+		for _, token := range removed {
+			hook(token)
 		}
 	}
-	a.mu.Unlock()
 }
 
 func (a *Auth) removeCachedSessionID(sessionID string) {
@@ -510,19 +533,36 @@ func (a *Auth) removeCachedSessionID(sessionID string) {
 
 func (a *Auth) removeCachedUserSession(userID, sessionID string) bool {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed string
+	hook := a.onSessionRemoved
 	for token, sess := range a.sessions {
 		if sess.principal.UserID == userID && sess.id == sessionID {
 			delete(a.sessions, token)
-			return true
+			removed = token
+			break
 		}
 	}
-	return false
+	a.mu.Unlock()
+	if removed != "" && hook != nil {
+		hook(removed)
+	}
+	return removed != ""
+}
+
+func (a *Auth) cachedTokenByHash(tokenHash string) (string, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for token, sess := range a.sessions {
+		if HashToken(token) == tokenHash || (sess.token != "" && HashToken(sess.token) == tokenHash) {
+			return token, true
+		}
+	}
+	return "", false
 }
 
 func exportSession(sess session) Session {
 	return Session{
-		ID: sess.id, Token: sess.token, Principal: sess.principal, SourceIP: sess.sourceIP,
+		ID: sess.id, Token: sess.token, TokenHash: HashToken(sess.token), Principal: sess.principal, SourceIP: sess.sourceIP,
 		UserAgent: sess.userAgent, LoginAt: sess.loginAt, LastActiveAt: sess.lastSeen,
 		ExpiresAt: sess.expires,
 	}

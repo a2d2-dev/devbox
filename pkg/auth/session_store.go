@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"time"
@@ -41,7 +43,7 @@ func (s *SessionStore) migrate(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS auth_sessions (
  id TEXT PRIMARY KEY,
- token TEXT NOT NULL UNIQUE,
+ token_hash TEXT NOT NULL UNIQUE,
  user_id TEXT NOT NULL DEFAULT '',
  username TEXT NOT NULL,
  display_name TEXT NOT NULL DEFAULT '',
@@ -59,23 +61,28 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_username_active ON auth_sessions(us
 }
 
 func (s *SessionStore) Put(ctx context.Context, sess Session) error {
+	tokenHash := HashToken(sess.Token)
 	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO auth_sessions(
- id,token,user_id,username,display_name,role,legacy,source_ip,user_agent,login_at,last_active_at,expires_at
+ id,token_hash,user_id,username,display_name,role,legacy,source_ip,user_agent,login_at,last_active_at,expires_at
 ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		sess.ID, sess.Token, sess.Principal.UserID, sess.Principal.Username, sess.Principal.DisplayName,
+		sess.ID, tokenHash, sess.Principal.UserID, sess.Principal.Username, sess.Principal.DisplayName,
 		string(sess.Principal.Role), boolInt(sess.Principal.Legacy), sess.SourceIP, sess.UserAgent,
 		formatTime(sess.LoginAt), formatTime(sess.LastActiveAt), formatTime(sess.ExpiresAt))
 	return err
 }
 
 func (s *SessionStore) ByToken(ctx context.Context, token string) (Session, bool, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,token,user_id,username,display_name,role,legacy,source_ip,user_agent,login_at,last_active_at,expires_at
-FROM auth_sessions WHERE token=?`, token)
-	return scanSession(row)
+	row := s.db.QueryRowContext(ctx, `SELECT id,token_hash,user_id,username,display_name,role,legacy,source_ip,user_agent,login_at,last_active_at,expires_at
+FROM auth_sessions WHERE token_hash=?`, HashToken(token))
+	sess, found, err := scanSession(row)
+	if found {
+		sess.Token = token
+	}
+	return sess, found, err
 }
 
 func (s *SessionStore) ListByUserID(ctx context.Context, userID string, now time.Time) ([]Session, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,token,user_id,username,display_name,role,legacy,source_ip,user_agent,login_at,last_active_at,expires_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id,token_hash,user_id,username,display_name,role,legacy,source_ip,user_agent,login_at,last_active_at,expires_at
 FROM auth_sessions WHERE user_id=? AND expires_at>? ORDER BY last_active_at DESC, login_at DESC`, userID, formatTime(now.UTC()))
 	if err != nil {
 		return nil, err
@@ -85,36 +92,49 @@ FROM auth_sessions WHERE user_id=? AND expires_at>? ORDER BY last_active_at DESC
 }
 
 func (s *SessionStore) DeleteToken(ctx context.Context, token string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE token=?`, token)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE token_hash=?`, HashToken(token))
 	n, err := rowsAffected(res, err)
 	return n > 0, err
 }
 
-func (s *SessionStore) DeleteUserExcept(ctx context.Context, userID, keepToken string) (int, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE user_id=? AND token<>?`, userID, keepToken)
-	n, err := rowsAffected(res, err)
-	return n, err
+func (s *SessionStore) DeleteUserExcept(ctx context.Context, userID, keepToken string) ([]string, error) {
+	hashes, err := s.tokenHashes(ctx, `SELECT token_hash FROM auth_sessions WHERE user_id=? AND token_hash<>?`, userID, HashToken(keepToken))
+	if err != nil || len(hashes) == 0 {
+		return hashes, err
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE user_id=? AND token_hash<>?`, userID, HashToken(keepToken))
+	return hashes, err
 }
 
-func (s *SessionStore) DeleteUsernameExcept(ctx context.Context, username, keepToken string) (int, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE username=? COLLATE NOCASE AND token<>?`, username, keepToken)
-	n, err := rowsAffected(res, err)
-	return n, err
+func (s *SessionStore) DeleteUsernameExcept(ctx context.Context, username, keepToken string) ([]string, error) {
+	hashes, err := s.tokenHashes(ctx, `SELECT token_hash FROM auth_sessions WHERE legacy=1 AND username=? COLLATE NOCASE AND token_hash<>?`, username, HashToken(keepToken))
+	if err != nil || len(hashes) == 0 {
+		return hashes, err
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE legacy=1 AND username=? COLLATE NOCASE AND token_hash<>?`, username, HashToken(keepToken))
+	return hashes, err
 }
 
-func (s *SessionStore) DeleteUserSession(ctx context.Context, userID, sessionID string) (bool, error) {
+func (s *SessionStore) DeleteUserSession(ctx context.Context, userID, sessionID string) (string, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT token_hash FROM auth_sessions WHERE user_id=? AND id=?`, userID, sessionID)
+	var tokenHash string
+	if err := row.Scan(&tokenHash); errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	} else if err != nil {
+		return "", false, err
+	}
 	res, err := s.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE user_id=? AND id=?`, userID, sessionID)
 	n, err := rowsAffected(res, err)
-	return n > 0, err
+	return tokenHash, n > 0, err
 }
 
 func (s *SessionStore) Touch(ctx context.Context, token string, when time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE auth_sessions SET last_active_at=? WHERE token=?`, formatTime(when.UTC()), token)
+	_, err := s.db.ExecContext(ctx, `UPDATE auth_sessions SET last_active_at=? WHERE token_hash=?`, formatTime(when.UTC()), HashToken(token))
 	return err
 }
 
 func (s *SessionStore) PruneExpired(ctx context.Context, now time.Time) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT token FROM auth_sessions WHERE expires_at<=?`, formatTime(now.UTC()))
+	rows, err := s.db.QueryContext(ctx, `SELECT token_hash FROM auth_sessions WHERE expires_at<=?`, formatTime(now.UTC()))
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +157,23 @@ func (s *SessionStore) PruneExpired(ctx context.Context, now time.Time) ([]strin
 	return tokens, err
 }
 
+func (s *SessionStore) tokenHashes(ctx context.Context, query string, args ...any) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var hashes []string
+	for rows.Next() {
+		var tokenHash string
+		if err := rows.Scan(&tokenHash); err != nil {
+			return nil, err
+		}
+		hashes = append(hashes, tokenHash)
+	}
+	return hashes, rows.Err()
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -146,7 +183,7 @@ func scanSession(row rowScanner) (Session, bool, error) {
 	var role string
 	var legacy int
 	var loginAt, lastActiveAt, expiresAt string
-	err := row.Scan(&sess.ID, &sess.Token, &sess.Principal.UserID, &sess.Principal.Username,
+	err := row.Scan(&sess.ID, &sess.TokenHash, &sess.Principal.UserID, &sess.Principal.Username,
 		&sess.Principal.DisplayName, &role, &legacy, &sess.SourceIP, &sess.UserAgent,
 		&loginAt, &lastActiveAt, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -192,4 +229,9 @@ func boolInt(v bool) int {
 
 func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func HashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

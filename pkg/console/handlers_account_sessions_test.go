@@ -31,6 +31,29 @@ func newAccountSessionsTestServer(t *testing.T) *Server {
 	return server
 }
 
+func newPersistentAccountSessionsTestServer(t *testing.T) *Server {
+	t.Helper()
+	eventStore, err := eventlog.New(filepath.Join(t.TempDir(), "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionStore, err := auth.OpenSessionStore(filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sessionStore.Close() })
+	server := &Server{
+		logger:       zap.NewNop(),
+		auth:         auth.New(auth.Config{Password: "pw", SessionStore: sessionStore}),
+		systemLog:    eventStore,
+		sessionUsers: make(map[string]string),
+	}
+	server.installAuthSessionCleanup()
+	server.mux = http.NewServeMux()
+	server.registerAccountSessionRoutes()
+	return server
+}
+
 // issueLogin creates a live managed-account session for username and records a
 // LOGIN_SUCCESS audit event, mimicking production login side effects.
 func issueLogin(t *testing.T, s *Server, username, ip, ua string) string {
@@ -192,6 +215,48 @@ func TestAccountSessionsCurrentExactlyOne(t *testing.T) {
 	}
 }
 
+func TestAccountSessionsCurrentUsesTokenHashWithPersistentStore(t *testing.T) {
+	s := newPersistentAccountSessionsTestServer(t)
+	issueLogin(t, s, "bob", "198.51.100.5", "curl/8.0")
+	token := issueLogin(t, s, "bob", "198.51.100.9", "Mozilla/5.0 Firefox/121.0")
+	rows, err := s.auth.ListUserSessions("bob-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.Token != "" {
+			t.Fatalf("persistent session list must not expose raw token: %#v", row)
+		}
+		if row.TokenHash == "" {
+			t.Fatalf("persistent session list should expose token hash for internal matching: %#v", row)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/account/sessions", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var sessions []accountSession
+	if err := json.Unmarshal(rec.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	currents := 0
+	for _, row := range sessions {
+		if row.Current {
+			currents++
+		}
+	}
+	if currents != 1 {
+		t.Fatalf("expected exactly one current persistent row, got %d: %#v", currents, sessions)
+	}
+	if strings.Contains(rec.Body.String(), token) {
+		t.Fatalf("response leaked current token: %s", rec.Body.String())
+	}
+}
+
 func TestAccountSessionsOnlyOwnRows(t *testing.T) {
 	s := newAccountSessionsTestServer(t)
 	issueLogin(t, s, "carol", "192.0.2.1", "curl/8.0")
@@ -259,6 +324,63 @@ func TestLogoutOthersDoesNotTouchOtherUsers(t *testing.T) {
 	}
 }
 
+func TestManagedLogoutOthersDoesNotRevokeLegacySameUsername(t *testing.T) {
+	s := newAccountSessionsTestServer(t)
+	legacy := s.auth.IssueSessionWithMetadata(
+		auth.Principal{Username: "admin", DisplayName: "admin", Legacy: true},
+		auth.SessionMetadata{SourceIP: "192.0.2.60", UserAgent: "curl/8.0"},
+	)
+	otherManaged := issueLogin(t, s, "admin", "192.0.2.61", "curl/8.0")
+	current := issueLogin(t, s, "admin", "192.0.2.62", "curl/8.0")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/account/logout-others", nil)
+	req.Header.Set("Authorization", "Bearer "+current)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !s.auth.ValidateToken(legacy) {
+		t.Fatal("managed logout-others must not revoke same-username legacy admin")
+	}
+	if s.auth.ValidateToken(otherManaged) {
+		t.Fatal("managed same-user other session should be revoked")
+	}
+	if !s.auth.ValidateToken(current) {
+		t.Fatal("current managed session must remain valid")
+	}
+}
+
+func TestLegacyLogoutOthersDoesNotRevokeManagedSameUsername(t *testing.T) {
+	s := newAccountSessionsTestServer(t)
+	managed := issueLogin(t, s, "admin", "192.0.2.70", "curl/8.0")
+	otherLegacy := s.auth.IssueSessionWithMetadata(
+		auth.Principal{Username: "admin", DisplayName: "admin", Legacy: true},
+		auth.SessionMetadata{SourceIP: "192.0.2.71", UserAgent: "curl/8.0"},
+	)
+	currentLegacy := s.auth.IssueSessionWithMetadata(
+		auth.Principal{Username: "admin", DisplayName: "admin", Legacy: true},
+		auth.SessionMetadata{SourceIP: "192.0.2.72", UserAgent: "curl/8.0"},
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/account/logout-others", nil)
+	req.Header.Set("Authorization", "Bearer "+currentLegacy)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !s.auth.ValidateToken(managed) {
+		t.Fatal("legacy logout-others must not revoke same-username managed admin")
+	}
+	if s.auth.ValidateToken(otherLegacy) {
+		t.Fatal("other legacy admin session should be revoked")
+	}
+	if !s.auth.ValidateToken(currentLegacy) {
+		t.Fatal("current legacy session must remain valid")
+	}
+}
+
 func TestRevokeSpecificSessionRevokesOnlyThatToken(t *testing.T) {
 	s := newAccountSessionsTestServer(t)
 	target := issueLogin(t, s, "heidi", "192.0.2.30", "curl/8.0")
@@ -305,6 +427,16 @@ func TestRevokeSpecificSessionRevokesOnlyThatToken(t *testing.T) {
 	}
 	if s.auth.ValidateToken(target) {
 		t.Fatal("target token should be revoked")
+	}
+	s.sessionUsersMu.RLock()
+	_, targetAuditIdentityExists := s.sessionUsers[target]
+	_, currentAuditIdentityExists := s.sessionUsers[current]
+	s.sessionUsersMu.RUnlock()
+	if targetAuditIdentityExists {
+		t.Fatal("target session audit identity should be removed")
+	}
+	if !currentAuditIdentityExists {
+		t.Fatal("current session audit identity should remain")
 	}
 	if !s.auth.ValidateToken(current) || !s.auth.ValidateToken(other) {
 		t.Fatal("current and unrelated same-user sessions must remain valid")
