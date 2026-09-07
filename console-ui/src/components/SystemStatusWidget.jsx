@@ -36,7 +36,7 @@ function formatRate(bytes) {
 
 function MetricCard({ icon, label, state, children, action }) {
   return (
-    <div style={{ minHeight: 74, padding: '10px 11px', borderRadius: 7, background: 'rgba(248,250,252,0.92)', border: `1px solid ${T.borderSoft}` }}>
+    <div style={{ minHeight: 74, padding: '10px 11px', borderRadius: 7, background: T.surfaceAlt, border: `1px solid ${T.borderSoft}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: T.ink3, fontSize: 10.5, fontWeight: 600 }}>
         <Icon name={icon} size={12} stroke={1.8}/>{label}
       </div>
@@ -72,8 +72,8 @@ export function SystemStatusWidget({ onOpenMonitoring, onOpenStorage }) {
 
   return (
     <section aria-label="实时系统状态" onClick={onOpenMonitoring} style={{
-      padding: 14, borderRadius: 8, background: 'rgba(255,255,255,0.78)',
-      border: '1px solid rgba(255,255,255,0.94)', boxShadow: '0 6px 20px -8px rgba(15,23,42,0.16)',
+      padding: 14, borderRadius: 8, background: T.overlayBg,
+      border: `1px solid ${T.border}`, boxShadow: '0 6px 20px -8px rgba(15,23,42,0.16)',
       backdropFilter: 'blur(12px)', cursor: 'pointer',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>

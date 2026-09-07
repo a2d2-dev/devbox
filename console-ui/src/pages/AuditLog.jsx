@@ -193,7 +193,7 @@ export default function AuditLog() {
       {/* table */}
       <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
         {error && (
-          <div style={{ padding: 12, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, color: '#dc2626', fontSize: 13, marginBottom: 12 }}>
+          <div style={{ padding: 12, background: T.redSoft, border: `1px solid ${T.redBorder}`, borderRadius: 8, color: T.red, fontSize: 13, marginBottom: 12 }}>
             {error}
           </div>
         )}
@@ -300,7 +300,7 @@ function DetailDrawer({ ev, meta, onClose }) {
           <DetailField label="资源" value={ev.resource_id ? `${ev.resource_kind || '?'}:${ev.resource_id}` : '-'} mono/>
           <DetailField label="源 IP" value={ev.source_ip || '-'} mono/>
           <DetailField label="结果" value={ev.outcome}
-            valueStyle={{ color: ev.outcome === 'success' ? '#059669' : '#dc2626', fontWeight: 600 }}/>
+      valueStyle={{ color: ev.outcome === 'success' ? T.green : T.red, fontWeight: 600 }}/>
           <DetailField label="设备" value={auditDeviceLabel(ev)} small/>
           <div style={{ marginTop: 16, fontSize: 11, fontWeight: 600, color: T.ink4 }}>PAYLOAD</div>
           <pre style={{
@@ -335,7 +335,7 @@ function ClearDialog({ onClose, onConfirm, onError }) {
     setBusy(true)
     try { await onConfirm() } catch (error) { onError(error.message); onClose() } finally { setBusy(false) }
   }
-  return <div role="dialog" aria-modal="true" aria-label="确认清空系统日志" onClick={onClose} style={{ position: 'absolute', inset: 0, zIndex: 60, background: 'rgba(15,23,42,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+  return <div role="dialog" aria-modal="true" aria-label="确认清空系统日志" onClick={onClose} style={{ position: 'absolute', inset: 0, zIndex: 60, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
     <div onClick={e => e.stopPropagation()} style={{ width: 390, padding: 20, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: '0 18px 48px rgba(15,23,42,.2)' }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>清空系统日志？</div>
       <div style={{ marginTop: 10, fontSize: 12.5, color: T.ink2, lineHeight: 1.7 }}>现有日志将被永久删除。此次清空操作本身会作为新的审计日志保留。</div>
@@ -355,7 +355,7 @@ const pageBtn = (disabled) => ({
   color: disabled ? T.ink4 : T.ink2, cursor: disabled ? 'default' : 'pointer',
 })
 const selectStyle = { height: 30, padding: '0 8px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.ink2, fontSize: 12 }
-const dialogBtn = { height: 32, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.ink2, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }
+const dialogBtn = { height: 32, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.controlBg, color: T.ink2, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }
 
 // time helpers
 function relativeTime(iso) {

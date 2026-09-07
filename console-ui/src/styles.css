@@ -1,14 +1,148 @@
+:root {
+  color-scheme: light;
+  --edge-bg: #f3f3f3;
+  --edge-surface: #ffffff;
+  --edge-surface-alt: #fafafa;
+  --edge-border: #e6e6e7;
+  --edge-border-soft: #f0f0f0;
+  --edge-ink: #0b0b0c;
+  --edge-ink-2: #3d3d3e;
+  --edge-ink-3: #7f7f80;
+  --edge-ink-4: #b0b0b1;
+  --edge-blue: #0066ff;
+  --edge-blue-deep: #005eeb;
+  --edge-blue-soft: #e6f4ff;
+  --edge-blue-border: #99c7ff;
+  --edge-cyan: #00b8d4;
+  --edge-indigo: #3d5afe;
+  --edge-teal: #009e8e;
+  --edge-violet: #7c4dff;
+  --edge-green: #009e61;
+  --edge-green-soft: #e6f7ef;
+  --edge-green-border: #b9e6cd;
+  --edge-amber: #e06c00;
+  --edge-amber-soft: #fff7e8;
+  --edge-amber-border: #fde68a;
+  --edge-red: #db382c;
+  --edge-red-soft: #fdecea;
+  --edge-red-border: #fecaca;
+  --edge-slate: #4b4b4c;
+  --edge-window-bg: #ffffff;
+  --edge-titlebar: #fafafa;
+  --edge-control-bg: #ffffff;
+  --edge-control-bg-hover: #f8fafc;
+  --edge-overlay-bg: rgba(255, 255, 255, 0.94);
+  --edge-sidebar-bg: #172033;
+  --edge-sidebar-fg: #ffffff;
+  --edge-sidebar-muted: #aab5c7;
+  --edge-sidebar-active-bg: rgba(255,255,255,0.13);
+  --edge-sidebar-active-fg: #ffffff;
+  --edge-code-bg: #f1f5f9;
+  --edge-scrollbar-thumb: rgba(11,11,12,0.18);
+  --edge-scrollbar-thumb-hover: rgba(11,11,12,0.30);
+  --edge-glass-bg: rgba(255, 255, 255, 0.78);
+  --edge-material-surface-bg: rgba(255, 255, 255, 0.88);
+  --edge-material-overlay-bg: rgba(255, 255, 255, 0.94);
+  --edge-grid-bg: #f3f3f3;
+  --edge-grid-image:
+    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(230, 244, 255, 0) 40%),
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(0,102,255,0.08), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 85% 100%, rgba(0,158,97,0.05), transparent 60%),
+    linear-gradient(to right, rgba(11,11,12,0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(11,11,12,0.05) 1px, transparent 1px);
+  --edge-fnos-bg: #3a424f;
+  --edge-fnos-overlay: linear-gradient(110deg, rgba(74,85,104,0.35) 0.26%, rgba(58,66,79,0.35) 97.78%);
+  --edge-desktop-topo-bg: #eef3fa;
+  --edge-desktop-topo-image:
+    radial-gradient(circle at 20% 20%, rgba(59,130,246,0.15), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(20,184,166,0.12), transparent 45%),
+    radial-gradient(circle at 50% 100%, rgba(99,102,241,0.10), transparent 50%);
+  --edge-desktop-plain-bg: #f1f5f9;
+  --edge-btn-primary-hover-bg: #1d4ed8;
+  --edge-btn-danger-hover-bg: #fef2f2;
+  --edge-btn-danger-hover-color: #dc2626;
+  --edge-row-hover-bg: #f8fafc;
+  --edge-menu-hover-bg: #f8fafc;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --edge-bg: #0f131a;
+  --edge-surface: #171c25;
+  --edge-surface-alt: #111720;
+  --edge-border: #2a3342;
+  --edge-border-soft: #222a36;
+  --edge-ink: #f4f7fb;
+  --edge-ink-2: #d4dbe7;
+  --edge-ink-3: #98a4b7;
+  --edge-ink-4: #657286;
+  --edge-blue: #4c9dff;
+  --edge-blue-deep: #7db8ff;
+  --edge-blue-soft: rgba(76,157,255,0.16);
+  --edge-blue-border: rgba(76,157,255,0.42);
+  --edge-cyan: #38d3ea;
+  --edge-indigo: #8492ff;
+  --edge-teal: #2dd4bf;
+  --edge-violet: #a98bff;
+  --edge-green: #34d399;
+  --edge-green-soft: rgba(52,211,153,0.14);
+  --edge-green-border: rgba(52,211,153,0.38);
+  --edge-amber: #fbbf24;
+  --edge-amber-soft: rgba(251,191,36,0.14);
+  --edge-amber-border: rgba(251,191,36,0.38);
+  --edge-red: #f87171;
+  --edge-red-soft: rgba(248,113,113,0.14);
+  --edge-red-border: rgba(248,113,113,0.40);
+  --edge-slate: #94a3b8;
+  --edge-window-bg: #151a22;
+  --edge-titlebar: #111720;
+  --edge-control-bg: #1b2230;
+  --edge-control-bg-hover: #222b3a;
+  --edge-overlay-bg: rgba(18, 24, 34, 0.94);
+  --edge-sidebar-bg: #0e1420;
+  --edge-sidebar-fg: #f8fafc;
+  --edge-sidebar-muted: #8b98aa;
+  --edge-sidebar-active-bg: rgba(76,157,255,0.16);
+  --edge-sidebar-active-fg: #ffffff;
+  --edge-code-bg: #0b1020;
+  --edge-scrollbar-thumb: rgba(148,163,184,0.30);
+  --edge-scrollbar-thumb-hover: rgba(203,213,225,0.46);
+  --edge-glass-bg: rgba(18, 24, 34, 0.78);
+  --edge-material-surface-bg: rgba(21, 26, 34, 0.88);
+  --edge-material-overlay-bg: rgba(18, 24, 34, 0.94);
+  --edge-grid-bg: #0f141c;
+  --edge-grid-image:
+    linear-gradient(180deg, rgba(15,20,28,0.10) 0%, rgba(15,20,28,0) 40%),
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(76,157,255,0.18), transparent 62%),
+    radial-gradient(ellipse 60% 40% at 85% 100%, rgba(45,212,191,0.11), transparent 62%),
+    linear-gradient(to right, rgba(226,232,240,0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(226,232,240,0.08) 1px, transparent 1px);
+  --edge-fnos-bg: #111722;
+  --edge-fnos-overlay: linear-gradient(110deg, rgba(27,38,56,0.72) 0.26%, rgba(12,18,28,0.76) 97.78%);
+  --edge-desktop-topo-bg: #101722;
+  --edge-desktop-topo-image:
+    radial-gradient(circle at 20% 20%, rgba(76,157,255,0.20), transparent 42%),
+    radial-gradient(circle at 80% 70%, rgba(45,212,191,0.13), transparent 48%),
+    radial-gradient(circle at 50% 100%, rgba(169,139,255,0.14), transparent 52%);
+  --edge-desktop-plain-bg: #10151d;
+  --edge-btn-primary-hover-bg: #2f82ea;
+  --edge-btn-danger-hover-bg: rgba(248,113,113,0.14);
+  --edge-btn-danger-hover-color: #fecaca;
+  --edge-row-hover-bg: #1d2531;
+  --edge-menu-hover-bg: #1d2531;
+}
+
 html, body {
   margin: 0; padding: 0; height: 100%;
   font-family: "PingFang SC", "SF Pro SC", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  -webkit-font-smoothing: antialiased; color: #0b0b0c;
-  background: #f3f3f3; overflow: hidden;
+  -webkit-font-smoothing: antialiased; color: var(--edge-ink);
+  background: var(--edge-bg); overflow: hidden;
 }
 *, *::before, *::after { box-sizing: border-box; }
 button, input { font-family: inherit; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: rgba(11,11,12,0.18); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: rgba(11,11,12,0.30); }
+*::-webkit-scrollbar-thumb { background: var(--edge-scrollbar-thumb); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--edge-scrollbar-thumb-hover); }
 *::-webkit-scrollbar-track { background: transparent; }
 
 .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-feature-settings: "tnum"; }
@@ -46,9 +180,9 @@ button, input { font-family: inherit; }
 
 /* fnOS 桌面壁纸背景（原创壁纸 + 深灰渐变兜底） */
 .fnos-desktop-bg {
-  background-color: #3a424f;
+  background-color: var(--edge-fnos-bg);
   background-image:
-    linear-gradient(110deg, rgba(74,85,104,0.35) 0.26%, rgba(58,66,79,0.35) 97.78%),
+    var(--edge-fnos-overlay),
     url("/wallpaper.svg");
   background-size: auto, cover;
   background-position: center, center;
@@ -57,19 +191,14 @@ button, input { font-family: inherit; }
 
 /* Background grid pattern (legacy theme) */
 .edge-bg {
-  background-color: #f3f3f3;
-  background-image:
-    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(230, 244, 255, 0) 40%),
-    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(0,102,255,0.08), transparent 60%),
-    radial-gradient(ellipse 60% 40% at 85% 100%, rgba(0,158,97,0.05), transparent 60%),
-    linear-gradient(to right, rgba(11,11,12,0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(11,11,12,0.05) 1px, transparent 1px);
+  background-color: var(--edge-grid-bg);
+  background-image: var(--edge-grid-image);
   background-size: auto, auto, auto, 56px 56px, 56px 56px;
   background-position: 0 0, 0 0, 0 0, -1px -1px, -1px -1px;
 }
 
 .edge-glass {
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--edge-glass-bg);
   backdrop-filter: saturate(180%) blur(24px);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
 }
@@ -106,17 +235,17 @@ button, input { font-family: inherit; }
 
 .edge-material-chrome,
 .edge-glass {
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--edge-glass-bg);
   backdrop-filter: saturate(180%) blur(24px);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
 }
 .edge-material-surface {
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--edge-material-surface-bg);
   backdrop-filter: saturate(160%) blur(16px);
   -webkit-backdrop-filter: saturate(160%) blur(16px);
 }
 .edge-material-overlay {
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--edge-material-overlay-bg);
   backdrop-filter: saturate(190%) blur(28px);
   -webkit-backdrop-filter: saturate(190%) blur(28px);
 }
@@ -151,7 +280,7 @@ button, input { font-family: inherit; }
   .edge-material-surface,
   .edge-material-overlay,
   .edge-glass {
-    background: #ffffff;
+    background: var(--edge-surface);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }

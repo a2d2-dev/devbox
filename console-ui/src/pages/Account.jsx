@@ -71,8 +71,8 @@ function DeviceRow({ session, onRevoke, busy }) {
       <div style={{
         width: 38, height: 38, borderRadius: 8, flex: '0 0 auto',
         display: 'grid', placeItems: 'center',
-        background: current ? 'white' : T.surfaceAlt,
-        border: `1px solid ${current ? '#cfe4ff' : T.border}`,
+        background: current ? T.surface : T.surfaceAlt,
+        border: `1px solid ${current ? T.blueBorder : T.border}`,
         color: current ? T.blueDeep : T.ink3,
       }}>
         <Icon name={icon} size={19}/>
@@ -102,7 +102,7 @@ function DeviceRow({ session, onRevoke, busy }) {
           style={{
             height: 30, padding: '0 11px', borderRadius: 6, flex: '0 0 auto',
             display: 'inline-flex', alignItems: 'center', gap: 5,
-            background: T.surface, color: T.red, border: `1px solid #fecaca`,
+            background: T.controlBg, color: T.red, border: `1px solid ${T.redBorder}`,
             fontSize: 12, fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer',
           }}
         >
@@ -118,7 +118,7 @@ function DeviceRow({ session, onRevoke, busy }) {
 function ConfirmLogoutOthers({ busy, onCancel, onConfirm }) {
   return (
     <div role="dialog" aria-modal="true" aria-label="确认退出其他全部设备" onClick={busy ? undefined : onCancel}
-      style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(15,23,42,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: 400, maxWidth: '100%', padding: 20, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: '0 18px 48px rgba(15,23,42,.2)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <div style={{ width: 34, height: 34, borderRadius: '50%', display: 'grid', placeItems: 'center', background: T.redSoft, color: T.red, flex: '0 0 auto' }}>
@@ -140,13 +140,13 @@ function ConfirmLogoutOthers({ busy, onCancel, onConfirm }) {
   )
 }
 
-const dialogBtn = { height: 32, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.surface, color: T.ink2, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }
+const dialogBtn = { height: 32, padding: '0 14px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.controlBg, color: T.ink2, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }
 
 function ConfirmRevokeSession({ session, busy, onCancel, onConfirm }) {
   if (!session) return null
   return (
     <div role="dialog" aria-modal="true" aria-label="确认退出指定设备" onClick={busy ? undefined : onCancel}
-      style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(15,23,42,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: 400, maxWidth: '100%', padding: 20, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: '0 18px 48px rgba(15,23,42,.2)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <div style={{ width: 34, height: 34, borderRadius: '50%', display: 'grid', placeItems: 'center', background: T.redSoft, color: T.red, flex: '0 0 auto' }}>
@@ -227,8 +227,8 @@ function DevicesPanel() {
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto',
             height: 32, padding: '0 12px', borderRadius: 7, fontSize: 12.5, fontWeight: 600,
-            background: 'white', color: hasList ? T.red : T.ink4,
-            border: `1px solid ${hasList ? '#fecaca' : T.border}`,
+            background: T.controlBg, color: hasList ? T.red : T.ink4,
+            border: `1px solid ${hasList ? T.redBorder : T.border}`,
             cursor: hasList ? 'pointer' : 'default',
           }}
         >
@@ -242,7 +242,7 @@ function DevicesPanel() {
           display: 'flex', alignItems: 'center', gap: 8,
           background: notice.tone === 'ok' ? T.greenSoft : T.redSoft,
           color: notice.tone === 'ok' ? T.green : T.red,
-          border: `1px solid ${notice.tone === 'ok' ? '#b9e6cd' : '#fecaca'}`,
+          border: `1px solid ${notice.tone === 'ok' ? T.greenBorder : T.redBorder}`,
         }}>
           <Icon name={notice.tone === 'ok' ? 'check' : 'alertTri'} size={14}/>{notice.text}
         </div>
@@ -317,7 +317,7 @@ export default function Account({ t = {}, setT = () => {} }) {
         .account-nav button { flex: 0 0 auto; }
         .account-main { padding: 14px 10px !important; }
       }`}</style>
-      <aside className="account-sidebar" style={{ background: '#172033', color: 'white', padding: '18px 10px', minHeight: 0 }}>
+      <aside className="account-sidebar" style={{ background: T.sidebarBg, color: T.sidebarFg, padding: '18px 10px', minHeight: 0 }}>
         <div className="account-sidebar-title" style={{ padding: '0 10px 14px', fontSize: 12.5, fontWeight: 700, letterSpacing: 0 }}>个人设置</div>
         <nav className="account-nav" style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {tabs.map(tab => (
@@ -326,7 +326,7 @@ export default function Account({ t = {}, setT = () => {} }) {
               type="button"
               aria-pressed={active === tab.id}
               onClick={() => setActive(tab.id)}
-              style={{ border: 0, borderRadius: 6, height: 36, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', background: active === tab.id ? 'rgba(255,255,255,0.13)' : 'transparent', color: active === tab.id ? 'white' : '#aab5c7', fontSize: 12.5, fontWeight: active === tab.id ? 650 : 500, textAlign: 'left', letterSpacing: 0 }}
+              style={{ border: 0, borderRadius: 6, height: 36, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', background: active === tab.id ? T.sidebarActiveBg : 'transparent', color: active === tab.id ? T.sidebarActiveFg : T.sidebarMuted, fontSize: 12.5, fontWeight: active === tab.id ? 650 : 500, textAlign: 'left', letterSpacing: 0 }}
             >
               <Icon name={tab.icon} size={15}/>{tab.label}
             </button>

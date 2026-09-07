@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { T } from './tokens'
+import { T, applyThemePreference } from './tokens'
 import { Icon } from './icons'
 
 // ─── Watermark overlay (canvas-based, updates every minute) ────
@@ -18,7 +18,8 @@ function Watermark({ text }) {
     ctx.scale(dpr, dpr);
     ctx.rotate(-22 * Math.PI / 180);
     ctx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    const dark = document.documentElement.dataset.theme === 'dark';
+    ctx.fillStyle = dark ? 'rgba(255,255,255,0.055)' : 'rgba(0,0,0,0.06)';
     ctx.fillText(label, 20, 120);
     el.style.backgroundImage = `url(${c.toDataURL()})`;
     el.style.backgroundSize = `${280}px ${160}px`;
@@ -223,6 +224,20 @@ export default function App() {
 	}, []);
 
   const [t, setT] = useTweaks(TWEAK_DEFAULTS);
+  const [resolvedTheme, setResolvedTheme] = useState(() => applyThemePreference(TWEAK_DEFAULTS.theme));
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const sync = () => setResolvedTheme(applyThemePreference(t.theme || 'light'));
+    sync();
+    if (t.theme !== 'system' || !media) return undefined;
+    media.addEventListener?.('change', sync);
+    media.addListener?.(sync);
+    return () => {
+      media.removeEventListener?.('change', sync);
+      media.removeListener?.(sync);
+    };
+  }, [t.theme]);
 
   // Apply preset -> individual tweaks
   const applyPreset = (id) => {
@@ -233,11 +248,12 @@ export default function App() {
 
   // Resolve current theme
   const theme = useMemo(() => ({
-    topbar: t.topbar,
+    topbar: resolvedTheme === 'dark' ? 'dark' : t.topbar,
     iconStyle: t.iconStyle,
     accent: t.accent,
     wallpaper: t.wallpaper,
-  }), [t.topbar, t.iconStyle, t.accent, t.wallpaper]);
+    mode: resolvedTheme,
+  }), [resolvedTheme, t.topbar, t.iconStyle, t.accent, t.wallpaper]);
 
   // ─── Mac/Windows-style session state ──────────────────────────
   // openApps  : ids of apps currently "running" in this browser session
@@ -458,7 +474,7 @@ export default function App() {
 
 	if (authChecking) {
 		return (
-			<div style={{ width: '100vw', height: '100vh', display: 'grid', placeItems: 'center', background: '#f8fafc', color: T.ink3, fontSize: 13 }}>
+			<div style={{ width: '100vw', height: '100vh', display: 'grid', placeItems: 'center', background: T.bg, color: T.ink3, fontSize: 13 }}>
 				正在恢复控制台会话…
 			</div>
 		);
@@ -488,9 +504,9 @@ export default function App() {
   // Custom wallpaper
   const bgClass = t.wallpaper === 'fnos' ? 'fnos-desktop-bg' : t.wallpaper === 'grid' ? 'edge-bg' : '';
   const bgStyle = t.wallpaper === 'topo'
-    ? { background: '#eef3fa', backgroundImage: 'radial-gradient(circle at 20% 20%, rgba(59,130,246,0.15), transparent 40%), radial-gradient(circle at 80% 70%, rgba(20,184,166,0.12), transparent 45%), radial-gradient(circle at 50% 100%, rgba(99,102,241,0.10), transparent 50%)' }
+    ? { background: T.desktopTopoBg, backgroundImage: T.desktopTopoImage }
     : t.wallpaper === 'plain'
-      ? { background: '#f1f5f9' }
+      ? { background: T.desktopPlainBg }
       : {};
 
   // Dock receives the running apps (resolved to full app objects), with
@@ -670,8 +686,8 @@ export default function App() {
             <button key={id} onClick={() => applyPreset(id)} style={{
               display: 'flex', alignItems: 'center', gap: 10,
               padding: '8px 10px', borderRadius: 8, textAlign: 'left',
-              background: t.preset === id ? T.blueSoft : 'white',
-              border: `1px solid ${t.preset === id ? '#99c7ff' : T.border}`,
+              background: t.preset === id ? T.blueSoft : T.controlBg,
+              border: `1px solid ${t.preset === id ? T.blueBorder : T.border}`,
               cursor: 'pointer',
             }}>
               <div style={{
@@ -683,7 +699,7 @@ export default function App() {
                 <div style={{
                   position: 'absolute', top: 0, left: 0, right: 0, height: 8,
                   background: p.set.topbar === 'dark' ? '#0b1220' : 'rgba(255,255,255,0.9)',
-                  borderBottom: `1px solid ${p.set.topbar === 'dark' ? 'rgba(255,255,255,0.1)' : '#e2e8f0'}`,
+                  borderBottom: `1px solid ${p.set.topbar === 'dark' ? 'rgba(255,255,255,0.1)' : T.border}`,
                 }}/>
                 <div style={{
                   position: 'absolute', left: 5, top: 12,
@@ -727,7 +743,7 @@ export default function App() {
         <TweakToggle label="云端在线" value={t.online} onChange={(v) => setT('online', v)}/>
         <button onClick={handleLogout} style={{
           width: '100%', height: 32, borderRadius: 7, marginTop: 4,
-          background: 'white', color: '#dc2626', border: `1px solid #fecaca`,
+          background: T.controlBg, color: T.red, border: `1px solid ${T.redBorder}`,
           fontSize: 12, fontWeight: 600, cursor: 'pointer',
         }}>退出登录 ({loginUser || 'user'})</button>
 
@@ -750,9 +766,9 @@ export default function App() {
         ].map(([id, label]) => (
           <button key={id} onClick={() => launchApp({ id })} style={{
             width: '100%', height: 30, borderRadius: 6, marginBottom: 4,
-            background: activeId === id ? T.blueSoft : openApps.includes(id) ? '#f1f5f9' : 'white',
+            background: activeId === id ? T.blueSoft : openApps.includes(id) ? T.surfaceAlt : T.controlBg,
             color: activeId === id ? T.blueDeep : T.ink2,
-            border: `1px solid ${activeId === id ? '#99c7ff' : T.border}`,
+            border: `1px solid ${activeId === id ? T.blueBorder : T.border}`,
             fontSize: 12, fontWeight: 500, textAlign: 'left', paddingLeft: 10, cursor: 'pointer',
             display: 'flex', alignItems: 'center', gap: 6,
           }}>
@@ -768,7 +784,7 @@ export default function App() {
         {openApps.length > 0 && (
           <button onClick={() => { openApps.forEach(id => closeApp(id)); }} style={{
             width: '100%', height: 30, borderRadius: 6, marginTop: 4,
-            background: 'white', color: T.ink3, border: `1px solid ${T.border}`,
+            background: T.controlBg, color: T.ink3, border: `1px solid ${T.border}`,
             fontSize: 12, fontWeight: 500, textAlign: 'left', paddingLeft: 10, cursor: 'pointer',
           }}>退出全部 ({openApps.length}) 个运行中应用</button>
         )}

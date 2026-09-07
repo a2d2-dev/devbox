@@ -9,7 +9,7 @@ const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', '
 const button = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
   height: 30, padding: '0 10px', borderRadius: 6, border: `1px solid ${T.border}`,
-  background: '#fff', color: T.ink2, fontSize: 12, fontWeight: 550, cursor: 'pointer',
+  background: T.controlBg, color: T.ink2, fontSize: 12, fontWeight: 550, cursor: 'pointer',
 }
 const iconButton = { ...button, width: 30, padding: 0 }
 
@@ -330,8 +330,8 @@ export default function FilesFace() {
             {breadcrumbs.map((part, index) => <span key={`${part}-${index}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="chevRight" size={10}/><span onClick={() => navigate(sourceID, breadcrumbs.slice(0, index + 1).join('/'))} style={{ cursor: 'pointer' }}>{part}</span></span>)}
           </> : <span style={{ fontWeight: 650 }}>{viewTitle}</span>}
         </div>
-        <div style={{ width: 210, height: 30, display: 'flex', alignItems: 'center', gap: 6, padding: '0 9px', border: `1px solid ${T.border}`, borderRadius: 6, background: '#fff' }}>
-          <Icon name="search" size={13} style={{ color: T.ink4 }}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder={view === 'trash' ? '搜索回收站' : '搜索当前范围'} style={{ minWidth: 0, flex: 1, border: 0, outline: 0, background: 'transparent', fontSize: 12 }}/>
+        <div style={{ width: 210, height: 30, display: 'flex', alignItems: 'center', gap: 6, padding: '0 9px', border: `1px solid ${T.border}`, borderRadius: 6, background: T.controlBg }}>
+          <Icon name="search" size={13} style={{ color: T.ink4 }}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder={view === 'trash' ? '搜索回收站' : '搜索当前范围'} style={{ minWidth: 0, flex: 1, border: 0, outline: 0, background: 'transparent', color: T.ink, fontSize: 12 }}/>
         </div>
         {view === 'source' && <>
           <button disabled={!capabilities.mkdir} onClick={createFolder} style={{ ...button, opacity: capabilities.mkdir ? 1 : .45 }}><Icon name="plus" size={12}/>新建文件夹</button>
@@ -359,7 +359,7 @@ export default function FilesFace() {
         </aside>
 
         <main style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ minHeight: 41, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 7, borderBottom: `1px solid ${T.borderSoft}`, background: '#fff' }}>
+          <div style={{ minHeight: 41, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 7, borderBottom: `1px solid ${T.borderSoft}`, background: T.surface }}>
             {view === 'source' && <>
               <button disabled={!one || one.isDir} onClick={download} style={{ ...button, opacity: one && !one.isDir ? 1 : .45 }}><Icon name="download" size={12}/>下载</button>
               <button disabled={!one || !capabilities.favorite} onClick={() => toggleFavorite(true)} style={{ ...button, opacity: one && capabilities.favorite ? 1 : .45 }}><Icon name="star" size={12}/>收藏</button>
@@ -367,7 +367,7 @@ export default function FilesFace() {
               <button disabled={!selectedItems.length || !capabilities.delete} onClick={deleteSelected} style={{ ...button, color: '#b42318', opacity: selectedItems.length && capabilities.delete ? 1 : .45 }}><Icon name="trash" size={12}/>删除</button>
               <div style={{ position: 'relative' }}>
                 <button disabled={!one} onClick={() => setMoreOpen(value => !value)} style={{ ...button, opacity: one ? 1 : .45 }}>更多<Icon name="chevDown" size={11}/></button>
-                {moreOpen && one && <div style={{ position: 'absolute', zIndex: 20, top: 34, left: 0, width: 150, padding: 4, border: `1px solid ${T.border}`, borderRadius: 6, background: '#fff', boxShadow: '0 8px 24px rgba(15,23,42,.15)' }}>
+                {moreOpen && one && <div style={{ position: 'absolute', zIndex: 20, top: 34, left: 0, width: 150, padding: 4, border: `1px solid ${T.border}`, borderRadius: 6, background: T.overlayBg, boxShadow: '0 8px 24px rgba(15,23,42,.22)' }}>
                   <MenuButton label="重命名" disabled={!capabilities.rename} onClick={() => { setMoreOpen(false); rename() }}/>
                   <MenuButton label="移动到…" disabled={!capabilities.move} onClick={() => { setMoreOpen(false); transfer(false) }}/>
                   <MenuButton label="复制到…" disabled={!capabilities.copy} onClick={() => { setMoreOpen(false); transfer(true) }}/>
@@ -395,7 +395,7 @@ export default function FilesFace() {
                 : <FileTable view={view} items={items} selected={selected} setSelected={setSelected} onOpen={openEntry}/>}
             </div>
             {one && view !== 'trash' && view !== 'shares' && <aside style={{ width: 260, flexShrink: 0, borderLeft: `1px solid ${T.borderSoft}`, background: T.surfaceAlt, overflow: 'auto' }}>
-              <div style={{ height: 170, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 14, borderBottom: `1px solid ${T.borderSoft}`, background: '#fff' }}>
+              <div style={{ height: 170, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 14, borderBottom: `1px solid ${T.borderSoft}`, background: T.surface }}>
                 {previewURL
                   ? <img src={previewURL} alt={one.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}/>
                   : <FileIcon type={one.isDir ? 'dir' : one.type} size={64}/>
@@ -435,7 +435,7 @@ function FileTable({ view, items, selected, setSelected, onOpen }) {
         const type = item.isDir ? 'dir' : (item.type || 'file')
         const location = item.originalPath || item.path || ''
         const time = item.deletedAt || item.expiresAt || item.openedAt || item.addedAt || item.modified
-        return <tr key={key} onClick={() => toggle(key, !active)} onDoubleClick={() => onOpen(item)} style={{ height: 39, borderBottom: `1px solid ${T.borderSoft}`, background: active ? T.blueSoft : '#fff', cursor: 'pointer' }}>
+        return <tr key={key} onClick={() => toggle(key, !active)} onDoubleClick={() => onOpen(item)} style={{ height: 39, borderBottom: `1px solid ${T.borderSoft}`, background: active ? T.blueSoft : T.surface, cursor: 'pointer' }}>
           <td style={{ padding: '8px 12px', textAlign: 'center' }}><input aria-label={`选择 ${item.name}`} type="checkbox" checked={active} onClick={event => event.stopPropagation()} onChange={event => toggle(key, event.target.checked)}/></td>
           <td style={{ padding: '8px 10px', overflow: 'hidden' }}><div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}><FileIcon type={type} size={15}/><span title={item.name} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: T.ink, fontWeight: item.isDir ? 650 : 500 }}>{item.name}</span></div></td>
           <td title={location} style={{ padding: '8px 10px', color: T.ink3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{location}</td>
