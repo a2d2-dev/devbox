@@ -293,7 +293,7 @@ function DeployedApps({ apps, totalCount, loading, error, onRetry, onOpen, iconS
   const description = loading ? '正在从 DevBox 获取已部署应用。' : unavailable
     ? '应用列表接口请求失败，其他桌面功能仍可使用。'
     : hasDeployedApps
-      ? '完整应用列表可从 Compose 应用管理页查看。'
+      ? '完整应用列表可从 Docker 应用的「Compose 应用」页查看。'
     : '尚未部署应用，可从应用商店选择服务。';
   return (
     <div className="desktop-deployed-empty" style={{ minHeight: 96, padding: '18px 20px', borderRadius: 8,

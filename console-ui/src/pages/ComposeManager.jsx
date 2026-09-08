@@ -1,9 +1,12 @@
-// ComposeManager — 应用管理入口（Issue #2）。
+// ComposeManager — Compose 应用管理（Issue #2；2026-09-08 起并入「Docker」应用
+// 的「Compose 应用」tab，见 DockerApp.jsx，独立桌面图标已撤下）。
 //
 // 职责：
-//   1. 应用列表：全部 / Docker Compose / Kubernetes / 系统 四类筛选；卡片由后端 phase
-//      驱动（observed.phase），显示 runtime + service 数、endpoints / 打开入口、最近
-//      operation、catalog 升级提示。前端不自行推 phase。
+//   1. 应用列表：仅 Docker Compose 应用（含 discovered 外部 project）；卡片由后端
+//      phase 驱动（observed.phase），显示 runtime + service 数、endpoints / 打开入口、
+//      最近 operation、catalog 升级提示。前端不自行推 phase。
+//      runtime=kubernetes 的应用暂不显示（K8s 独立成页是后续票，T2）；
+//      系统工具筛选已移除（桌面「系统工具」分组已有该入口）。
 //   2. 新建 Compose 向导：来源（平台商店入口 / 第三方 catalog 入口 / 粘贴 / 上传 YAML）
 //      → 预检（services/images/ports/volumes/network/secrets + 风险 blocked/confirmation/
 //      warning/safe）→ 配置 → 部署 Task。上传用 File API 真实读文本。
@@ -17,7 +20,6 @@ import { StatusDot, Chip } from '../components/ui';
 import { btnSecondary, btnDanger } from '../components/AppWindow';
 import { useToast } from '../components/toastContext';
 import UninstallDialog from '../components/UninstallDialog';
-import { SYSTEM_APPS } from '../data/systemApps';
 import {
   useApps, useAppCapability, useTask, appActionAsync,
   validateCompose, applyComposeApp, takeoverApp, useStoreApps, useCatalogApps,
@@ -33,7 +35,6 @@ export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }
   const { data: cap } = useAppCapability();
   const { data: storeApps } = useStoreApps();
   const { data: catalogApps } = useCatalogApps();
-  const [filter, setFilter] = useState('all');
   const [showCreate, setShowCreate] = useState(false);
   const [activeTask, setActiveTask] = useState(null); // {id, label, appId}
   const [uninstall, setUninstall] = useState(null);   // app | null
@@ -55,19 +56,10 @@ export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }
   const composeCap = cap?.compose;
   const composeDown = composeCap && composeCap.available === false;
 
+  // IA 合并（T1）：本视图只管 Compose 应用。runtime=kubernetes 的应用暂不显示
+  // （K8s 由独立「应用管理」页 AppManagement.jsx 承载）；系统工具筛选已移除（桌面分组已有）。
   const arr = useMemo(() => Array.isArray(apps) ? apps : [], [apps]);
-  const counts = {
-    all: arr.length,
-    compose: arr.filter((a) => (a.runtime || 'kubernetes') === 'compose').length,
-    kubernetes: arr.filter((a) => (a.runtime || 'kubernetes') === 'kubernetes').length,
-    system: SYSTEM_APPS.length,
-  };
-
-  const list = useMemo(() => {
-    if (filter === 'system') return [];
-    if (filter === 'all') return arr;
-    return arr.filter((a) => (a.runtime || 'kubernetes') === filter);
-  }, [arr, filter]);
+  const list = useMemo(() => arr.filter((a) => (a.runtime || 'kubernetes') === 'compose'), [arr]);
 
   function guard(fn) {
     return (...args) => {
@@ -88,9 +80,7 @@ export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }
     <div style={{ padding: 24, height: '100%', overflow: 'auto', background: T.bg }}>
       <Header
         composeCap={composeCap}
-        filter={filter}
-        setFilter={setFilter}
-        counts={counts}
+        count={list.length}
         authed={authed}
         onRequireAuth={onRequireAuth}
         onCreate={() => setShowCreate(true)}
@@ -100,25 +90,16 @@ export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }
 
       {composeDown && (
         <div style={warnBox}>
-          Docker Compose 运行时不可用：{composeCap.reason || ''}。已部署的 Compose 应用仍可观测；K8s 应用与系统工具不受影响。
+          Docker Compose 运行时不可用：{composeCap.reason || ''}。已部署的 Compose 应用仍可观测。
         </div>
       )}
 
       <div style={{ display: 'grid', gap: 10, marginTop: 14 }}>
-        {/* 系统工具筛选：渲染 SYSTEM_APPS 为可启动卡片 */}
-        {filter === 'system' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
-            {SYSTEM_APPS.map((a) => (
-              <SystemCard key={a.id} app={a} onOpen={() => (onOpenApp ? onOpenApp(a) : null)} />
-            ))}
-          </div>
-        )}
-
-        {filter !== 'system' && list.length === 0 && (
+        {list.length === 0 && (
           <EmptyState composeDown={composeDown} hasCap={!!cap} onCreate={() => (authed ? setShowCreate(true) : onRequireAuth?.())} />
         )}
 
-        {filter !== 'system' && list.map((app) => (
+        {list.map((app) => (
           app.ownership === 'discovered' ? (
             <DiscoveredCard
               key={app.id}
@@ -181,29 +162,17 @@ export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }
 }
 
 // ─── Header ─────────────────────────────────────────────────────
-function Header({ composeCap, filter, setFilter, counts, authed, onRequireAuth, onCreate }) {
-  const filters = [
-    { id: 'all', label: '全部', count: counts.all },
-    { id: 'compose', label: 'Docker Compose', count: counts.compose },
-    { id: 'kubernetes', label: 'Kubernetes', count: counts.kubernetes },
-    { id: 'system', label: '系统工具', count: counts.system },
-  ];
+function Header({ composeCap, count, authed, onRequireAuth, onCreate }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <div style={{ fontSize: 20, fontWeight: 700, color: T.ink }}>应用管理</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: T.ink }}>Compose 应用</div>
       <div style={{ fontSize: 12, color: T.ink3 }}>
         {composeCap?.available ? `Compose ${composeCap.version || '可用'}` : composeCap ? 'Compose 未就绪' : '检测运行时中…'}
       </div>
+      <span className="mono tnum" style={{ fontSize: 12, color: T.ink3, padding: '2px 9px', borderRadius: 999, border: `1px solid ${T.border}`, background: '#fff' }}>
+        {count} 个应用
+      </span>
       <div style={{ flex: 1 }} />
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {filters.map((f) => (
-          <button key={f.id} onClick={() => setFilter(f.id)} title={f.label}
-            style={filter === f.id ? chipActive : chip}>
-            {f.label}
-            <span className="mono tnum" style={{ marginLeft: 5, opacity: 0.8 }}>{f.count}</span>
-          </button>
-        ))}
-      </div>
       <button onClick={() => (authed ? onCreate() : onRequireAuth?.())} className="edge-press" style={primaryBtn}>
         <Icon name="plus" size={13} stroke={2}/>新建 Compose
       </button>
@@ -211,7 +180,8 @@ function Header({ composeCap, filter, setFilter, counts, authed, onRequireAuth, 
   );
 }
 
-function TaskBanner({ task, label }) {
+// TaskBanner：任务进度横幅（AppManagement 亦复用）。
+export function TaskBanner({ task, label }) {
   const color = task.status === 'failed' ? '#dc2626' : task.status === 'succeeded' ? '#16a34a' : '#0066ff';
   return (
     <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: '#fff', border: `1px solid ${color}33` }}>
@@ -223,8 +193,8 @@ function TaskBanner({ task, label }) {
   );
 }
 
-// ─── AppCard：后端 phase 驱动 ────────────────────────────────────
-function AppCard({ app, storeApps, catalogApps, disabled, onAction, onUninstall, onOpenApp }) {
+// ─── AppCard：后端 phase 驱动（compose 与 kubernetes 通用；AppManagement 亦复用）────
+export function AppCard({ app, storeApps, catalogApps, disabled, onAction, onUninstall, onOpenApp }) {
   const phase = observedPhase(app);
   const isCompose = (app.runtime || 'kubernetes') === 'compose';
   const running = phase === 'running';
@@ -300,29 +270,6 @@ function AppCard({ app, storeApps, catalogApps, disabled, onAction, onUninstall,
   );
 }
 
-// SystemCard：系统工具（来自 SYSTEM_APPS），仅启动，无生命周期
-function SystemCard({ app, onOpen }) {
-  return (
-    <button onClick={onOpen} className="edge-press" style={{
-      textAlign: 'left', cursor: 'pointer',
-      padding: '12px 14px', borderRadius: 10, background: '#fff',
-      border: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', gap: 10,
-    }}>
-      <div style={{
-        width: 36, height: 36, borderRadius: 9, background: app.bg, color: 'white',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-      }}>
-        <Icon name={app.icon} size={18} stroke={1.7}/>
-      </div>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{app.name}</div>
-        <div style={{ fontSize: 11, color: T.ink3 }}>系统工具 · 本地内置</div>
-      </div>
-      <Icon name="chevRight" size={14} stroke={2} style={{ color: T.ink4 }}/>
-    </button>
-  );
-}
-
 function EmptyState({ composeDown, hasCap, onCreate }) {
   return (
     <div style={emptyBox}>
@@ -330,7 +277,7 @@ function EmptyState({ composeDown, hasCap, onCreate }) {
       <div style={{ fontSize: 14, fontWeight: 600, color: T.ink2 }}>暂无已部署应用</div>
       <div style={{ fontSize: 12, color: T.ink3, marginTop: 6, maxWidth: 420 }}>
         {composeDown
-          ? 'Docker Compose 运行时不可用，无法新建 Compose 应用；K8s 应用将由云端下发后显示在此。'
+          ? 'Docker Compose 运行时不可用，无法新建 Compose 应用。'
           : '点击右上角「新建 Compose」粘贴或上传一个 compose.yaml，或从应用商店安装。'}
       </div>
       {!composeDown && (
@@ -920,11 +867,6 @@ const card = {
   padding: '13px 16px', borderRadius: 12, background: '#fff',
   border: `1px solid ${T.border}`, boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
 };
-const chip = {
-  padding: '5px 11px', fontSize: 12.5, borderRadius: 999, border: `1px solid ${T.border}`,
-  background: '#fff', color: T.ink2, cursor: 'pointer',
-};
-const chipActive = { ...chip, background: T.blue, color: '#fff', borderColor: T.blue };
 const primaryBtn = {
   display: 'inline-flex', alignItems: 'center', gap: 6,
   padding: '7px 14px', fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer',

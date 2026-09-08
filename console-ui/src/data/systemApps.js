@@ -8,6 +8,14 @@
 //
 // 2026-06-22 LF 调整：移除「模型仓库」桌面入口（受控开发界面收敛桌面图标白名单；
 // models 页面代码 src/pages/Models.jsx 保留，未来需要时直接恢复一行配置即可）。
+//
+// 2026-09-08 容器域 IA 合并（LF 裁决）：移除「Compose 应用」独立桌面图标，
+// Compose 管理并入「Docker」应用的 tab（src/pages/DockerApp.jsx）。
+// 旧 compose-manager 打开请求经 lib/appRoutes.js 别名重定向到 docker:compose。
+//
+// 2026-09-08 容器域 IA 重组 T2（LF 拍板命名「应用管理」）：新增 app-management
+// 入口（src/pages/AppManagement.jsx），承载 runtime=kubernetes 的云端下发应用
+// （原 ComposeManager Kubernetes 筛选独立成页）。
 
 import { T } from '../tokens'
 
@@ -17,7 +25,7 @@ export const SYSTEM_APPS = [
   { id: 'ai-activity',         kind: 'system', name: 'AI 活动',  icon: 'brain',     color: T.violet,  bg: 'linear-gradient(160deg,#a855f7,#6d28d9)' },
   { id: 'store',               kind: 'system', name: '应用商店', icon: 'store',     color: T.green,   bg: 'linear-gradient(160deg,#34d399,#059669)' },
   { id: 'docker',              kind: 'system', name: 'Docker',   icon: 'server',    color: '#0066ff', bg: 'linear-gradient(160deg,#3388ff,#0f766e)' },
-  { id: 'compose-manager',     kind: 'system', name: 'Compose 应用', icon: 'apps', color: '#0891b2', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
+  { id: 'app-management',      kind: 'system', name: '应用管理', icon: 'cloud',     color: '#0369a1', bg: 'linear-gradient(160deg,#38bdf8,#0369a1)' },
   { id: 'files',               kind: 'system', name: '文件',     icon: 'folder',    color: '#0891b2', bg: 'linear-gradient(160deg,#22d3ee,#0891b2)' },
   { id: 'processes',           kind: 'system', name: '进程',     icon: 'cpu',       color: '#475569', bg: 'linear-gradient(160deg,#64748b,#1e293b)' },
   { id: 'supervisor',          kind: 'system', name: '进程守护', icon: 'shield',    color: '#0d9488', bg: 'linear-gradient(160deg,#14b8a6,#0f766e)' },
