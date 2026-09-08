@@ -1,5 +1,6 @@
 import { T } from '../tokens'
 import { Icon } from '../icons'
+import { WALLPAPERS, resolveWallpaper } from '../data/wallpapers'
 
 // AppearanceSettings —「个人设置 → 主题壁纸」tab 的真实内容（issue #30 T6）。
 //
@@ -11,22 +12,8 @@ import { Icon } from '../icons'
 // 视觉上刻意做成「正式设置页」的大预览卡片，而非调试面板的小控件：每张壁纸
 // 卡片渲染对应背景的真实缩略预览（与 App.jsx bgClass/bgStyle 逐一对应）。
 
-// ── 壁纸缩略预览：与 App.jsx 的 bgClass/bgStyle 一一对应 ──────────────────────
-// fnos → .fnos-desktop-bg（#3a424f + 渐变 + url(/wallpaper.svg) cover）
-// grid → .edge-bg
-// topo → 内联渐变；plain → 纯色。缩略图直接复用同一套 CSS，保证「所见即所得」。
-const WALLPAPERS = [
-  { id: 'fnos',  label: '壁纸', desc: '飞牛同款摄影壁纸', className: 'fnos-desktop-bg', style: null },
-  { id: 'grid',  label: '网格', desc: '浅色网格纹理',     className: 'edge-bg',         style: null },
-  {
-    id: 'topo', label: '光晕', desc: '柔和光斑渐变', className: '',
-    style: {
-      background: T.desktopTopoBg,
-      backgroundImage: T.desktopTopoImage,
-    },
-  },
-  { id: 'plain', label: '纯色', desc: '极简纯色底', className: '', style: { background: T.desktopPlainBg } },
-]
+// 壁纸缩略预览复用 data/wallpapers.js 的注册表与 resolveWallpaper：与 App.jsx 桌面
+// 背景解析完全同源（含 NASA 照片壁纸），保证缩略图「所见即所得」。
 
 // 主色候选 — 与 TweaksPanel/App.jsx 的 TweakColor 选项一致（首项即 fnOS 蓝）。
 const ACCENTS = [
@@ -77,6 +64,9 @@ function SectionCard({ icon, title, subtitle, children }) {
 }
 
 function WallpaperCard({ wp, selected, onSelect }) {
+  // 缩略预览与桌面同源：resolveWallpaper 给出 className（programmatic）或
+  // cover 图 style（photo），保证所见即所得。
+  const preview = resolveWallpaper(wp.id, T)
   return (
     <button
       type="button"
@@ -90,13 +80,13 @@ function WallpaperCard({ wp, selected, onSelect }) {
       }}
     >
       <div
-        className={wp.className}
+        className={preview.className}
         style={{
           position: 'relative', height: 108, borderRadius: 10, overflow: 'hidden',
           border: selected ? `2px solid ${T.blue}` : `1px solid ${T.border}`,
           boxShadow: selected ? '0 0 0 3px rgba(0,102,255,0.18)' : '0 1px 2px rgba(15,23,42,0.05)',
           transition: 'box-shadow 0.15s, border-color 0.15s',
-          ...(wp.style || {}),
+          ...(preview.style || {}),
         }}
       >
         {selected && <CheckBadge/>}
@@ -131,10 +121,10 @@ export default function AppearanceSettings({ t, setT }) {
         <span>外观设置会保存到你的账号，任何设备登录后自动恢复。</span>
       </div>
 
-      {/* 壁纸选择区 — 2×2 缩略卡片 */}
+      {/* 壁纸选择区 — 内置壁纸缩略卡片（含 NASA 照片壁纸），自适应多列 */}
       <SectionCard icon="palette" title="桌面壁纸" subtitle="点击即时预览，选择自动保存">
         <div role="radiogroup" aria-label="桌面壁纸" style={{
-          display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14,
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14,
         }}>
           {WALLPAPERS.map((wp) => (
             <WallpaperCard key={wp.id} wp={wp} selected={wallpaper === wp.id}

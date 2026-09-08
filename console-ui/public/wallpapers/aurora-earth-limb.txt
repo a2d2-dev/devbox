@@ -1,0 +1,7 @@
+Source: NASA Images API / NASA JSC
+Title: The aurora australis streams over the Earth
+NASA ID: iss072e083078
+Original URL: https://images-assets.nasa.gov/image/iss072e083078/iss072e083078~orig.jpg
+Metadata URL: https://images-assets.nasa.gov/image/iss072e083078/metadata.json
+License/usage: NASA/JSC image. NASA content is generally not copyrighted and may be used for informational or educational purposes unless otherwise noted; NASA API search metadata for this item had center=JSC and no secondary_creator field.
+Processing: Verified source with file/identify, cover-cropped to 2560x1600, slightly darkened for desktop UI contrast, stripped metadata, exported as high-quality WebP.
