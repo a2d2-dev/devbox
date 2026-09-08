@@ -8,16 +8,20 @@
 //
 // 旧 compose-manager appId 的打开请求经 lib/appRoutes.js 别名进入本组件的
 // compose tab（App.jsx 以 initialTab 传入）。T2 已落地：K8s 应用独立
-// 「应用管理」页（AppManagement.jsx）；T3（网络、存储 tab）在此基础上扩展。
+// 「应用管理」页（AppManagement.jsx）。T3 已落地：网络 / 存储只读 tab
+// （DockerInventory.jsx，对应后端 /api/v1/docker/networks、/volumes）。
 import { useState } from 'react';
 import { T } from '../tokens';
 import { Icon } from '../icons';
 import DockerOverview from './DockerOverview';
 import { ComposeManager } from './ComposeManager';
+import { DockerNetworksTab, DockerStorageTab } from './DockerInventory';
 
 const DOCKER_APP_TABS = [
   { id: 'overview', label: '概览', icon: 'server' },
   { id: 'compose', label: 'Compose 应用', icon: 'apps' },
+  { id: 'networks', label: '网络', icon: 'network' },
+  { id: 'storage', label: '存储', icon: 'hardDrive' },
 ];
 
 export default function DockerApp({ authed, onRequireAuth, onOpenStore, onOpenApp, initialTab = 'overview' }) {
@@ -56,6 +60,8 @@ export default function DockerApp({ authed, onRequireAuth, onOpenStore, onOpenAp
           <ComposeManager authed={authed} onRequireAuth={onRequireAuth}
             onOpenStore={onOpenStore} onOpenApp={onOpenApp}/>
         )}
+        {tab === 'networks' && <DockerNetworksTab/>}
+        {tab === 'storage' && <DockerStorageTab onOpenOverview={() => setTab('overview')}/>}
       </div>
     </div>
   );

@@ -37,6 +37,8 @@ var forbiddenDockerMigrationRoots = []string{"/run", "/etc", "/proc", "/sys", "/
 type DockerController interface {
 	DockerOverview(context.Context) (DockerOverview, error)
 	DockerStats(context.Context) (DockerStats, error)
+	DockerNetworks(context.Context) (DockerNetworkList, error)
+	DockerVolumes(context.Context) (DockerVolumeList, error)
 	DockerServiceAction(context.Context, DockerServiceActionRequest) (DockerOverview, error)
 	SetDockerAutostart(context.Context, DockerAutostartRequest) (DockerOverview, error)
 	PlanDockerMigration(context.Context, DockerMigrationRequest) (DockerMigrationPlan, error)

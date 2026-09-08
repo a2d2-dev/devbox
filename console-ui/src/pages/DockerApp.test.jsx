@@ -31,6 +31,9 @@ vi.mock('../hooks/useApi', () => ({
     refresh: api.refresh,
   }),
   useDockerStats: () => ({ data: null }),
+  // DockerInventory（网络 / 存储 tab，T3）
+  useDockerNetworks: () => ({ data: { available: true, networks: [] } }),
+  useDockerVolumes: () => ({ data: { available: true, volumes: [] } }),
   // ComposeManager
   useApps: () => ({ data: api.apps, refresh: api.refresh }),
   useAppCapability: () => ({ data: { compose: { available: true, version: 'v2.27' } } }),
@@ -102,6 +105,21 @@ describe('DockerApp container-domain tabs', () => {
 
     // tab 导航可来回切换
     await user.click(screen.getByRole('button', { name: '概览' }))
+    expect(screen.getByText('服务控制')).toBeInTheDocument()
+  })
+
+  it('switches to the networks and storage tabs (T3)', async () => {
+    const user = userEvent.setup()
+    render(<DockerApp authed onRequireAuth={vi.fn()}/>)
+
+    await user.click(screen.getByRole('button', { name: '网络' }))
+    expect(screen.getByText('暂无 docker network')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '存储' }))
+    expect(screen.getByText('data-root')).toBeInTheDocument()
+    expect(screen.getByText('暂无 docker volume')).toBeInTheDocument()
+    // 存储 tab 的迁移入口切回概览 tab
+    await user.click(screen.getByRole('button', { name: /存储设置与迁移/ }))
     expect(screen.getByText('服务控制')).toBeInTheDocument()
   })
 })

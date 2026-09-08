@@ -27,6 +27,12 @@ func (s *dockerStubController) DockerOverview(context.Context) (apps.DockerOverv
 func (s *dockerStubController) DockerStats(context.Context) (apps.DockerStats, error) {
 	return apps.DockerStats{Available: true}, s.err
 }
+func (s *dockerStubController) DockerNetworks(context.Context) (apps.DockerNetworkList, error) {
+	return apps.DockerNetworkList{Available: true, Networks: []apps.DockerNetworkSummary{{Name: "bridge", Driver: "bridge", Scope: "local", Containers: 2}}}, s.err
+}
+func (s *dockerStubController) DockerVolumes(context.Context) (apps.DockerVolumeList, error) {
+	return apps.DockerVolumeList{Available: true, Volumes: []apps.DockerVolumeSummary{{Name: "data", Driver: "local", ComposeProject: "alpha"}}}, s.err
+}
 func (s *dockerStubController) DockerServiceAction(context.Context, apps.DockerServiceActionRequest) (apps.DockerOverview, error) {
 	return s.overview, s.err
 }
@@ -54,6 +60,46 @@ func TestDockerOverviewHandler(t *testing.T) {
 	var overview apps.DockerOverview
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &overview))
 	assert.Equal(t, 2, overview.Containers.Running)
+}
+
+func TestDockerNetworksVolumesHandlers(t *testing.T) {
+	s := newDockerHandlerServer(&dockerStubController{})
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/docker/networks", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var networks apps.DockerNetworkList
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &networks))
+	assert.True(t, networks.Available)
+	require.Len(t, networks.Networks, 1)
+	assert.Equal(t, "bridge", networks.Networks[0].Name)
+	assert.Equal(t, 2, networks.Networks[0].Containers)
+
+	w = httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/docker/volumes", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var volumes apps.DockerVolumeList
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &volumes))
+	assert.True(t, volumes.Available)
+	require.Len(t, volumes.Volumes, 1)
+	assert.Equal(t, "alpha", volumes.Volumes[0].ComposeProject)
+}
+
+// Docker 能力未装配：清单接口返回 200 空态而非 5xx（不让前端轮询白屏）。
+func TestDockerNetworksVolumesUnassembledEmptyState(t *testing.T) {
+	s := newDockerHandlerServer(&stubController{})
+	for _, path := range []string{"/api/v1/docker/networks", "/api/v1/docker/volumes"} {
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, w.Code, path)
+		var body struct {
+			Available  bool   `json:"available"`
+			Diagnostic string `json:"diagnostic"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), path)
+		assert.False(t, body.Available, path)
+		assert.Contains(t, body.Diagnostic, "未装配", path)
+	}
 }
 
 func TestDockerHandlerReturnsStructuredDiagnostic(t *testing.T) {

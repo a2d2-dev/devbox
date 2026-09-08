@@ -13,6 +13,8 @@ import (
 func (s *Server) registerDockerRoutes() {
 	s.mux.HandleFunc("/api/v1/docker/overview", s.handleDockerOverview)
 	s.mux.HandleFunc("/api/v1/docker/stats", s.handleDockerStats)
+	s.mux.HandleFunc("/api/v1/docker/networks", s.handleDockerNetworks)
+	s.mux.HandleFunc("/api/v1/docker/volumes", s.handleDockerVolumes)
 	s.mux.HandleFunc("/api/v1/docker/service", s.requireAdmin(s.handleDockerService))
 	s.mux.HandleFunc("/api/v1/docker/autostart", s.requireAdmin(s.handleDockerAutostart))
 	s.mux.HandleFunc("/api/v1/docker/storage/plan", s.requireAdmin(s.handleDockerStoragePlan))
@@ -61,6 +63,44 @@ func (s *Server) handleDockerStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.jsonOK(w, stats)
+}
+
+// handleDockerNetworks / handleDockerVolumes：容器域 IA 重组 T3 的只读清单。
+// daemon 不可用返回 200 + available:false + 诊断（对齐 overview/stats 空态约定）。
+func (s *Server) handleDockerNetworks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	controller, ok := s.dockerController()
+	if !ok {
+		s.jsonOK(w, apps.DockerNetworkList{Diagnostic: "Docker 管理能力未装配", CheckedAt: time.Now()})
+		return
+	}
+	list, err := controller.DockerNetworks(r.Context())
+	if err != nil {
+		writeAppErr(w, err)
+		return
+	}
+	s.jsonOK(w, list)
+}
+
+func (s *Server) handleDockerVolumes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	controller, ok := s.dockerController()
+	if !ok {
+		s.jsonOK(w, apps.DockerVolumeList{Diagnostic: "Docker 管理能力未装配", CheckedAt: time.Now()})
+		return
+	}
+	list, err := controller.DockerVolumes(r.Context())
+	if err != nil {
+		writeAppErr(w, err)
+		return
+	}
+	s.jsonOK(w, list)
 }
 
 func (s *Server) handleDockerService(w http.ResponseWriter, r *http.Request) {
