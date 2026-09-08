@@ -4,6 +4,8 @@ import { Icon } from '../icons'
 import { authFetch } from '../hooks/useApi'
 import { FileIcon } from '../components/AppShell'
 import { useToast } from '../components/toastContext'
+import Downloads from './Downloads'
+import Backup from './Backup'
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'])
 const button = {
@@ -71,7 +73,7 @@ function EmptyState({ icon = 'folder', title, message }) {
   )
 }
 
-export default function FilesFace() {
+export default function FilesFace({ initialTab = 'files' } = {}) {
   const toast = useToast()
   const rootRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -92,6 +94,7 @@ export default function FilesFace() {
   const [uploading, setUploading] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [workspaceTab, setWorkspaceTab] = useState(initialTab)
 
   const source = sources.find(item => item.id === sourceID)
   const capabilities = source?.capabilities || {}
@@ -142,6 +145,7 @@ export default function FilesFace() {
   }, [view, sourceID, path, query, sortBy, sortOrder, refreshKey, source])
 
   const navigate = useCallback((nextSource, nextPath, push = true) => {
+    setWorkspaceTab('files')
     setView('source'); setSourceID(nextSource); setPath(nextPath); setQuery(''); setSelected(new Set())
     if (push) {
       const nextHistory = history.slice(0, historyIndex + 1)
@@ -160,6 +164,7 @@ export default function FilesFace() {
   }
 
   const openCollection = nextView => {
+    setWorkspaceTab('files')
     setView(nextView); setPath(''); setQuery(''); setSelected(new Set()); setMoreOpen(false)
   }
 
@@ -317,10 +322,18 @@ export default function FilesFace() {
   const previewURL = one && preview?.key === entryKey(one) ? preview.url : ''
   const viewTitle = { trash: '回收站', favorites: '我的收藏', recent: '最近访问', shares: '外链管理' }[view]
   const empty = !loading && !error && items.length === 0
+  const taskTitle = workspaceTab === 'downloads' ? '下载任务' : workspaceTab === 'backup' ? '备份任务' : ''
 
   return (
     <div ref={rootRef} tabIndex={0} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: T.surface, overflow: 'hidden', outline: 'none' }}>
       <div style={{ minHeight: 50, padding: '9px 14px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+        {workspaceTab !== 'files' ? <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: T.ink }}>
+            <Icon name={workspaceTab === 'downloads' ? 'download' : 'layers'} size={15}/>
+            {taskTitle}
+          </div>
+          <span style={{ fontSize: 11.5, color: T.ink3 }}>文件工作区内置任务视图</span>
+        </> : <>
         <button title="后退" aria-label="后退" disabled={historyIndex === 0} onClick={() => goHistory(-1)} style={{ ...iconButton, opacity: historyIndex === 0 ? .4 : 1 }}><Icon name="chevLeft" size={13}/></button>
         <button title="前进" aria-label="前进" disabled={historyIndex >= history.length - 1} onClick={() => goHistory(1)} style={{ ...iconButton, opacity: historyIndex >= history.length - 1 ? .4 : 1 }}><Icon name="chevRight" size={13}/></button>
         <button title="刷新" aria-label="刷新" onClick={reload} style={iconButton}><Icon name="refresh" size={13}/></button>
@@ -339,6 +352,7 @@ export default function FilesFace() {
           <button disabled={!capabilities.upload || uploading} onClick={() => fileInputRef.current?.click()} style={{ ...button, background: T.blue, color: '#fff', borderColor: T.blue, opacity: capabilities.upload ? 1 : .45 }}><Icon name="upload" size={12}/>{uploading ? '上传中' : '上传'}</button>
         </>}
         {view === 'trash' && <button disabled={!items.length} onClick={emptyTrash} style={{ ...button, color: '#b42318', opacity: items.length ? 1 : .45 }}><Icon name="trash" size={12}/>清空</button>}
+        </>}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
@@ -356,9 +370,15 @@ export default function FilesFace() {
           <SidebarRow icon="history" label="最近访问" active={view === 'recent'} onClick={() => openCollection('recent')}/>
           <SidebarRow icon="trash" label="回收站" active={view === 'trash'} onClick={() => openCollection('trash')}/>
           <SidebarRow icon="link" label="外链管理" active={view === 'shares'} onClick={() => openCollection('shares')}/>
+          <SectionLabel>任务</SectionLabel>
+          <SidebarRow icon="download" label="下载任务" active={workspaceTab === 'downloads'} onClick={() => setWorkspaceTab('downloads')}/>
+          <SidebarRow icon="layers" label="备份任务" active={workspaceTab === 'backup'} onClick={() => setWorkspaceTab('backup')}/>
         </aside>
 
         <main style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {workspaceTab === 'downloads' ? <Downloads/>
+            : workspaceTab === 'backup' ? <Backup/>
+            : <>
           <div style={{ minHeight: 41, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 7, borderBottom: `1px solid ${T.borderSoft}`, background: T.surface }}>
             {view === 'source' && <>
               <button disabled={!one || one.isDir} onClick={download} style={{ ...button, opacity: one && !one.isDir ? 1 : .45 }}><Icon name="download" size={12}/>下载</button>
@@ -407,6 +427,7 @@ export default function FilesFace() {
               </div>
             </aside>}
           </div>
+          </>}
         </main>
       </div>
     </div>
