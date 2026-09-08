@@ -180,7 +180,8 @@ function Header({ composeCap, count, authed, onRequireAuth, onCreate }) {
   );
 }
 
-function TaskBanner({ task, label }) {
+// TaskBanner：任务进度横幅（CloudApps 亦复用）。
+export function TaskBanner({ task, label }) {
   const color = task.status === 'failed' ? '#dc2626' : task.status === 'succeeded' ? '#16a34a' : '#0066ff';
   return (
     <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: '#fff', border: `1px solid ${color}33` }}>
@@ -192,8 +193,8 @@ function TaskBanner({ task, label }) {
   );
 }
 
-// ─── AppCard：后端 phase 驱动 ────────────────────────────────────
-function AppCard({ app, storeApps, catalogApps, disabled, onAction, onUninstall, onOpenApp }) {
+// ─── AppCard：后端 phase 驱动（compose 与 kubernetes 通用；CloudApps 亦复用）────
+export function AppCard({ app, storeApps, catalogApps, disabled, onAction, onUninstall, onOpenApp }) {
   const phase = observedPhase(app);
   const isCompose = (app.runtime || 'kubernetes') === 'compose';
   const running = phase === 'running';

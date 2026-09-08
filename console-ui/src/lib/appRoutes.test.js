@@ -3,9 +3,10 @@ import { SYSTEM_APPS } from '../data/systemApps'
 import { resolveAppLaunch } from './appRoutes'
 
 describe('desktop declutter app routes', () => {
-  it('keeps the desktop system app list at 18 total and 16 visible entries', () => {
-    expect(SYSTEM_APPS).toHaveLength(18)
-    expect(SYSTEM_APPS.filter(app => !['account', 'browser'].includes(app.id))).toHaveLength(16)
+  it('keeps the desktop system app list at 19 total and 17 visible entries', () => {
+    expect(SYSTEM_APPS).toHaveLength(19)
+    expect(SYSTEM_APPS.filter(app => !['account', 'browser'].includes(app.id))).toHaveLength(17)
+    expect(SYSTEM_APPS.map(app => app.id)).toContain('cloud-apps')
     expect(SYSTEM_APPS.map(app => app.id)).not.toEqual(expect.arrayContaining([
       'downloads',
       'backup',
