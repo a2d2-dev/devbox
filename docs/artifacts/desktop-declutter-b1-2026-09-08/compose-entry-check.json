@@ -1,0 +1,11 @@
+{
+  "appCardTextSample": "E\n·\nCPU\n36%\nGPU\n0%\n内存\n76%\n0\n条告警\n?\n云端在线\n·\n同步 5 分钟前\n00:30:25\n2026-09-08\n周二\nU\n系统工具\n本地固定 · 始终可用\n仪表盘\n资源管理\nAI 活动\n应用商店\nDocker\nCompose 应用\n文件\n备份\n下载\n进程\n进程守护\n虚拟机\n硬件中心\n用户与权限\n服务导航\n磁盘\n网络连接\n网络与安全\n告警中心\n日志\n系统设置\n已部署应用（3）\n运行中 3 / 全部 5\n全部 5 个\nclaude-code-hub\n仅 CPU\nnew-api\n仅 CPU\ntokenhub-demo\n仅 CPU\n最近使用\n按访问时间\n00:30:25\n星期二\n2026-09-08\n2026 年 9 月\n第 2 周\n日\n一\n二\n三\n四\n五\n六\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n实时状态\n资源详情\nCPU\n36%\n内存\n76%\n网络\nUP 250.4 KB/s\nDOWN 99.0 KB/s\n存储读写\nR 68.8 KB/s\nW 2.0 MB/s\n运行时长\n13 天 7 小时 59 分钟\n欢迎来到 DevBox\n0/3 项已完成\n安装推荐应用\n从应用商店选择开发环境和常用服务。\n浏览应用商店\n跳过\n标记完成\n设备信息\n在线\n硬件\n系统\nAgent\n持续在线\n备忘录\n0 字\nCompose 应用\n应用管理\nCompose docker 29.6.1 · compose 5.3.0\n全部5\nDocker Compose5\nKubernetes0\n系统工具23\n新建 Compose\n已发现 · 只读\nclaude-code-hub\nCompose\n运行中\n3 服务 · 3/3 就绪\n工作目录\n/www/compose/claude-code-hub\n配置文件\n1 个\napp\npostgres\napp\nrunning\n健康\n23000:23000/tcp, 3000/tcp\npostgres\nrunning\n健康\n35432:5432/tcp\nredis\nrunning\n健康\n6379/tcp\n列表仅显示仍有容器记录的 project；若已 compose down 且容器记录被删除，则无法自动发现，可改用「新建 Compose」粘贴/上传导入。\n接管并编辑\n已发现 · 只读\nfrpc\nCompose\n部署中\n1 服务 · 0/1 就绪\n工作目录\n/opt/1panel/apps/frpc/frpc\n配置文件\n1 个\nfrpc\nrestarting\n列表仅显示仍有容器记录的 project；若已 compose down 且容器记录被删除，则无法自动发现，可改用「新建 Compose」粘贴/上传导入。\n接管",
+  "expectedNamesPresent": {
+    "claude-code-hub": true,
+    "frpc": true,
+    "happy-server-deploy": true,
+    "new-api": true,
+    "tokenhub-demo": true
+  },
+  "titleFound": true
+}

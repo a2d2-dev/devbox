@@ -272,8 +272,8 @@ function AppGrid({ apps, onOpen, iconStyle, accent, iconPx = 76, tilePx = 104, l
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: `repeat(auto-fill, minmax(${tilePx + 8}px, ${tilePx + 8}px))`,
-      gap: 8,
+      gridTemplateColumns: `repeat(auto-fill, minmax(${tilePx + 12}px, ${tilePx + 12}px))`,
+      gap: 12,
     }}>
       {apps.map(app => <AppIcon key={app.id} app={app} onOpen={onOpen}
         iconStyle={iconStyle} accent={accent}
@@ -282,15 +282,18 @@ function AppGrid({ apps, onOpen, iconStyle, accent, iconPx = 76, tilePx = 104, l
   );
 }
 
-function DeployedApps({ apps, loading, error, onRetry, onOpen, iconStyle, accent, iconPx, tilePx, labelSize }) {
+function DeployedApps({ apps, totalCount, loading, error, onRetry, onOpen, iconStyle, accent, iconPx, tilePx, labelSize }) {
   if (apps.length > 0) {
     return <AppGrid apps={apps} onOpen={onOpen} iconStyle={iconStyle} accent={accent}
       iconPx={iconPx} tilePx={tilePx} labelSize={labelSize}/>;
   }
   const unavailable = !!error;
-  const title = loading ? '正在读取服务状态' : unavailable ? '服务状态暂不可用' : '服务未配置';
+  const hasDeployedApps = totalCount > 0;
+  const title = loading ? '正在读取服务状态' : unavailable ? '服务状态暂不可用' : hasDeployedApps ? '当前无运行中应用' : '服务未配置';
   const description = loading ? '正在从 DevBox 获取已部署应用。' : unavailable
     ? '应用列表接口请求失败，其他桌面功能仍可使用。'
+    : hasDeployedApps
+      ? '完整应用列表可从 Compose 应用管理页查看。'
     : '尚未部署应用，可从应用商店选择服务。';
   return (
     <div className="desktop-deployed-empty" style={{ minHeight: 96, padding: '18px 20px', borderRadius: 8,
@@ -304,10 +307,10 @@ function DeployedApps({ apps, loading, error, onRetry, onOpen, iconStyle, accent
         <div style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>{title}</div>
         <div style={{ marginTop: 3, fontSize: 11, color: T.ink3 }}>{description}</div>
       </div>
-      {!loading && <button type="button" onClick={() => unavailable ? onRetry?.() : onOpen({ id: 'store' })} style={{
+      {!loading && <button type="button" onClick={() => unavailable ? onRetry?.() : onOpen({ id: hasDeployedApps ? 'compose-manager' : 'store' })} style={{
         height: 32, padding: '0 12px', border: 'none', borderRadius: 6,
         background: T.blue, color: '#fff', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
-      }}>{unavailable ? '重试' : '打开应用商店'}</button>}
+      }}>{unavailable ? '重试' : hasDeployedApps ? '全部应用' : '打开应用商店'}</button>}
     </div>
   );
 }
@@ -322,20 +325,39 @@ function DesktopWidgets({ onOpenApp, deviceName }) {
 }
 
 // ─── Desktop ────────────────────────────────────────────────────
-export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsLoading, deployedAppsError, onRetryDeployedApps, showRecent = true, iconStyle = 'gradient', accent = '#0066ff', layout = 'workstation', iconSize = 'md', APPS, RECENT_IDS, DEVICE }) {
+function AllDeployedButton({ count, onOpen }) {
+  return (
+    <button type="button" onClick={onOpen} style={{
+      height: 28, padding: '0 10px', border: `1px solid ${T.border}`,
+      borderRadius: 6, background: T.overlayBg, color: T.ink2,
+      fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+    }}>
+      <Icon name="apps" size={13} stroke={1.8}/>
+      <span>全部 <span className="tnum">{count}</span> 个</span>
+    </button>
+  );
+}
+
+export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsTotal = deployedApps.length, deployedAppsLoading, deployedAppsError, onRetryDeployedApps, showRecent = true, iconStyle = 'gradient', accent = '#0066ff', layout = 'workstation', iconSize = 'md', APPS, RECENT_IDS, DEVICE }) {
   const runningCount = deployedApps.filter(a => a.state === 'running').length;
   const errorCount   = deployedApps.filter(a => a.state === 'error').length;
+  const openAllDeployedApps = () => onOpenApp({ id: 'compose-manager' });
+  const deployedSectionMeta = `运行中 ${runningCount} / 全部 ${deployedAppsTotal}`;
+  const deployedSectionAction = deployedAppsTotal > 0
+    ? <AllDeployedButton count={deployedAppsTotal} onOpen={openAllDeployedApps}/>
+    : undefined;
 
   // Icon size presets
-  const iconPx = { sm: 60, md: 76, lg: 96 }[iconSize] || 76;
-  const tilePx = iconPx + (iconSize === 'sm' ? 22 : iconSize === 'lg' ? 36 : 28);
+  const iconPx = { sm: 60, md: 76, lg: 96 }[iconSize] || 60;
+  const tilePx = iconPx + (iconSize === 'sm' ? 20 : iconSize === 'lg' ? 36 : 28);
   const labelSize = iconSize === 'sm' ? 11.5 : iconSize === 'lg' ? 13.5 : 12.5;
 
   // ─── Launcher layout: single full-width column, larger icons, no right sidebar
   if (layout === 'launcher') {
     return (
       <div className="desktop-layout desktop-layout-launcher" style={{
-        flex: 1, padding: '40px 56px 110px',
+        flex: 1, padding: '40px 56px 96px',
         display: 'flex', flexDirection: 'column', gap: 32,
         overflow: 'auto', alignContent: 'start',
       }}>
@@ -343,9 +365,9 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsLoading,
           <AppGrid apps={sysApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
             iconPx={Math.max(iconPx, 88)} tilePx={tilePx + 12} labelSize={labelSize}/>
         </Section>
-        <Section label="已部署应用" meta="云端下发"
-          right={<RunningChip running={runningCount} error={errorCount}/>}>
-          <DeployedApps apps={deployedApps} loading={deployedAppsLoading} error={deployedAppsError} onRetry={onRetryDeployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+        <Section label={`已部署应用（${runningCount}）`} meta={deployedSectionMeta}
+          right={deployedSectionAction || <RunningChip error={errorCount}/>}>
+          <DeployedApps apps={deployedApps} totalCount={deployedAppsTotal} loading={deployedAppsLoading} error={deployedAppsError} onRetry={onRetryDeployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
             iconPx={Math.max(iconPx, 88)} tilePx={tilePx + 12} labelSize={labelSize}/>
         </Section>
         {showRecent && (
@@ -366,7 +388,7 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsLoading,
   if (layout === 'compact') {
     return (
       <div className="desktop-layout desktop-layout-grid" style={{
-        flex: 1, padding: '20px 36px 110px',
+        flex: 1, padding: '20px 36px 96px',
         display: 'grid', gridTemplateColumns: '1fr 280px', gap: 22,
         overflow: 'auto', alignContent: 'start',
       }}>
@@ -375,9 +397,9 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsLoading,
             <AppGrid apps={sysApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
               iconPx={Math.min(iconPx, 64)} tilePx={Math.min(tilePx, 94)} labelSize={11}/>
           </Section>
-          <Section label="已部署应用" meta="云端下发"
-            right={<RunningChip running={runningCount} error={errorCount}/>}>
-            <DeployedApps apps={deployedApps} loading={deployedAppsLoading} error={deployedAppsError} onRetry={onRetryDeployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+          <Section label={`已部署应用（${runningCount}）`} meta={deployedSectionMeta}
+            right={deployedSectionAction || <RunningChip error={errorCount}/>}>
+            <DeployedApps apps={deployedApps} totalCount={deployedAppsTotal} loading={deployedAppsLoading} error={deployedAppsError} onRetry={onRetryDeployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
               iconPx={Math.min(iconPx, 64)} tilePx={Math.min(tilePx, 94)} labelSize={11}/>
           </Section>
           {showRecent && (
@@ -402,8 +424,8 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsLoading,
   return (
     <div className="desktop-layout desktop-layout-grid" style={{
       flex: 1, position: 'relative',
-      padding: '28px 48px 110px',
-      display: 'grid', gridTemplateColumns: '1fr 340px', gap: 32,
+      padding: '28px 48px 96px',
+      display: 'grid', gridTemplateColumns: '1fr 320px', gap: 32,
       overflow: 'auto', alignContent: 'start',
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 26, minWidth: 0 }}>
@@ -412,9 +434,9 @@ export function Desktop({ onOpenApp, sysApps, deployedApps, deployedAppsLoading,
             iconPx={iconPx} tilePx={tilePx} labelSize={labelSize}/>
         </Section>
 
-        <Section label="已部署应用" meta="云端下发"
-          right={<RunningChip running={runningCount} error={errorCount}/>}>
-          <DeployedApps apps={deployedApps} loading={deployedAppsLoading} error={deployedAppsError} onRetry={onRetryDeployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
+        <Section label={`已部署应用（${runningCount}）`} meta={deployedSectionMeta}
+          right={deployedSectionAction || <RunningChip error={errorCount}/>}>
+          <DeployedApps apps={deployedApps} totalCount={deployedAppsTotal} loading={deployedAppsLoading} error={deployedAppsError} onRetry={onRetryDeployedApps} onOpen={onOpenApp} iconStyle={iconStyle} accent={accent}
             iconPx={iconPx} tilePx={tilePx} labelSize={labelSize}/>
         </Section>
 

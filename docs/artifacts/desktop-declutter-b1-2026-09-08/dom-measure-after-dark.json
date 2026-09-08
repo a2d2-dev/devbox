@@ -1,0 +1,305 @@
+{
+  "deployedIconCount": 3,
+  "deployedMaxBottom": 613,
+  "desktop": {
+    "clientHeight": 672,
+    "rect": {
+      "bottom": 720,
+      "height": 672,
+      "right": 1280,
+      "width": 1280,
+      "x": 0,
+      "y": 48
+    },
+    "scrollHeight": 1466,
+    "scrollTop": 0
+  },
+  "dock": {
+    "bottom": 702,
+    "height": 62,
+    "right": 708,
+    "width": 135,
+    "x": 573,
+    "y": 640
+  },
+  "hasAccountDesktopIcon": false,
+  "hasAllAppsEntry": true,
+  "hasBrowserDesktopIcon": false,
+  "iconCount": 24,
+  "icons": [
+    {
+      "rect": {
+        "bottom": 206,
+        "height": 99,
+        "right": 128,
+        "width": 80,
+        "x": 48,
+        "y": 107
+      },
+      "text": "仪表盘"
+    },
+    {
+      "rect": {
+        "bottom": 206,
+        "height": 99,
+        "right": 232,
+        "width": 80,
+        "x": 152,
+        "y": 107
+      },
+      "text": "资源管理"
+    },
+    {
+      "rect": {
+        "bottom": 206,
+        "height": 99,
+        "right": 336,
+        "width": 80,
+        "x": 256,
+        "y": 107
+      },
+      "text": "AI 活动"
+    },
+    {
+      "rect": {
+        "bottom": 206,
+        "height": 99,
+        "right": 440,
+        "width": 80,
+        "x": 360,
+        "y": 107
+      },
+      "text": "应用商店"
+    },
+    {
+      "rect": {
+        "bottom": 206,
+        "height": 99,
+        "right": 544,
+        "width": 80,
+        "x": 464,
+        "y": 107
+      },
+      "text": "Docker"
+    },
+    {
+      "rect": {
+        "bottom": 206,
+        "height": 99,
+        "right": 648,
+        "width": 80,
+        "x": 568,
+        "y": 107
+      },
+      "text": "Compose 应用"
+    },
+    {
+      "rect": {
+        "bottom": 206,
+        "height": 99,
+        "right": 752,
+        "width": 80,
+        "x": 672,
+        "y": 107
+      },
+      "text": "文件"
+    },
+    {
+      "rect": {
+        "bottom": 206,
+        "height": 99,
+        "right": 856,
+        "width": 80,
+        "x": 776,
+        "y": 107
+      },
+      "text": "备份"
+    },
+    {
+      "rect": {
+        "bottom": 317,
+        "height": 99,
+        "right": 128,
+        "width": 80,
+        "x": 48,
+        "y": 218
+      },
+      "text": "下载"
+    },
+    {
+      "rect": {
+        "bottom": 317,
+        "height": 99,
+        "right": 232,
+        "width": 80,
+        "x": 152,
+        "y": 218
+      },
+      "text": "进程"
+    },
+    {
+      "rect": {
+        "bottom": 317,
+        "height": 99,
+        "right": 336,
+        "width": 80,
+        "x": 256,
+        "y": 218
+      },
+      "text": "进程守护"
+    },
+    {
+      "rect": {
+        "bottom": 317,
+        "height": 99,
+        "right": 440,
+        "width": 80,
+        "x": 360,
+        "y": 218
+      },
+      "text": "虚拟机"
+    },
+    {
+      "rect": {
+        "bottom": 317,
+        "height": 99,
+        "right": 544,
+        "width": 80,
+        "x": 464,
+        "y": 218
+      },
+      "text": "硬件中心"
+    },
+    {
+      "rect": {
+        "bottom": 317,
+        "height": 99,
+        "right": 648,
+        "width": 80,
+        "x": 568,
+        "y": 218
+      },
+      "text": "用户与权限"
+    },
+    {
+      "rect": {
+        "bottom": 317,
+        "height": 99,
+        "right": 752,
+        "width": 80,
+        "x": 672,
+        "y": 218
+      },
+      "text": "服务导航"
+    },
+    {
+      "rect": {
+        "bottom": 317,
+        "height": 99,
+        "right": 856,
+        "width": 80,
+        "x": 776,
+        "y": 218
+      },
+      "text": "磁盘"
+    },
+    {
+      "rect": {
+        "bottom": 428,
+        "height": 99,
+        "right": 128,
+        "width": 80,
+        "x": 48,
+        "y": 329
+      },
+      "text": "网络连接"
+    },
+    {
+      "rect": {
+        "bottom": 428,
+        "height": 99,
+        "right": 232,
+        "width": 80,
+        "x": 152,
+        "y": 329
+      },
+      "text": "网络与安全"
+    },
+    {
+      "rect": {
+        "bottom": 428,
+        "height": 99,
+        "right": 336,
+        "width": 80,
+        "x": 256,
+        "y": 329
+      },
+      "text": "告警中心"
+    },
+    {
+      "rect": {
+        "bottom": 428,
+        "height": 99,
+        "right": 440,
+        "width": 80,
+        "x": 360,
+        "y": 329
+      },
+      "text": "日志"
+    },
+    {
+      "rect": {
+        "bottom": 428,
+        "height": 99,
+        "right": 544,
+        "width": 80,
+        "x": 464,
+        "y": 329
+      },
+      "text": "系统设置"
+    },
+    {
+      "rect": {
+        "bottom": 613,
+        "height": 117,
+        "right": 128,
+        "width": 80,
+        "x": 48,
+        "y": 496
+      },
+      "text": "claude-code-hub / 仅 CPU"
+    },
+    {
+      "rect": {
+        "bottom": 613,
+        "height": 117,
+        "right": 232,
+        "width": 80,
+        "x": 152,
+        "y": 496
+      },
+      "text": "new-api / 仅 CPU"
+    },
+    {
+      "rect": {
+        "bottom": 613,
+        "height": 117,
+        "right": 336,
+        "width": 80,
+        "x": 256,
+        "y": 496
+      },
+      "text": "tokenhub-demo / 仅 CPU"
+    }
+  ],
+  "overlapCount": 0,
+  "overlaps": [],
+  "systemIconCount": 21,
+  "systemMaxBottom": 428,
+  "theme": "dark",
+  "themePreference": "dark",
+  "viewport": {
+    "height": 720,
+    "width": 1280
+  }
+}
