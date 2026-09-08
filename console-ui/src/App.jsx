@@ -43,7 +43,7 @@ import AppWindow, { btnSecondary, btnPrimary } from './components/AppWindow'
 import DashboardApp from './pages/Dashboard'
 import AppStore from './pages/AppStore'
 import DockerApp from './pages/DockerApp'
-import CloudApps from './pages/CloudApps'
+import AppManagement from './pages/AppManagement'
 import AlertCenter from './pages/AlertCenter'
 import AuditLog from './pages/AuditLog'
 import Supervisor from './pages/Supervisor'
@@ -641,8 +641,8 @@ export default function App() {
                 {appId === 'docker' && <DockerApp key={`docker:${appLaunchTabs[appId] || 'overview'}`}
                   initialTab={appLaunchTabs[appId]} authed={authed} onRequireAuth={requireAuth}
                   onOpenStore={() => launchApp({ id: 'store' })} onOpenApp={launchApp}/>}
-                {/* 容器域 IA 重组 T2：K8s 应用独立「云端应用」页 */}
-                {appId === 'cloud-apps' && <CloudApps authed={authed} onRequireAuth={requireAuth} onOpenApp={launchApp}/>}
+                {/* 容器域 IA 重组 T2：K8s 应用独立「应用管理」页（LF 拍板命名） */}
+                {appId === 'app-management' && <AppManagement authed={authed} onRequireAuth={requireAuth} onOpenApp={launchApp}/>}
                 {appId === 'alerts'    && <AlertCenter authed={authed} onRequireAuth={requireAuth}/>}
                 {appId === 'audit'     && <AuditLog/>}
                 {appId === 'supervisor'&& <Supervisor onOpenApp={launchApp}/>}
@@ -652,7 +652,7 @@ export default function App() {
                 {appId === 'network-security' && <NetworkSecurity key={`network-security:${appLaunchTabs[appId] || 'network'}`} initialTab={appLaunchTabs[appId]}/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
                 {appId === 'account'   && <Account t={t} setT={setT}/>}
-                {!['dashboard','store','docker','cloud-apps','alerts','audit','supervisor','virtual-machines','hardware','users','network-security','diag','settings','account'].includes(appId)
+                {!['dashboard','store','docker','app-management','alerts','audit','supervisor','virtual-machines','hardware','users','network-security','diag','settings','account'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
                        key={`${appId}:${appLaunchTabs[appId] || ''}`} onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp} initialTab={appLaunchTabs[appId]}/>}
 

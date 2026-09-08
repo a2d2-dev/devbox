@@ -93,7 +93,7 @@ describe('DockerApp container-domain tabs', () => {
     render(<DockerApp authed onRequireAuth={vi.fn()} initialTab="compose"/>)
 
     expect(screen.getByText('my-compose-app')).toBeInTheDocument()
-    // runtime=kubernetes 应用暂不显示（云端应用页是后续票）
+    // runtime=kubernetes 应用不在 Compose tab 显示（由「应用管理」页承载）
     expect(screen.queryByText('k8s-only-app')).not.toBeInTheDocument()
     // 旧四类筛选（全部 / Docker Compose / Kubernetes / 系统工具）已移除
     expect(screen.queryByRole('button', { name: /Kubernetes/ })).not.toBeInTheDocument()

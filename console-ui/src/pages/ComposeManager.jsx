@@ -57,7 +57,7 @@ export function ComposeManager({ authed, onRequireAuth, onOpenStore, onOpenApp }
   const composeDown = composeCap && composeCap.available === false;
 
   // IA 合并（T1）：本视图只管 Compose 应用。runtime=kubernetes 的应用暂不显示
-  // （K8s 独立「云端应用」页是后续票 T2）；系统工具筛选已移除（桌面分组已有）。
+  // （K8s 由独立「应用管理」页 AppManagement.jsx 承载）；系统工具筛选已移除（桌面分组已有）。
   const arr = useMemo(() => Array.isArray(apps) ? apps : [], [apps]);
   const list = useMemo(() => arr.filter((a) => (a.runtime || 'kubernetes') === 'compose'), [arr]);
 
@@ -180,7 +180,7 @@ function Header({ composeCap, count, authed, onRequireAuth, onCreate }) {
   );
 }
 
-// TaskBanner：任务进度横幅（CloudApps 亦复用）。
+// TaskBanner：任务进度横幅（AppManagement 亦复用）。
 export function TaskBanner({ task, label }) {
   const color = task.status === 'failed' ? '#dc2626' : task.status === 'succeeded' ? '#16a34a' : '#0066ff';
   return (
@@ -193,7 +193,7 @@ export function TaskBanner({ task, label }) {
   );
 }
 
-// ─── AppCard：后端 phase 驱动（compose 与 kubernetes 通用；CloudApps 亦复用）────
+// ─── AppCard：后端 phase 驱动（compose 与 kubernetes 通用；AppManagement 亦复用）────
 export function AppCard({ app, storeApps, catalogApps, disabled, onAction, onUninstall, onOpenApp }) {
   const phase = observedPhase(app);
   const isCompose = (app.runtime || 'kubernetes') === 'compose';

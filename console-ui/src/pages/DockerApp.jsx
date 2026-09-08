@@ -7,8 +7,8 @@
 //     生命周期、卸载），组件原样复用。
 //
 // 旧 compose-manager appId 的打开请求经 lib/appRoutes.js 别名进入本组件的
-// compose tab（App.jsx 以 initialTab 传入）。后续 T2（云端应用页）/ T3（网络、
-// 存储 tab）在此基础上扩展。
+// compose tab（App.jsx 以 initialTab 传入）。T2 已落地：K8s 应用独立
+// 「应用管理」页（AppManagement.jsx）；T3（网络、存储 tab）在此基础上扩展。
 import { useState } from 'react';
 import { T } from '../tokens';
 import { Icon } from '../icons';

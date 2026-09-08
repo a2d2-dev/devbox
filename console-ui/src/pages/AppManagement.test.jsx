@@ -1,11 +1,14 @@
-// CloudApps — 容器域 IA 重组 T2 最小渲染测试：
+// AppManagement — 容器域 IA 重组 T2 最小渲染测试（LF 拍板命名「应用管理」）：
 //   1. runtime=kubernetes 应用显示（K8s 徽标 + Pod 就绪口径），compose 应用不显示。
 //   2. 空态文案说明「由云端下发后显示」。
-//   3. 操作语义对齐 T1 前 ComposeManager K8s 分支：启动/停止/重启/卸载有、
-//      「重部署」（compose 专属）与「新建」入口没有。
+//   3. 命名歧义提示：Compose 应用在「Docker」应用中管理，点击经 onOpenApp
+//      打开 { id: 'docker', tab: 'compose' }（复用 T1 launchApp/appLaunchTabs 机制）。
+//   4. 操作语义对齐 T1 前 ComposeManager K8s 分支：启动/停止/重启/卸载有、
+//      「重部署」（compose 专属）与「新建」入口没有（安装/升级是应用商店职责）。
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import CloudApps from './CloudApps'
+import AppManagement from './AppManagement'
 
 const api = vi.hoisted(() => ({
   apps: [],
@@ -27,7 +30,7 @@ vi.mock('../components/toastContext', () => ({
   useToast: () => ({ ok: vi.fn(), err: vi.fn(), warn: vi.fn() }),
 }))
 
-describe('CloudApps kubernetes-only page', () => {
+describe('AppManagement kubernetes-only page', () => {
   beforeEach(() => {
     api.apps = []
   })
@@ -39,8 +42,9 @@ describe('CloudApps kubernetes-only page', () => {
       { id: 'blog', name: 'local-compose-app', runtime: 'compose', ownership: 'managed',
         observed: { phase: 'running' } },
     ]
-    render(<CloudApps authed onRequireAuth={vi.fn()}/>)
+    render(<AppManagement authed onRequireAuth={vi.fn()}/>)
 
+    expect(screen.getByText('应用管理')).toBeInTheDocument()
     expect(screen.getByText('k8s-cloud-app')).toBeInTheDocument()
     // runtime 徽标（title=Kubernetes）+ 来源 Chip 均显示 K8s
     expect(screen.getAllByText('K8s').length).toBeGreaterThan(0)
@@ -49,18 +53,28 @@ describe('CloudApps kubernetes-only page', () => {
     expect(screen.queryByText('local-compose-app')).not.toBeInTheDocument()
   })
 
+  it('links the compose-disambiguation hint to the docker app compose tab', async () => {
+    const user = userEvent.setup()
+    const onOpenApp = vi.fn()
+    render(<AppManagement authed onRequireAuth={vi.fn()} onOpenApp={onOpenApp}/>)
+
+    expect(screen.getByText(/Compose 应用在「Docker」应用中管理/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /打开 Compose 应用/ }))
+    expect(onOpenApp).toHaveBeenCalledWith({ id: 'docker', tab: 'compose' })
+  })
+
   it('keeps the pre-T1 K8s action set: start/stop/restart/uninstall, no redeploy and no create entry', () => {
     api.apps = [
       { id: 'cloud', name: 'k8s-cloud-app', runtime: 'kubernetes', ownership: 'managed',
         observed: { phase: 'running' } },
     ]
-    render(<CloudApps authed onRequireAuth={vi.fn()}/>)
+    render(<AppManagement authed onRequireAuth={vi.fn()}/>)
 
     expect(screen.getByRole('button', { name: '启动' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重启' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /卸载/ })).toBeInTheDocument()
-    // 「重部署」是 compose 专属；云端应用无本地新建路径
+    // 「重部署」是 compose 专属；本页无本地新建/安装路径（安装是应用商店职责）
     expect(screen.queryByRole('button', { name: '重部署' })).not.toBeInTheDocument()
     expect(screen.queryByText(/新建/)).not.toBeInTheDocument()
   })
@@ -70,9 +84,9 @@ describe('CloudApps kubernetes-only page', () => {
       { id: 'blog', name: 'local-compose-app', runtime: 'compose', ownership: 'managed',
         observed: { phase: 'running' } },
     ]
-    render(<CloudApps authed onRequireAuth={vi.fn()}/>)
+    render(<AppManagement authed onRequireAuth={vi.fn()}/>)
 
-    expect(screen.getByText('暂无云端应用')).toBeInTheDocument()
+    expect(screen.getByText('暂无应用')).toBeInTheDocument()
     expect(screen.getByText(/由云端下发后显示/)).toBeInTheDocument()
     expect(screen.getByText('0 个应用')).toBeInTheDocument()
   })
