@@ -172,6 +172,20 @@ func (s *service) DockerStats(ctx context.Context) (DockerStats, error) {
 	return s.docker.Stats(ctx)
 }
 
+func (s *service) DockerNetworks(ctx context.Context) (DockerNetworkList, error) {
+	if s.docker == nil {
+		return DockerNetworkList{Diagnostic: "Docker 管理能力未装配", CheckedAt: s.now()}, nil
+	}
+	return s.docker.Networks(ctx)
+}
+
+func (s *service) DockerVolumes(ctx context.Context) (DockerVolumeList, error) {
+	if s.docker == nil {
+		return DockerVolumeList{Diagnostic: "Docker 管理能力未装配", CheckedAt: s.now()}, nil
+	}
+	return s.docker.Volumes(ctx)
+}
+
 func (s *service) DockerServiceAction(ctx context.Context, req DockerServiceActionRequest) (DockerOverview, error) {
 	if s.docker == nil {
 		return DockerOverview{}, CapabilityErr("Docker 管理能力未装配")

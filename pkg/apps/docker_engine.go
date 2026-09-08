@@ -127,6 +127,17 @@ type engineContainer struct {
 	Status string            `json:"Status"`
 	Labels map[string]string `json:"Labels"`
 	Ports  []enginePort      `json:"Ports"`
+	// NetworkSettings.Networks 的键即容器接入的 network 名（网络清单聚合容器数用）。
+	NetworkSettings struct {
+		Networks map[string]struct{} `json:"Networks"`
+	} `json:"NetworkSettings"`
+	// Mounts 中 Type=volume 的 Name 即挂载的 named volume（卷清单聚合容器数用）。
+	Mounts []engineMount `json:"Mounts"`
+}
+
+type engineMount struct {
+	Type string `json:"Type"`
+	Name string `json:"Name"`
 }
 
 type enginePort struct {
@@ -198,6 +209,44 @@ func (e *dockerEngine) listContainersAll(ctx context.Context, all bool, labelFil
 		return nil, err
 	}
 	return list, nil
+}
+
+// engineNetwork GET /networks 的单条结果（仅取需要字段）。
+type engineNetwork struct {
+	Name     string            `json:"Name"`
+	ID       string            `json:"Id"`
+	Driver   string            `json:"Driver"`
+	Scope    string            `json:"Scope"`
+	Internal bool              `json:"Internal"`
+	Labels   map[string]string `json:"Labels"`
+}
+
+// engineVolume GET /volumes 的单条结果（仅取需要字段）。
+type engineVolume struct {
+	Name       string            `json:"Name"`
+	Driver     string            `json:"Driver"`
+	Mountpoint string            `json:"Mountpoint"`
+	Labels     map[string]string `json:"Labels"`
+}
+
+// listNetworks 列出全部 docker network（只读）。
+func (e *dockerEngine) listNetworks(ctx context.Context) ([]engineNetwork, error) {
+	var list []engineNetwork
+	if err := e.getJSON(ctx, "/networks", nil, &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// listVolumes 列出全部 docker volume（只读）。/volumes 返回 {"Volumes":[...]}。
+func (e *dockerEngine) listVolumes(ctx context.Context) ([]engineVolume, error) {
+	var out struct {
+		Volumes []engineVolume `json:"Volumes"`
+	}
+	if err := e.getJSON(ctx, "/volumes", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Volumes, nil
 }
 
 func (e *dockerEngine) containerStats(ctx context.Context, id string) (engineContainerStats, error) {

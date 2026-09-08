@@ -416,6 +416,16 @@ export function useDockerOverview(interval = 5000) {
   return usePoll('/docker/overview', { interval, fallback: null });
 }
 
+// 网络 / 卷只读清单（容器域 IA 重组 T3）。变化低频，轮询放宽到 15s。
+// daemon 不可用时后端返回 200 + available:false + diagnostic（不 5xx）。
+export function useDockerNetworks(interval = 15000) {
+  return usePoll('/docker/networks', { interval, fallback: null });
+}
+
+export function useDockerVolumes(interval = 15000) {
+  return usePoll('/docker/volumes', { interval, fallback: null });
+}
+
 export function useDockerStats(interval = 3000) {
   const empty = { available: false, cpuPercent: 0, memoryUsageBytes: 0, memoryLimitBytes: 0,
     networkRxBytes: 0, networkTxBytes: 0, containers: 0 };

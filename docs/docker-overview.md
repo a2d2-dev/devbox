@@ -16,6 +16,8 @@ Docker 桌面应用提供宿主机 Docker 的首屏状态、实时资源监控�
 |---|---|---|
 | `GET` | `/api/v1/docker/overview` | 服务、Compose 项目、容器、data-root 与磁盘容量 |
 | `GET` | `/api/v1/docker/stats` | 聚合运行容器的 CPU、内存、网络累计字节 |
+| `GET` | `/api/v1/docker/networks` | 全局 docker network 只读清单（名称、driver、scope、internal、关联容器数） |
+| `GET` | `/api/v1/docker/volumes` | 全局 docker volume 只读清单（名称、driver、挂载点、关联容器数、compose project 标签） |
 | `POST` | `/api/v1/docker/service` | `{"action":"start|stop|restart"}`；操作后重新查询 daemon |
 | `PUT` | `/api/v1/docker/autostart` | `{"enabled":true|false}`；使用 `systemctl enable/disable` 并复查 |
 | `POST` | `/api/v1/docker/storage/plan` | 校验目标、容量与当前配置，生成迁移计划和计划指纹 |
@@ -32,6 +34,14 @@ Docker 桌面应用提供宿主机 Docker 的首屏状态、实时资源监控�
 ```
 
 常见 `reason` 包括 `permission_denied`、`service_control_unsupported`、`storage_invalid`、`migration_plan_changed` 和 `migration_start_failed`。
+
+## 网络与卷只读清单
+
+`networks` 走 Engine `GET /networks`，`volumes` 走 Engine `GET /volumes`；两者与 overview/stats 复用同一个 Engine 客户端与超时预算。关联容器数从 `/containers/json?all=1` 一次聚合（network 用 `NetworkSettings.Networks` 键，volume 用 `Mounts` 中 `Type=volume` 的 `Name`），计入停止容器，与 docker 的占用判定一致。volume 附带 `com.docker.compose.project` 标签便于前端标注归属。daemon 不可用时返回 200 + `available:false` + 诊断（同 overview/stats 空态约定）；清单可得但容器列表失败时清单仍返回，容器数为 0 并附降级诊断。均为只读，无创建/删除/清理写路径。
+
+## 页面入口（网络 / 存储 tab）
+
+「Docker」应用（DockerApp.jsx）的「网络」「存储」tab 消费这两个接口，15 秒轮询。存储 tab 上半部展示 data-root 信息（复用 overview 数据），迁移入口跳回「概览」tab，不复制迁移对话框。
 
 ## 服务控制
 
@@ -66,4 +76,4 @@ Docker 存储路径未显式确认、无效、不是绝对路径、daemon 配置
 
 ## 页面入口
 
-桌面系统应用新增「Docker」。首屏的「Compose 管理」按钮直接打开 Issue #2 的「Compose 应用」窗口，不复制镜像、网络、卷或容器深层管理页面。
+「Docker」桌面应用是容器域唯一入口（2026-09-08 容器域 IA 重组），内部 tab：概览（daemon 状态/启停/自启/存储迁移/监控）、Compose 应用（原 ComposeManager）、网络、存储。首屏「Compose 管理」按钮切换到 Compose tab，不另开窗口；旧 compose-manager 桌面入口经前端别名重定向。
