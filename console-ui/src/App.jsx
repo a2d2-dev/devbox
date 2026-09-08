@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { T, applyThemePreference } from './tokens'
+import { resolveWallpaper } from './data/wallpapers'
 import { Icon } from './icons'
 
 // ─── Watermark overlay (canvas-based, updates every minute) ────
@@ -506,13 +507,8 @@ export default function App() {
   const deployedApps = deployedAppsAll.filter(a => a.state === 'running');
   const alertCount = Array.isArray(alerts) ? alerts.filter(a => a.state === 'active').length : 0;
 
-  // Custom wallpaper
-  const bgClass = t.wallpaper === 'fnos' ? 'fnos-desktop-bg' : t.wallpaper === 'grid' ? 'edge-bg' : '';
-  const bgStyle = t.wallpaper === 'topo'
-    ? { background: T.desktopTopoBg, backgroundImage: T.desktopTopoImage }
-    : t.wallpaper === 'plain'
-      ? { background: T.desktopPlainBg }
-      : {};
+  // Custom wallpaper — 由 data/wallpapers.js 注册表统一解析（含 NASA 照片壁纸）
+  const { className: bgClass, style: bgStyle } = resolveWallpaper(t.wallpaper, T);
 
   // Dock receives the running apps (resolved to full app objects), with
   // each one tagged "active" / "minimized" so it can render correctly.
