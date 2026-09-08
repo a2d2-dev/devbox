@@ -1,0 +1,7 @@
+Source: NASA Images API / NASA JPL
+Title: The Milky Way Center Aglow with Dust
+NASA ID: PIA03653
+Original URL: https://images-assets.nasa.gov/image/PIA03653/PIA03653~orig.jpg
+Metadata URL: https://images-assets.nasa.gov/image/PIA03653/metadata.json
+License/usage: NASA/JPL-Caltech image. NASA content is generally not copyrighted and may be used for informational or educational purposes unless otherwise noted; NASA API search metadata for this item had center=JPL and secondary_creator=NASA/JPL-Caltech.
+Processing: Verified source with file/identify, cover-cropped to 2560x1600, slightly darkened for desktop UI contrast, stripped metadata, exported as high-quality WebP.

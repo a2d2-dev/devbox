@@ -1,0 +1,7 @@
+Source: NASA Images API / NASA JSC
+Title: A bright airglow blankets Earth's horizon as the Milky Way illuminates the night sky
+NASA ID: iss073e0982823
+Original URL: https://images-assets.nasa.gov/image/iss073e0982823/iss073e0982823~orig.jpg
+Metadata URL: https://images-assets.nasa.gov/image/iss073e0982823/metadata.json
+License/usage: NASA/JSC image. NASA content is generally not copyrighted and may be used for informational or educational purposes unless otherwise noted; NASA API search metadata for this item had center=JSC and no secondary_creator field.
+Processing: Verified source with file/identify, cover-cropped to 2560x1600, slightly darkened for desktop UI contrast, stripped metadata, exported as high-quality WebP.
