@@ -3,9 +3,13 @@ import { T } from "../tokens";
 import { Icon } from "../icons";
 import { authFetch } from "../hooks/useApi";
 import { diagnosticsTools, settingsUpdatePayload } from "./settingsPayload";
+import NetworkConnections from "./NetworkConnections";
+import Links from "./Links";
 
 const tabs = [
   ["network", "网口状态", "network"],
+  ["connections", "连接", "network"],
+  ["links", "服务导航", "link"],
   ["remote", "远程访问", "globe"],
   ["ssh", "SSH", "terminal"],
   ["account", "账号安全", "lock"],
@@ -1510,8 +1514,8 @@ function DiagnosticsTab() {
   );
 }
 
-export default function NetworkSecuritySettings() {
-  const [tab, setTab] = useState("network");
+export default function NetworkSecuritySettings({ initialTab = "network" } = {}) {
+  const [tab, setTab] = useState(initialTab);
   const [data, setData] = useState({});
   const [settings, setSettings] = useState({});
   const [error, setError] = useState("");
@@ -1548,6 +1552,8 @@ export default function NetworkSecuritySettings() {
   }, [tab]);
   const body = {
     network: <NetworkTab network={data.network} />,
+    connections: <NetworkConnections />,
+    links: <Links />,
     remote: (
       <RemoteTab
         remote={data.remote}
@@ -1606,7 +1612,7 @@ export default function NetworkSecuritySettings() {
         <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 750, color: T.ink }}>
-              网络与安全
+              网络
             </div>
             <div style={{ fontSize: 11.5, color: T.ink3, marginTop: 3 }}>
               实时状态、远程入口与访问保护

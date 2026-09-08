@@ -10,10 +10,11 @@ import PortsFace from '../pages/Ports'
 import ModelsFace from '../pages/Models'
 import Processes from '../pages/Processes'
 import DiskManager from '../pages/DiskManager'
-import NetworkConnections from '../pages/NetworkConnections'
 import MonitoringApp from '../pages/Monitoring'
 import AIActivity from '../pages/AIActivity'
 import BrowserFace from '../pages/Browser'
+import NetworkSecurity from '../pages/NetworkSecurity'
+import { resolveAppLaunch } from '../lib/appRoutes'
 
 // Reusable face header
 function FaceHeader({ accent = T.blue, title, subtitle, version, kb, onMgmt, extra, errorMode }) {
@@ -81,30 +82,33 @@ function IframeFace({ app, onMgmt }) {
   );
 }
 
-function AppShellContent({ appId, app, authed, onRequireAuth, onOpenManagement, onOpenApp }) {
+function AppShellContent({ appId, app, authed, onRequireAuth, onOpenManagement, onOpenApp, initialTab: launchInitialTab }) {
+  const route = resolveAppLaunch({ id: appId })
+  const routedAppId = route?.id || appId
+  const initialTab = launchInitialTab || route?.tab
   // Native faces for built-in system tools
-  if (appId === 'vscode')    return <VSCodeFace    onMgmt={onOpenManagement}/>;
-  if (appId === 'jupyter')   return <JupyterFace   onMgmt={onOpenManagement}/>;
-  if (appId === 'ollama')    return <OllamaFace    onMgmt={onOpenManagement}/>;
-  if (appId === 'vllm')      return <VLLMErrorFace authed={authed} onRequireAuth={onRequireAuth} onMgmt={onOpenManagement}/>;
-  if (appId === 'comfyui')   return <ComfyUIFace   onMgmt={onOpenManagement}/>;
-  if (appId === 'sdwebui')   return <SDWebUIFace   onMgmt={onOpenManagement}/>;
-  if (appId === 'openwebui') return <OpenWebUIFace onMgmt={onOpenManagement}/>;
-  if (appId === 'training')  return <TrainingFace  onMgmt={onOpenManagement}/>;
+  if (routedAppId === 'vscode')    return <VSCodeFace    onMgmt={onOpenManagement}/>;
+  if (routedAppId === 'jupyter')   return <JupyterFace   onMgmt={onOpenManagement}/>;
+  if (routedAppId === 'ollama')    return <OllamaFace    onMgmt={onOpenManagement}/>;
+  if (routedAppId === 'vllm')      return <VLLMErrorFace authed={authed} onRequireAuth={onRequireAuth} onMgmt={onOpenManagement}/>;
+  if (routedAppId === 'comfyui')   return <ComfyUIFace   onMgmt={onOpenManagement}/>;
+  if (routedAppId === 'sdwebui')   return <SDWebUIFace   onMgmt={onOpenManagement}/>;
+  if (routedAppId === 'openwebui') return <OpenWebUIFace onMgmt={onOpenManagement}/>;
+  if (routedAppId === 'training')  return <TrainingFace  onMgmt={onOpenManagement}/>;
   // [Story 3.1 Disabled 2026-06-20] Web 终端禁用，桌面图标已移除，
   // AppShell 路由分支保留为注释仅供历史追溯：if (appId === 'terminal') return <TerminalFace/>
-  if (appId === 'files')     return <FilesFace/>;
+  if (routedAppId === 'files')     return <FilesFace initialTab={initialTab}/>;
   // [Story 3.3 UI Merged 2026-06-20] Ports 入口已并入 Story 6.2 NetworkConnections，
   // 桌面图标移除，AppShell 分支保留注释仅供历史追溯：
   //   if (appId === 'ports') return <PortsFace authed={authed} onRequireAuth={onRequireAuth}/>;
   // 后端 GET /api/v1/ports 仍可用（参考 handlers_extra.go:101 handlePorts）。
-  if (appId === 'models')    return <ModelsFace/>;
-  if (appId === 'processes') return <Processes onOpenApp={onOpenApp}/>;
-  if (appId === 'disks')     return <DiskManager/>;
-  if (appId === 'network-connections') return <NetworkConnections onOpenApp={onOpenApp}/>;
-  if (appId === 'monitoring') return <MonitoringApp/>;
-  if (appId === 'ai-activity') return <AIActivity/>;
-  if (appId === 'browser')   return <BrowserFace/>;
+  if (routedAppId === 'models')    return <ModelsFace/>;
+  if (routedAppId === 'processes') return <Processes onOpenApp={onOpenApp}/>;
+  if (routedAppId === 'disks')     return <DiskManager/>;
+  if (routedAppId === 'network-security') return <NetworkSecurity initialTab={initialTab}/>;
+  if (routedAppId === 'monitoring') return <MonitoringApp/>;
+  if (routedAppId === 'ai-activity') return <AIActivity/>;
+  if (routedAppId === 'browser')   return <BrowserFace/>;
   // Generic iframe fallback for any installed app with a HostPort
   if (app) return <IframeFace app={app} onMgmt={onOpenManagement}/>;
   return null;

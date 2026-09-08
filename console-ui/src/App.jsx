@@ -50,9 +50,6 @@ import Supervisor from './pages/Supervisor'
 import VirtualMachines from './pages/VirtualMachines'
 import Hardware from './pages/Hardware'
 import Users from './pages/Users'
-import Links from './pages/Links'
-import Backup from './pages/Backup'
-import Downloads from './pages/Downloads'
 import Diagnostics from './pages/Settings'
 import Account from './pages/Account'
 import NetworkSecurity from './pages/NetworkSecurity'
@@ -64,6 +61,7 @@ import { ToastProvider } from './components/Toast'
 import { TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakToggle, TweakColor } from './components/TweaksPanel'
 import { useMetrics, useMetricsHistory, useApps, useAlerts, useDevice, setAuthToken, getAuthToken, clearAuth, setOnAuthExpired, setAuthRequired } from './hooks/useApi'
 import { SYSTEM_APPS } from './data/systemApps'
+import { resolveAppLaunch } from './lib/appRoutes'
 import { AnimatePresence } from './motion'
 import { ShortcutHelpDialog } from './components/ShortcutHelpDialog'
 import { shortcutRegistry } from './shortcuts/shortcuts'
@@ -332,20 +330,23 @@ export default function App() {
   const [pendingAction, setPendingAction] = useState(null);
   const [uninstalled, setUninstalled] = useState(() => new Set());
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [appLaunchTabs, setAppLaunchTabs] = useState({});
 
   // Launch an app: add to running set + focus its window.
   // New apps default to full-screen; already-running apps keep their last mode.
   const launchApp = (app) => {
-    if (!app || !app.id) return;
-    setOpenApps(p => p.includes(app.id) ? p : [...p, app.id]);
+    const target = resolveAppLaunch(app);
+    if (!target || !target.id) return;
+    if (target.tab) setAppLaunchTabs(tabs => ({ ...tabs, [target.id]: target.tab }));
+    setOpenApps(p => p.includes(target.id) ? p : [...p, target.id]);
     setMinimized(prev => {
-      if (!prev.has(app.id)) return prev;
-      const next = new Set(prev); next.delete(app.id); return next;
+      if (!prev.has(target.id)) return prev;
+      const next = new Set(prev); next.delete(target.id); return next;
     });
-    setMaxByApp(m => (app.id in m) ? m : { ...m, [app.id]: true });
+    setMaxByApp(m => (target.id in m) ? m : { ...m, [target.id]: true });
     // 预分配浮动几何（首次 restore 时用）；按已开窗口数级联，避免完全重叠
-    setGeoByApp(g => (app.id in g) ? g : { ...g, [app.id]: defaultGeo(openApps.length, stageSize.vw, stageSize.vh) });
-    bringToFront(app.id);
+    setGeoByApp(g => (target.id in g) ? g : { ...g, [target.id]: defaultGeo(openApps.length, stageSize.vw, stageSize.vh) });
+    bringToFront(target.id);
     setMgmtOpen(false);
   };
 
@@ -645,15 +646,12 @@ export default function App() {
                 {appId === 'virtual-machines' && <VirtualMachines/>}
                 {appId === 'hardware'  && <Hardware/>}
 	                {appId === 'users'     && <Users/>}
-                {appId === 'links'     && <Links/>}
-                {appId === 'backup'    && <Backup/>}
-                {appId === 'downloads' && <Downloads/>}
-                {appId === 'network-security' && <NetworkSecurity/>}
+                {appId === 'network-security' && <NetworkSecurity key={`network-security:${appLaunchTabs[appId] || 'network'}`} initialTab={appLaunchTabs[appId]}/>}
                 {(appId === 'diag' || appId === 'settings') && <Diagnostics/>}
                 {appId === 'account'   && <Account t={t} setT={setT}/>}
-                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','users','links','backup','downloads','network-security','diag','settings','account'].includes(appId)
+                {!['dashboard','store','compose-manager','docker','alerts','audit','supervisor','virtual-machines','hardware','users','network-security','diag','settings','account'].includes(appId)
                   && <AppShell appId={appId} app={app} authed={authed} onRequireAuth={requireAuth}
-                       onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp}/>}
+                       key={`${appId}:${appLaunchTabs[appId] || ''}`} onOpenManagement={() => setMgmtOpen(true)} onOpenApp={launchApp} initialTab={appLaunchTabs[appId]}/>}
 
                 {app.kind === 'app' && (
                   <AppMgmtDrawer
