@@ -78,12 +78,15 @@ const TWEAK_DEFAULTS = {
   "topbar": "light",
   "accent": "#0066ff",
   "layout": "workstation",
-  "iconSize": "md",
+  "iconSize": "sm",
   // deviceLabel 已删 — 从 /api/v1/device 拿真实 deviceName (K8s node name，如 edge-004)
   // 登录前 device data 还没拿到时，组件需要自行处理空值显示
   "showRecent": true,
   "online": true
 };
+
+const DESKTOP_HIDDEN_SYSTEM_APP_IDS = new Set(['account', 'browser']);
+const DOCK_PINNED_APP_IDS = ['browser'];
 
 // Style presets — each one sets multiple sub-tweaks at once
 const PRESETS = {
@@ -497,8 +500,9 @@ export default function App() {
 
   const activeApp = activeId ? appById[activeId] : null;
 
-  const sysApps = SYSTEM_APPS;
-  const deployedApps = liveDeployedApps.filter(a => !uninstalled.has(a.id));
+  const sysApps = SYSTEM_APPS.filter(app => !DESKTOP_HIDDEN_SYSTEM_APP_IDS.has(app.id));
+  const deployedAppsAll = liveDeployedApps.filter(a => !uninstalled.has(a.id));
+  const deployedApps = deployedAppsAll.filter(a => a.state === 'running');
   const alertCount = Array.isArray(alerts) ? alerts.filter(a => a.state === 'active').length : 0;
 
   // Custom wallpaper
@@ -511,14 +515,27 @@ export default function App() {
 
   // Dock receives the running apps (resolved to full app objects), with
   // each one tagged "active" / "minimized" so it can render correctly.
-  const dockApps = openApps
+  const pinnedDockApps = DOCK_PINNED_APP_IDS
+    .filter(id => !openApps.includes(id))
     .map(id => appById[id])
     .filter(Boolean)
     .map(a => ({
       ...a,
+      isDockPinned: true,
+      isRunning: false,
+      isActive: false,
+      isMinimized: false,
+    }));
+  const runningDockApps = openApps
+    .map(id => appById[id])
+    .filter(Boolean)
+    .map(a => ({
+      ...a,
+      isRunning: true,
       isActive: activeId === a.id,
       isMinimized: minimized.has(a.id),
     }));
+  const dockApps = [...pinnedDockApps, ...runningDockApps];
 
   // Window is "visible" iff there is an active app and it's not minimized
   const showWindow = !!activeApp && !minimized.has(activeApp.id);
@@ -567,6 +584,7 @@ export default function App() {
             }}
             sysApps={sysApps}
 			deployedApps={deployedApps}
+			deployedAppsTotal={deployedAppsAll.length}
 			deployedAppsLoading={appsHook.loading}
 			deployedAppsError={appsHook.error}
 			onRetryDeployedApps={appsHook.refresh}
@@ -661,6 +679,7 @@ export default function App() {
           onShowDesktop={showDesktop}
           onFocusApp={focusApp}
           onCloseApp={closeApp}
+          onLaunchApp={launchApp}
           anyVisible={showWindow}
           hidden={showWindow && maximized}
           authed={authed}

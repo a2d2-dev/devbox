@@ -35,7 +35,7 @@ export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gr
            padding: '8px 4px', borderRadius: 14,
            background: 'transparent',
            transition: 'background 0.15s ease',
-           width: size + 28,
+           width: size + 20,
            '--edge-row-hover-bg': 'rgba(255,255,255,0.55)',
          }}>
       <div className={`edge-icon-hover ${isError ? 'edge-pulse' : ''}`}
@@ -101,7 +101,7 @@ export function AppIcon({ app, onOpen, size = 76, dense = false, iconStyle = 'gr
 
       <div style={{
         fontSize: labelSize, color: T.ink, lineHeight: 1.3,
-        textAlign: 'center', fontWeight: 500, maxWidth: size + 24,
+        textAlign: 'center', fontWeight: 500, maxWidth: size + 20,
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       }}>{app.name}</div>
 

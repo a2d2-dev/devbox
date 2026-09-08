@@ -29,7 +29,7 @@ function DockTooltip({ label }) {
 }
 
 export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, onCloseApp, anyVisible, hidden = false,
-                authed, authBadge, onToggleAuth, alertBadge, loginUser, onLogout }) {
+                authed, authBadge, onToggleAuth, alertBadge, loginUser, onLogout, onLaunchApp }) {
   const [hoverId, setHoverId] = useState(null);
   const pref = useMotionPref();
   const dockMotion = pref.reduced ? {} : {
@@ -120,7 +120,7 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
             return (
               <motion.div key={app.id}
                    ref={rememberRect}
-                   onClick={(e) => { rememberRect(e.currentTarget); onFocusApp(app.id); }}
+                   onClick={(e) => { rememberRect(e.currentTarget); app.isDockPinned && !app.isRunning ? onLaunchApp?.(app) : onFocusApp(app.id); }}
                    onMouseEnter={(e) => { rememberRect(e.currentTarget); setHoverId(app.id); }}
                    onMouseLeave={() => setHoverId(null)}
                    onContextMenu={(e) => { e.preventDefault(); onCloseApp(app.id); }}
@@ -180,7 +180,7 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
                 )}
 
                 {/* Hover-close (x) button — Mac-like close hint */}
-                {hovered && (
+                {hovered && !app.isDockPinned && (
                   <button onClick={(e) => { e.stopPropagation(); onCloseApp(app.id); }}
                     title="退出应用"
                     style={{
@@ -198,17 +198,17 @@ export function Dock({ apps, registerDockIconRect, onShowDesktop, onFocusApp, on
                 {/* Running indicator dot:
                     - filled larger for the active window
                     - smaller hollow for minimized (still running) */}
-                <div style={{
+                {app.isRunning && <div style={{
                   position: 'absolute', bottom: -6, left: '50%', transform: 'translateX(-50%)',
                   width: app.isActive ? 5 : 4,
                   height: app.isActive ? 5 : 4,
                   borderRadius: '50%',
                   background: app.isActive ? T.ink2 : T.ink3,
                   opacity: app.isMinimized ? 0.6 : 1,
-                }}/>
+                }}/>}
 
                 <AnimatePresence>
-                  {hovered && <DockTooltip label={`${app.name}${app.isMinimized ? ' · 已最小化' : ''}`}/>}
+                  {hovered && <DockTooltip label={`${app.name}${app.isDockPinned && !app.isRunning ? ' · Dock' : app.isMinimized ? ' · 已最小化' : ''}`}/>}
                 </AnimatePresence>
               </motion.div>
             );
